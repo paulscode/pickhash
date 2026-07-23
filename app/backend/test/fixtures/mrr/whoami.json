@@ -1,0 +1,10 @@
+{
+  "authed": true,
+  "userid": "0000000",
+  "username": "example",
+  "api_key": "<scrubbed>",
+  "api_sign": "<scrubbed>",
+  "api_nonce": "1700000000000",
+  "auth_mesage": "",
+  "permissions": { "withdraw": "read", "rent": "yes", "rigs": "read" }
+}

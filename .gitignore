@@ -1,0 +1,42 @@
+# ── For Reference (private, gitignored) ──
+/references/
+/internal_docs/
+/builds/
+
+# ── Build artifacts ──
+docker-images/
+*.s9pk
+node_modules/
+javascript/
+deno.lock
+# Generated StartOS 0.3.5.1 Deno bundle (source stays in scripts/*.ts).
+# NOTE: unlike the sibling packaging repo we do NOT ignore all scripts/*.js —
+# our scripts/ also holds hand-written Node tools (CLI, mock, seed) that must be tracked.
+/scripts/embassy.js
+
+# ── Local runtime data (docker-compose ./data mount) ──
+/data/
+
+# ── Local credentials / secrets (defensive — nothing here should ever be committed) ──
+.env
+.env.local
+*.cookie
+secret.key
+
+# ── Local overrides / OS / editor cruft ──
+docker-compose.override.yml
+docker-compose.override.yaml
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+*.bak
+
+# Icons ARE committed for clean-clone build reproducibility (icon.png, icon-040.png,
+# icon.svg, assets/icon-master.png) — intentionally NOT ignored.
+/scripts/rental-verify.js
+
+# The compiled stylesheet IS committed (the image ships it; `make css` regenerates it).
+/app/frontend/icon.png
+tmp/

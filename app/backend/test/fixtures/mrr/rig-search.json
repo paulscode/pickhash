@@ -1,0 +1,77 @@
+{
+  "offset": 0,
+  "count": 2,
+  "total": "1622",
+  "stats": {
+    "available": { "rigs": "1480", "hash": { "hash": "36677005105509431814.600", "type": "hash", "nice": "36.68E" } },
+    "rented": { "rigs": "789", "hash": { "hash": "779967728072875606.770", "type": "hash", "nice": "779.97P" } },
+    "prices": { "lowest": "0.00000000", "last_10": "0.00000000", "last": "0.00000000" }
+  },
+  "records": [
+    {
+      "id": "800003",
+      "name": "Example Rig B",
+      "owner": "exampleowner2",
+      "type": "sha256ab",
+      "status": { "status": "available", "hours": 0, "rented": false, "online": true },
+      "online": true,
+      "xnonce": "no",
+      "poolstatus": "online",
+      "region": "eu-uk",
+      "rpi": "97.00",
+      "suggested_diff": "",
+      "optimal_diff": { "min": "14435.500", "max": "86612.999" },
+      "ndevices": "1",
+      "extensions": true,
+      "price": {
+        "type": "ph",
+        "BTC": { "currency": "BTC", "price": "0.00027505", "hour": "0.000000071055", "minhrs": "0.00000021", "maxhrs": "0.00000085", "min_rental_length": 12, "enabled": false },
+        "LTC": { "currency": "LTC", "price": "3.71578213", "hour": "0.000959910383", "minhrs": "0.00287973", "maxhrs": "0.01151892", "min_rental_length": 3, "enabled": true }
+      },
+      "minhours": "12",
+      "maxhours": "12",
+      "hashrate": {
+        "advertised": { "hash": 0.0062, "type": "ph", "nice": "6.20T" },
+        "last_5min": { "hash": "8160319.108", "nice": "8.16T", "type": "mh" },
+        "last_15min": { "hash": "6877304.163", "nice": "6.88T", "type": "mh" },
+        "last_30min": { "hash": "6956460.984", "nice": "6.96T", "type": "mh" }
+      },
+      "error_notice": null,
+      "description": "",
+      "available_status": "available",
+      "shorturl": "http://rig.rent/rigs/800003"
+    },
+    {
+      "id": "800004",
+      "name": "Example Rig C",
+      "owner": "exampleowner3",
+      "type": "sha256ab",
+      "status": { "status": "rented", "hours": "63.7708", "rented": true, "online": true, "rental_id": "5650499" },
+      "online": true,
+      "xnonce": "no",
+      "poolstatus": "online",
+      "region": "eu-ru",
+      "rpi": "100.00",
+      "suggested_diff": "",
+      "optimal_diff": { "min": "535510.480", "max": "3213062.882" },
+      "ndevices": "1",
+      "extensions": true,
+      "price": {
+        "type": "ph",
+        "BTC": { "currency": "BTC", "price": "0.00049500", "hour": "0.000004743750", "minhrs": "0.00011385", "maxhrs": "0.00045540", "min_rental_length": 24, "enabled": true }
+      },
+      "minhours": "24",
+      "maxhours": "96",
+      "hashrate": {
+        "advertised": { "hash": 0.23, "type": "ph", "nice": "230.00T" },
+        "last_5min": { "hash": "278322449.241", "nice": "278.32T", "type": "mh" },
+        "last_15min": { "hash": "239666553.513", "nice": "239.67T", "type": "mh" },
+        "last_30min": { "hash": "226781254.937", "nice": "226.78T", "type": "mh" }
+      },
+      "error_notice": null,
+      "description": "",
+      "available_status": "available",
+      "shorturl": "http://rig.rent/rigs/800004"
+    }
+  ]
+}

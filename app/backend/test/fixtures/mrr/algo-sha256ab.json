@@ -1,0 +1,20 @@
+{
+  "name": "sha256ab",
+  "display": "SHA256 Asicboost",
+  "suggested_price": { "amount": "0.00052820", "currency": "BTC", "unit": "ph*day" },
+  "stats": {
+    "available": { "rigs": "1466", "hash": { "hash": "36674.141105509", "unit": "ph", "nice": "36.67E" } },
+    "rented": { "rigs": "790", "hash": { "hash": "780.19772807288", "unit": "ph", "nice": "780.20P" } },
+    "prices": {
+      "lowest": { "amount": "0.00050000", "currency": "BTC", "unit": "ph*day" },
+      "last_10": { "amount": "0.00068910", "currency": "BTC", "unit": "ph*day" },
+      "last_20": { "amount": "0.00063408", "currency": "BTC", "unit": "ph*day" },
+      "last_30": { "amount": "0.00059616", "currency": "BTC", "unit": "ph*day" },
+      "last": { "amount": "0.00052500", "currency": "BTC", "unit": "ph*day" }
+    }
+  },
+  "new": false,
+  "hot": true,
+  "hashtype": "ph",
+  "pool_option1": null
+}

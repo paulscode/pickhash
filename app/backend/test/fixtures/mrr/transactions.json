@@ -1,0 +1,9 @@
+{
+  "_note": "GET /account/transactions after a rental. Types are Capitalized; the 3% fee is a separate 'Rental Fee' row. amount is sometimes number, sometimes string — Number() everything. Addresses/txids scrubbed.",
+  "total": "3", "returned": 3, "start": 0, "limit": 8,
+  "transactions": [
+    { "id": "2000012", "type": "Rental Fee", "currency": "BTC", "amount": -4.5e-7, "when": "2024-01-01 23:39:49 UTC", "rental": "9000001", "rig": "800001", "status": "Cleared", "pending_seconds": 0 },
+    { "id": "2000011", "type": "Payment", "currency": "BTC", "amount": -0.0000150, "when": "2024-01-01 23:39:49 UTC", "rental": "9000001", "rig": "800001", "status": "Cleared", "pending_seconds": 0 },
+    { "id": "2000013", "type": "Deposit", "currency": "BTC", "amount": "0.00050000", "when": "2024-01-01 22:28:04 UTC", "txid": "<scrubbed>", "status": "Cleared", "pending_seconds": 0 }
+  ]
+}

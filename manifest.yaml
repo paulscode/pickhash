@@ -1,0 +1,119 @@
+id: pickhash
+title: "Pickhash"
+version: 0.1.0.0
+release-notes: "Initial release."
+license: MIT
+wrapper-repo: "https://github.com/paulscode/pickhash"
+upstream-repo: "https://github.com/paulscode/pickhash"
+support-site: "https://github.com/paulscode/pickhash/issues"
+marketing-site: "https://github.com/paulscode/pickhash"
+build: ["make"]
+description:
+  short: "Rent Bitcoin hashrate on your own terms."
+  long: |
+    Pickhash autonomously rents Bitcoin SHA-256 hashrate from the marketplace
+    and points it at your own pool. Set a target hashrate and a budget; Pickhash
+    finds good deals, provisions rigs, verifies delivery, and keeps you at target
+    — all from a single dashboard. Optionally pair it with HashGG to auto-discover
+    your public stratum endpoint.
+assets:
+  license: LICENSE
+  icon: icon.png
+  instructions: instructions.md
+main:
+  type: docker
+  image: main
+  entrypoint: "docker_entrypoint.sh"
+  args: []
+  mounts:
+    main: /root
+  gpu-acceleration: false
+hardware-requirements:
+  arch:
+    - x86_64
+    - aarch64
+health-checks:
+  web:
+    name: "Dashboard"
+    success-message: "The Pickhash dashboard is reachable."
+    type: docker
+    image: main
+    system: false
+    entrypoint: check-web.sh
+    args: []
+    mounts: {}
+    # Run inside the main container so 127.0.0.1:3030 reaches the running app; the
+    # harness pipes the elapsed run-time (ms) on stdin for the startup-grace window.
+    io-format: json
+    inject: true
+  mrr:
+    name: "Rental API Reachable"
+    success-message: "The rental API host is reachable (advisory — Pickhash remains available even if it is not)."
+    type: docker
+    image: main
+    system: false
+    entrypoint: check-mrr.sh
+    args: []
+    mounts: {}
+    io-format: json
+    inject: true
+volumes:
+  main:
+    type: data
+interfaces:
+  main:
+    name: "Pickhash Dashboard"
+    description: "Web UI for renting Bitcoin hashrate on your own terms"
+    tor-config:
+      port-mapping:
+        80: "3030"
+    lan-config:
+      443:
+        ssl: true
+        internal: 3030
+    ui: true
+    protocols:
+      - tcp
+      - http
+dependencies:
+  hashgg:
+    version: ">=0.6.0"
+    requirement:
+      type: "opt-in"
+      how: "Select HashGG as your endpoint source in setup to auto-discover your public stratum endpoint."
+    description: "HashGG exposes your Datum Gateway stratum port to the internet so Pickhash can auto-discover your public endpoint. Optional — you can enter an endpoint manually instead."
+    config: ~
+config:
+  get:
+    type: script
+  set:
+    type: script
+properties:
+  type: script
+backup:
+  create:
+    type: docker
+    image: compat
+    system: true
+    entrypoint: compat
+    args:
+      - duplicity
+      - create
+      - /mnt/backup
+      - /root
+    mounts:
+      BACKUP: "/mnt/backup"
+      main: "/root/data"
+  restore:
+    type: docker
+    image: compat
+    system: true
+    entrypoint: compat
+    args:
+      - duplicity
+      - restore
+      - /mnt/backup
+      - /root
+    mounts:
+      BACKUP: "/mnt/backup"
+      main: "/root/data"

@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pickhash</title>
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/dashboard.min.css">
+  <style>
+    /* Base chrome copied from the shared dashboard idiom (dark navy + ember). */
+    body { background-color: #0a0e27; color: #e5e7eb; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #141b34; }
+    ::-webkit-scrollbar-thumb { background: #283764; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3d4f7c; }
+    @keyframes pulse-neon { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .animate-pulse-neon { animation: pulse-neon 2s ease-in-out infinite; }
+    .card-hover { transition: all .3s ease; box-shadow: 0 4px 6px -1px rgba(0,0,0,.3); }
+    .card-hover:hover { box-shadow: 0 0 20px rgba(255,122,26,.2); }  /* ember glow */
+    .tab-active { border-bottom: 2px solid #ffbe0b; color: #ffbe0b; }
+    [x-cloak] { display: none !important; }
+    /* Info affordance (agent-wallet pattern): a subtle inline icon that toggles an
+       inline tip right beneath the item — not a badge, not a modal. */
+    .pk-info { display: inline-flex; align-items: center; margin-left: .35rem; color: #6b7280;
+      cursor: pointer; vertical-align: middle; transition: color .15s ease; }
+    .pk-info:hover { color: #ff7a1a; }
+    .pk-info svg { width: .85rem; height: .85rem; }
+    /* Self-contained anchor + popover positioning (independent of the Tailwind build, so
+       a stale dashboard.min.css can't drop the card off-screen). */
+    .pk-anchor { position: relative; display: inline-flex; align-items: center; }
+    /* Anchored popover card: floats just below the clicked icon, doesn't shift layout. */
+    .pk-pop { position: absolute; top: 100%; left: 0; margin-top: .45rem; width: 16rem; max-width: 78vw;
+      z-index: 30; padding: .625rem .75rem; border-radius: .5rem; background: #141b34; border: 1px solid #283764;
+      box-shadow: 0 12px 28px -8px rgba(0,0,0,.7); color: #e5e7eb;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11.5px; line-height: 1.55;
+      font-weight: 400; text-transform: none; letter-spacing: normal; white-space: normal; text-align: left; }
+    .pk-pop-right { left: auto; right: 0; }
+  </style>
+
+  <!-- Vendored, same-origin, SRI-pinned. Load order: helpers + our component
+       registration before Alpine, so alpine:init fires after registration. -->
+  <script defer src="/vendor/lucide-0.469.0.min.js"
+          integrity="sha384-hJnF5AwidE18GSWTAGHv3ByzzvfNZ1Tcx5y1UUV3WkauuMCEzBJBMSwSt/PUPXnM"
+          crossorigin="anonymous"></script>
+  <script defer src="/vendor/qrcode-1.4.4.min.js"
+          integrity="sha384-0RsG1yo/crf/1Qc14sho26SXXOTngNCjgJw7fuvXBt9W/OChF/Ijx+aUuBDqQwEk"
+          crossorigin="anonymous"></script>
+  <script defer src="/app.js"></script>
+  <script defer src="/vendor/alpinejs-csp-3.15.11.min.js"
+          integrity="sha384-TIk3zaxqa4vMqf5I0fQA5imzQDYj1TODC6n9XoykD/M+27VHsOJcDkic2bhwMHGN"
+          crossorigin="anonymous"></script>
+</head>
+
+<body class="bg-navy-950 text-gray-100 min-h-screen antialiased" x-data="app">
+
+  <!-- Header -->
+  <header class="bg-navy-900 border-b border-navy-700 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i data-lucide="pickaxe" class="w-5 h-5 text-neon-ember"></i>
+        <span class="font-mono text-lg text-neon-ember">Pickhash</span>
+      </div>
+      <nav class="flex items-center gap-6 text-sm font-mono text-gray-400">
+        <a href="#" @click.prevent="goDashboard()" :class="navDashClass">Dashboard</a>
+        <a href="#" @click.prevent="goMarket()" :class="navMktClass">Market</a>
+        <a href="#" @click.prevent="goHistory()" :class="navHistClass">History</a>
+        <a href="#" @click.prevent="goSettings()" :class="navSetClass">Settings</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Login (shown when a password is set but there's no valid session) -->
+  <main class="max-w-sm mx-auto px-4 py-16 space-y-4" x-show="showLogin" x-cloak>
+    <form @submit.prevent="login()" class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
+      <h2 class="font-mono text-lg text-neon-ember">Log in</h2>
+      <div x-show="error" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded-lg p-3 text-neon-pink text-sm font-mono" x-text="error"></div>
+      <!-- Hidden username so password managers can associate the credential (single-user app). -->
+      <input type="text" name="username" autocomplete="username" value="pickhash" class="hidden" aria-hidden="true" tabindex="-1" readonly>
+      <input type="password" name="password" autocomplete="current-password" x-model="loginPassword" placeholder="Password"
+             class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <button type="submit" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Log in
+      </button>
+      <p x-show="pwManaged" x-cloak class="text-gray-500 text-xs" x-text="pwManagedHint"></p>
+    </form>
+  </main>
+
+  <!-- First-run setup wizard -->
+  <main class="max-w-xl mx-auto px-4 py-8 space-y-5" x-show="showWizard" x-cloak>
+    <div class="flex items-center gap-2 text-xs font-mono text-gray-500">
+      <span>Setup</span><i data-lucide="chevron-right" class="w-3 h-3"></i>
+      <span x-text="stepLabel"></span>
+    </div>
+
+    <div x-show="busy" x-cloak class="text-neon-ember text-xs font-mono animate-pulse-neon">Working…</div>
+    <div x-show="error" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded-lg p-3 text-neon-pink text-sm font-mono" x-text="error"></div>
+
+    <!-- Step 0: dashboard password -->
+    <form x-show="s0" x-cloak @submit.prevent="submitPassword()" class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
+      <h2 class="font-mono text-lg text-neon-ember">Protect your dashboard</h2>
+      <p class="text-gray-400 text-sm">Set a password before connecting your credentials.</p>
+      <!-- Hidden username so password managers can associate the credential (single-user app). -->
+      <input type="text" name="username" autocomplete="username" value="pickhash" class="hidden" aria-hidden="true" tabindex="-1" readonly>
+      <input type="password" name="new-password" autocomplete="new-password" x-model="password" placeholder="Choose a password (8+ characters)"
+             class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <button type="submit" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Set password &amp; continue</button>
+    </form>
+
+    <!-- Step 1: MRR keys -->
+    <form x-show="s1" x-cloak @submit.prevent="submitKeys()" class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
+      <h2 class="font-mono text-lg text-neon-ember">Connect MiningRigRentals</h2>
+      <p class="text-gray-400 text-sm">Create an API key with <span class="text-white">Rental: Write</span> and <span class="text-white">Balance: Read</span> (no withdraw). Paste it below.</p>
+      <input type="text" x-model="mrrKey" autocomplete="off" placeholder="API key"
+             class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <input type="password" x-model="mrrSecret" autocomplete="off" placeholder="API secret"
+             class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <button type="submit" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Connect</button>
+    </form>
+
+    <!-- Step 2: pool endpoint -->
+    <div x-show="s2" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
+      <h2 class="font-mono text-lg text-neon-ember">Your pool endpoint</h2>
+      <p class="text-gray-400 text-xs font-mono" x-text="keyPermsText"></p>
+      <div x-show="withdrawWarn" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono">This key can withdraw — going LIVE will need an extra confirmation.</div>
+      <button type="button" @click="detect()" :disabled="busy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded-lg px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+      <form @submit.prevent="testPool()" class="space-y-3">
+        <div class="grid grid-cols-3 gap-2">
+          <input type="text" x-model="poolHost" @change="normalizeHost()" placeholder="host  (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+          <input type="text" x-model="poolPort" placeholder="port" class="no-spinner bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+        </div>
+        <input type="text" x-model="poolUser" placeholder="btcaddress.worker"
+               class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+        <button type="submit" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Test endpoint</button>
+      </form>
+      <p x-show="poolOk" x-cloak class="text-sm font-mono text-neon-green" x-text="poolReportText"></p>
+      <p x-show="poolFailed" x-cloak class="text-sm font-mono text-neon-pink" x-text="poolReportText"></p>
+      <div x-show="poolWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="poolWarning"></div>
+      <button type="button" x-show="poolOk" x-cloak @click="toFund()" :disabled="busy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Continue</button>
+    </div>
+
+    <!-- Step 3: fund -->
+    <div x-show="s3" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
+      <h2 class="font-mono text-lg text-neon-ember">Fund your balance</h2>
+      <p class="text-gray-400 text-sm">Deposit BTC to MiningRigRentals. Three confirmations are required — deposit before you need it.</p>
+      <div id="depositQr" class="bg-white inline-block p-2 rounded"></div>
+      <div class="font-mono text-xs text-white break-all" x-text="depositAddr"></div>
+      <div class="font-mono text-sm text-neon-yellow">Confirmed: <span x-text="depositConfirmed"></span> sats</div>
+      <button type="button" @click="finish()" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Finish &amp; open dashboard</button>
+    </div>
+  </main>
+
+  <!-- Regular app -->
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6" x-show="showApp" x-cloak>
+
+    <!-- Balance (prominent) + deposit -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-4 card-hover">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-gray-500 font-mono text-xs uppercase tracking-wide flex items-center">
+            Balance
+            <span class="pk-anchor"><button type="button" @click="toggleInfo('balance')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipBalance" x-cloak class="pk-pop" x-text="infoTipText"></div></span>
+          </div>
+          <div class="font-mono tabular-nums text-2xl text-neon-yellow mt-0.5" x-text="balanceBig"></div>
+          <div x-show="hasUnconfirmed" x-cloak class="text-gray-500 font-mono text-xs mt-0.5" x-text="balanceUnconfText"></div>
+        </div>
+        <button type="button" @click="openDeposit()" class="bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow font-medium rounded-lg px-4 py-2.5 hover:bg-neon-yellow/20 transition-colors font-mono text-sm flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i> Deposit</button>
+      </div>
+    </div>
+
+    <!-- Alert strip -->
+    <div x-show="hasAlerts" x-cloak class="space-y-2">
+      <template x-for="a in alertsList" :key="a.id">
+        <div :class="a.chipClass" class="flex items-center justify-between gap-3 border rounded-lg px-3 py-2 font-mono text-xs">
+          <span class="flex items-center gap-2"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 flex-shrink-0"></i><span x-text="a.text"></span></span>
+          <button type="button" @click="ackAlert(a.id)" class="opacity-70 hover:opacity-100 flex-shrink-0">dismiss</button>
+        </div>
+      </template>
+    </div>
+
+    <!-- Hero: delivered vs target + the star chart -->
+    <div x-show="hasMetrics" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 card-hover space-y-4">
+      <div class="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div class="text-gray-500 font-mono text-xs uppercase tracking-wide">Delivered hashrate</div>
+          <div class="font-mono tabular-nums text-4xl text-white mt-1 flex items-baseline gap-2">
+            <span x-text="heroDelivered"></span><span class="text-lg text-gray-500" x-text="heroUnit"></span>
+            <span class="text-sm font-medium ml-2" :class="heroPctClass" x-text="heroPct"></span>
+          </div>
+          <div class="text-gray-500 font-mono text-xs mt-0.5" x-text="heroTarget"></div>
+        </div>
+        <div class="text-right space-y-1">
+          <button @click="openModeModal()" :class="heroChipClass" class="px-2 py-1 rounded border font-mono text-xs inline-flex items-center gap-1 hover:opacity-80 transition-opacity" title="Change run mode"><span x-text="heroChip"></span><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+          <div class="font-mono text-xs text-gray-400" x-text="heroSpent"></div>
+          <div class="font-mono text-[11px] text-gray-600" x-text="heroBudget"></div>
+        </div>
+      </div>
+
+      <!-- Range selector -->
+      <div class="flex gap-1.5 font-mono text-[11px]">
+        <button type="button" @click="setRange('6h')" :class="cls6h" class="px-2 py-0.5 rounded border transition-colors">6h</button>
+        <button type="button" @click="setRange('24h')" :class="cls24h" class="px-2 py-0.5 rounded border transition-colors">24h</button>
+        <button type="button" @click="setRange('7d')" :class="cls7d" class="px-2 py-0.5 rounded border transition-colors">7d</button>
+        <button type="button" @click="setRange('all')" :class="clsAll" class="px-2 py-0.5 rounded border transition-colors">all</button>
+      </div>
+
+      <!-- Delivered chart (the centerpiece): gradient area, glow line, dashed target, crosshair.
+           NOTE: no <template x-for> inside <svg> — Alpine cannot scope a loop var in SVG foreign content.
+           Gridlines are one server-built path; axis labels are HTML below/beside. -->
+      <div class="flex justify-between items-center font-mono text-[10px] text-gray-600"><span x-text="dYMaxLabel"></span></div>
+      <svg viewBox="0 0 800 240" class="w-full" style="height:auto" @mousemove="onCrosshair($event)" @mouseleave="hideCrosshair()">
+        <defs>
+          <linearGradient id="dfill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#ff7a1a" stop-opacity="0.45"></stop>
+            <stop offset="100%" stop-color="#ff7a1a" stop-opacity="0"></stop>
+          </linearGradient>
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2.4" result="b"></feGaussianBlur>
+            <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+          </filter>
+        </defs>
+        <path :d="dGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+        <!-- Single delivered area (fallback when there are no per-rental samples yet) -->
+        <path x-show="showSingleArea" :d="dArea" fill="url(#dfill)"></path>
+        <!-- Stacked per-rental bands: top-5 rigs + others (fixed slots, no x-for in SVG) -->
+        <path :d="band0" :fill="fill0" opacity="0.9"></path>
+        <path :d="band1" :fill="fill1" opacity="0.9"></path>
+        <path :d="band2" :fill="fill2" opacity="0.9"></path>
+        <path :d="band3" :fill="fill3" opacity="0.9"></path>
+        <path :d="band4" :fill="fill4" opacity="0.9"></path>
+        <path :d="band5" :fill="fill5" opacity="0.9"></path>
+        <path :d="dTargetPath" stroke="#ffbe0b" stroke-width="1" stroke-dasharray="5 4" fill="none" opacity="0.85"></path>
+        <path :d="dLine" stroke="#ffd9b0" stroke-width="1.5" fill="none" filter="url(#glow)" stroke-linejoin="round"></path>
+        <g x-show="crossShow" x-cloak>
+          <line :x1="crossX" y1="12" :x2="crossX" y2="220" stroke="#ffbe0b" stroke-width="0.5" opacity="0.6"></line>
+          <rect :x="tipX" y="6" width="84" height="18" rx="3" fill="#141b34" stroke="#283764"></rect>
+          <text :x="tipTextX" y="19" fill="#e5e7eb" font-size="10" text-anchor="middle" x-text="tipText"></text>
+        </g>
+      </svg>
+      <div class="flex justify-between font-mono text-[10px] text-gray-600">
+        <template x-for="(lbl, i) in dXLabels" :key="i"><span x-text="lbl"></span></template>
+      </div>
+      <!-- Per-rental band legend (top-5 + others) -->
+      <div x-show="hasBands" x-cloak class="flex flex-wrap gap-x-4 gap-y-1 pt-1">
+        <template x-for="l in deliveredLegend" :key="l.key">
+          <span class="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
+            <span :style="l.style" class="w-2.5 h-2.5 rounded-sm inline-block"></span><span x-text="l.label"></span>
+          </span>
+        </template>
+      </div>
+    </div>
+
+    <!-- Spend + Market charts -->
+    <div x-show="hasMetrics" x-cloak class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-2 card-hover">
+        <div class="flex justify-between text-gray-500 font-mono text-xs uppercase tracking-wide"><span>Cumulative spend</span><span class="text-[10px] normal-case text-gray-600" x-text="sYMaxLabel"></span></div>
+        <svg viewBox="0 0 800 240" class="w-full" style="height:auto">
+          <defs><linearGradient id="sfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06ffa5" stop-opacity="0.3"></stop><stop offset="100%" stop-color="#06ffa5" stop-opacity="0"></stop></linearGradient></defs>
+          <path :d="sGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+          <path :d="sArea" fill="url(#sfill)"></path>
+          <path :d="sCeilPath" stroke="#ff006e" stroke-width="1" stroke-dasharray="5 4" fill="none" opacity="0.7"></path>
+          <path :d="sLine" stroke="#06ffa5" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+        </svg>
+        <div class="flex justify-between font-mono text-[10px] text-gray-600">
+          <template x-for="(lbl, i) in sXLabels" :key="i"><span x-text="lbl"></span></template>
+        </div>
+        <div class="font-mono text-[11px] text-gray-600" x-text="sCeilLabel"></div>
+      </div>
+
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-2 card-hover">
+        <div class="flex justify-between text-gray-500 font-mono text-xs uppercase tracking-wide"><span>Market price</span><span class="text-[10px] normal-case text-gray-600" x-text="mYMaxLabel"></span></div>
+        <svg viewBox="0 0 800 240" class="w-full" style="height:auto">
+          <path :d="mGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+          <path :d="mLast10" stroke="#7aa2f7" stroke-width="2" fill="none" stroke-linejoin="round" stroke-dasharray="6 4"></path>
+          <path :d="mLowest" stroke="#ffb347" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+          <path :d="mPayLine" stroke="#ff006e" stroke-width="1.5" fill="none" stroke-dasharray="2 3" opacity="0.85"></path>
+        </svg>
+        <div class="flex justify-between font-mono text-[10px] text-gray-600">
+          <template x-for="(lbl, i) in mXLabels" :key="i"><span x-text="lbl"></span></template>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-mono text-[11px] text-gray-600" x-text="mLegend"></span>
+          <span x-show="hvAvail" x-cloak :class="hvBadgeClass" class="border rounded px-2 py-0.5 text-[10px] font-mono" x-text="hvBadge"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rehearsal result (DRY-RUN): nothing purchased -->
+    <div x-show="showRehearsal" x-cloak class="bg-navy-900 border border-neon-yellow/30 rounded-lg p-6 space-y-3">
+      <div class="flex items-center gap-2 text-neon-yellow font-mono text-sm">
+        <i data-lucide="flask-conical" class="w-4 h-4"></i><span x-text="rehearsalBanner"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left font-mono text-xs">
+          <thead class="text-gray-600"><tr><th class="py-1 pr-3 font-normal">Rig</th><th class="py-1 pr-3 font-normal">Region</th><th class="py-1 pr-3 font-normal">Hashrate</th><th class="py-1 font-normal">Cost</th></tr></thead>
+          <tbody class="text-gray-300">
+            <!-- Rig name/region are untrusted third-party strings: x-text only. -->
+            <template x-for="row in rehearsalRows" :key="row.id">
+              <tr class="border-t border-navy-800">
+                <td class="py-1 pr-3 text-white truncate max-w-[12rem]" x-text="row.name"></td>
+                <td class="py-1 pr-3" x-text="row.region"></td>
+                <td class="py-1 pr-3 tabular-nums" x-text="row.hash"></td>
+                <td class="py-1 tabular-nums" x-text="row.cost"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Active rentals (LIVE session) -->
+    <div x-show="hasSession" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-3 card-hover">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2">
+          <h2 class="font-mono text-neon-ember text-lg flex items-center gap-2"><i data-lucide="gauge" class="w-4 h-4"></i> Active session</h2>
+          <span :class="heroChipClass" class="px-2 py-0.5 rounded border font-mono text-[10px]" x-text="heroChip"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-gray-500" x-text="sessionSummary"></span>
+          <span x-show="sessionWinding" x-cloak class="font-mono text-[10px] text-neon-yellow border border-neon-yellow/30 rounded px-2 py-0.5">winding down</span>
+          <button x-show="stopBtnShow" @click="stopAsk()" class="font-mono text-xs text-gray-400 border border-navy-600 rounded px-2 py-1 hover:text-neon-pink hover:border-neon-pink/40 transition-colors">Stop session</button>
+          <span x-show="stopConfirm" x-cloak class="flex items-center gap-1">
+            <button @click="stopSession()" :disabled="stopBusy" class="font-mono text-xs text-neon-pink border border-neon-pink/40 rounded px-2 py-1 hover:bg-neon-pink/10 transition-colors disabled:opacity-50"><span x-show="stopBusy" x-cloak class="animate-pulse-neon">● </span>Confirm stop</button>
+            <button @click="stopCancel()" class="font-mono text-xs text-gray-400 border border-navy-600 rounded px-2 py-1 hover:text-white transition-colors">Cancel</button>
+          </span>
+        </div>
+      </div>
+      <div x-show="stopConfirm" x-cloak class="font-mono text-[11px] text-gray-500" x-text="stopNote"></div>
+      <div x-show="sessionWinding" x-cloak class="font-mono text-[11px] text-gray-500">Winding down — not renting any more. Your paid rentals keep running until they expire, then the session ends. (MRR time can't be cancelled.)</div>
+      <div x-show="hasRentals" x-cloak class="overflow-x-auto">
+        <table class="w-full text-left font-mono text-xs">
+          <thead class="text-gray-600"><tr><th class="py-1 pr-3 font-normal">Rig</th><th class="py-1 pr-3 font-normal">Region</th><th class="py-1 pr-3 font-normal">Hashrate</th><th class="py-1 pr-3 font-normal">Health</th><th class="py-1 pr-3 font-normal">Cost</th><th class="py-1 font-normal"></th></tr></thead>
+          <tbody class="text-gray-300">
+            <template x-for="row in rentals" :key="row.id">
+              <tr class="border-t border-navy-800">
+                <td class="py-1 pr-3 text-white truncate max-w-[12rem]" x-text="row.name"></td>
+                <td class="py-1 pr-3" x-text="row.region"></td>
+                <td class="py-1 pr-3 tabular-nums" x-text="row.hash"></td>
+                <td class="py-1 pr-3 whitespace-nowrap"><span :class="row.chipClass" :title="row.healthTitle" class="px-2 py-0.5 rounded border cursor-help" x-text="row.health"></span><span x-show="row.pctText" x-cloak class="ml-1.5 tabular-nums" :class="row.pctClass" x-text="row.pctText"></span></td>
+                <td class="py-1 pr-3 tabular-nums" x-text="row.cost"></td>
+                <td class="py-1"><button type="button" x-show="row.canMessage" @click="openMessages(row)" class="border border-navy-600 text-gray-400 hover:text-neon-ember hover:border-neon-ember/40 rounded px-2 py-0.5 text-[10px] font-mono transition-colors">Message</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="!hasRentals" x-cloak class="font-mono text-xs text-gray-500" x-text="emptyRentalsNote"></div>
+    </div>
+
+    <!-- Quote card: three linked fields (fill any two, the locked one is solved for) -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 card-hover space-y-5">
+      <div class="flex items-center justify-between">
+        <h1 class="text-neon-ember font-mono text-lg flex items-center gap-2"><i data-lucide="pickaxe" class="w-4 h-4"></i> Rent Hashrate</h1>
+        <button @click="openModeModal()" :class="heroChipClass" class="px-2 py-1 rounded border font-mono text-xs inline-flex items-center gap-1 hover:opacity-80 transition-opacity" title="Change run mode"><span x-text="heroChip"></span><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
+      </div>
+
+      <!-- Quick / Autopilot mode toggle -->
+      <div class="flex rounded-lg overflow-hidden border border-navy-600 text-xs font-mono">
+        <button type="button" @click="setRentMode('autopilot')" :class="maClass" class="flex-1 px-3 py-2 transition-colors">Autopilot</button>
+        <button type="button" @click="setRentMode('quick')" :class="mqClass" class="flex-1 px-3 py-2 transition-colors">Quick Rent</button>
+      </div>
+
+      <!-- ============ QUICK RENT ============ -->
+      <div x-show="modeQuick" class="space-y-5">
+      <!-- Three fields -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <!-- Spend -->
+        <div class="space-y-1">
+          <span class="text-gray-500 font-mono text-xs uppercase tracking-wide flex items-center gap-1 h-6">Spend
+            <span class="pk-anchor"><button type="button" @click="toggleInfo('spend')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipSpend" x-cloak class="pk-pop" x-text="infoTipText"></div></span>
+          </span>
+          <div x-show="isSpendOut" x-cloak class="bg-navy-800/50 border border-navy-600 rounded-lg px-3 py-2.5 font-mono tabular-nums text-white text-sm" x-text="qSpendOut"></div>
+          <div x-show="isSpendOut" x-cloak class="text-neon-ember/70 font-mono text-[10px]">computed</div>
+          <input x-show="notSpendOut" type="text" inputmode="numeric" x-model="inSpend" @input="scheduleQuote()"
+                 class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" placeholder="sats">
+        </div>
+        <!-- Hashrate + unit toggle -->
+        <div class="space-y-1">
+          <div class="flex items-center justify-between h-6">
+            <span class="text-gray-500 font-mono text-xs uppercase tracking-wide flex items-center gap-1">Hashrate
+              <span class="pk-anchor"><button type="button" @click="toggleInfo('hashrate')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipHashrate" x-cloak class="pk-pop" x-text="infoTipText"></div></span>
+            </span>
+            <div class="flex rounded overflow-hidden border border-navy-600 text-[10px] font-mono">
+              <button type="button" @click="setUnit('ph')" :class="unitPhClass" class="px-1.5 py-0.5 transition-colors">PH/s</button>
+              <button type="button" @click="setUnit('th')" :class="unitThClass" class="px-1.5 py-0.5 transition-colors">TH/s</button>
+            </div>
+          </div>
+          <div x-show="isHashOut" x-cloak :class="hashBoxClass" class="border rounded-lg px-3 py-2.5 font-mono tabular-nums text-white text-sm" x-text="qHashOut"></div>
+          <div x-show="hashComputedPlain" x-cloak class="text-neon-ember/70 font-mono text-[10px]">computed</div>
+          <button type="button" x-show="hashComputedCapped" x-cloak @click="toggleInfo('hashrate')"
+                  class="flex items-center gap-1 text-neon-yellow font-mono text-[10px] hover:text-white transition-colors whitespace-nowrap">
+            <i data-lucide="alert-circle" class="w-3 h-3"></i> capped — why?
+          </button>
+          <input x-show="notHashOut" type="text" inputmode="decimal" x-model="inHash" @input="scheduleQuote()"
+                 class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" :placeholder="unitLabelText">
+        </div>
+        <!-- Duration -->
+        <div class="space-y-1">
+          <span class="text-gray-500 font-mono text-xs uppercase tracking-wide flex items-center gap-1 h-6">Duration
+            <span class="pk-anchor"><button type="button" @click="toggleInfo('duration')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipDuration" x-cloak class="pk-pop pk-pop-right" x-text="infoTipText"></div></span>
+          </span>
+          <div x-show="isDurationOut" x-cloak :class="durBoxClass" class="border rounded-lg px-3 py-2.5 font-mono tabular-nums text-white text-sm" x-text="qDurationOut"></div>
+          <div x-show="durComputedPlain" x-cloak class="text-neon-ember/70 font-mono text-[10px]">computed</div>
+          <button type="button" x-show="durComputedCapped" x-cloak @click="toggleInfo('duration')"
+                  class="flex items-center gap-1 text-neon-yellow font-mono text-[10px] hover:text-white transition-colors whitespace-nowrap">
+            <i data-lucide="alert-circle" class="w-3 h-3"></i> capped — why?
+          </button>
+          <div x-show="notDurationOut" x-cloak class="relative">
+            <input type="text" inputmode="decimal" x-model="inDays" @input="scheduleQuote()"
+                   class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 pr-12 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" placeholder="days">
+            <span class="absolute right-3 top-2.5 text-gray-600 font-mono text-xs">days</span>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- Presets + lock selector -->
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap gap-1.5">
+          <button type="button" @click="preset(250000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">250k</button>
+          <button type="button" @click="preset(500000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">500k</button>
+          <button type="button" @click="preset(1000000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">1M</button>
+          <button type="button" @click="preset(2500000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">2.5M</button>
+          <button type="button" @click="preset(5000000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">5M</button>
+        </div>
+        <div class="flex items-center gap-1.5 font-mono text-xs">
+          <span class="text-gray-600 flex items-center gap-1">solve for:
+            <span class="pk-anchor"><button type="button" @click="toggleInfo('lock')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipLock" x-cloak class="pk-pop pk-pop-right" x-text="infoTipText"></div></span>
+          </span>
+          <button type="button" @click="setCompute('spend')" :class="lockSpendClass" class="px-2 py-1 rounded border transition-colors">spend</button>
+          <button type="button" @click="setCompute('hashrate')" :class="lockHashClass" class="px-2 py-1 rounded border transition-colors">hashrate</button>
+          <button type="button" @click="setCompute('duration')" :class="lockDurClass" class="px-2 py-1 rounded border transition-colors">duration</button>
+        </div>
+      </div>
+
+      <!-- Quote status -->
+      <div x-show="quoting" x-cloak class="text-neon-ember text-xs font-mono animate-pulse-neon">Pricing…</div>
+      <div x-show="quoteError" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded-lg p-3 text-neon-pink text-sm font-mono" x-text="quoteError"></div>
+
+      <!-- Result -->
+      <div x-show="qHasQuote" x-cloak class="border-t border-navy-700 pt-4 space-y-3">
+        <div class="font-mono text-sm text-white flex items-center gap-1">Quote: <span x-text="qHeadline"></span>
+          <span class="pk-anchor"><button type="button" @click="toggleInfo('blended')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipBlended" x-cloak class="pk-pop" x-text="infoTipText"></div></span>
+        </div>
+        <div class="font-mono text-xs text-gray-400 flex items-start gap-2">
+          <i data-lucide="check-circle" class="w-3.5 h-3.5 text-neon-green mt-0.5 flex-shrink-0"></i><span x-text="qFeeLine"></span>
+          <span class="pk-anchor"><button type="button" @click="toggleInfo('market')" class="pk-info" aria-label="What is this?"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></button><div x-show="tipMarket" x-cloak class="pk-pop" x-text="infoTipText"></div></span>
+        </div>
+        <div class="font-mono text-xs text-gray-400 flex items-start gap-2 break-all">
+          <i data-lucide="network" class="w-3.5 h-3.5 text-gray-500 mt-0.5 flex-shrink-0"></i><span x-text="qPoolLine"></span>
+        </div>
+
+        <!-- Blocking notices: why you can't rent yet -->
+        <div x-show="qHasBlocking" x-cloak class="space-y-2">
+          <div class="text-neon-pink font-mono text-[10px] uppercase tracking-wide flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-3 h-3"></i> Can't rent yet</div>
+          <div x-show="qExceedsGuard" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded p-2 text-neon-pink text-xs font-mono">This exceeds your session spend guardrail — reduce the hashrate or duration, or raise the limit in Settings.</div>
+          <div x-show="qBudgetTooLow" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded p-2 text-neon-pink text-xs font-mono">Your spend is too low to rent even one rig for this long — raise the spend or shorten the duration.</div>
+          <div x-show="qInfeasibleDuration" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded p-2 text-neon-pink text-xs font-mono">No rigs offer a rental this long right now — try a shorter duration.</div>
+          <div x-show="qInsufficient" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded p-2 text-neon-pink text-xs font-mono flex items-center justify-between gap-3">
+            <span>This quote costs more than your confirmed balance. Deposit more, or lower the spend.</span>
+            <button type="button" @click="openDeposit()" class="bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow rounded px-2 py-1 hover:bg-neon-yellow/20 transition-colors flex-shrink-0">Deposit</button>
+          </div>
+        </div>
+
+        <!-- Informational notices: context about this quote -->
+        <div x-show="qHasNotes" x-cloak class="space-y-2">
+          <div class="text-gray-500 font-mono text-[10px] uppercase tracking-wide flex items-center gap-1.5"><i data-lucide="info" class="w-3 h-3"></i> Good to know</div>
+          <div x-show="qShortfall" x-cloak class="bg-navy-800 border border-navy-600 rounded p-2 text-gray-400 text-xs font-mono" x-text="qShortfallText"></div>
+          <div x-show="qMaxCapped" x-cloak class="bg-navy-800 border border-navy-600 rounded p-2 text-gray-400 text-xs font-mono" x-text="qMaxCappedText"></div>
+          <div x-show="qCapped" x-cloak class="bg-navy-800 border border-navy-600 rounded p-2 text-gray-400 text-xs font-mono">Your spend was trimmed to your session guardrail.</div>
+          <div x-show="qDiffEdge" x-cloak class="bg-navy-800 border border-navy-600 rounded p-2 text-gray-400 text-xs font-mono">Some rigs sit outside their pool's optimal difficulty range. They normally still deliver full hashrate — the health chips will flag any that don't.</div>
+        </div>
+
+        <!-- Rig breakdown expander -->
+        <button type="button" @click="toggleBreakdown()" class="text-neon-ember/80 hover:text-neon-ember font-mono text-xs flex items-center gap-1">
+          <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i> Show rig breakdown
+        </button>
+        <div x-show="breakdownOpen" x-cloak class="overflow-x-auto">
+          <table class="w-full text-left font-mono text-xs">
+            <thead class="text-gray-600">
+              <tr><th class="py-1 pr-3 font-normal">Rig</th><th class="py-1 pr-3 font-normal">Region</th><th class="py-1 pr-3 font-normal">RPI</th><th class="py-1 pr-3 font-normal">Hashrate</th><th class="py-1 font-normal">Cost</th></tr>
+            </thead>
+            <tbody class="text-gray-300">
+              <!-- Rig name/owner/region are untrusted third-party strings: x-text only, never x-html. -->
+              <template x-for="rig in qRigs" :key="rig.id">
+                <tr class="border-t border-navy-800">
+                  <td class="py-1 pr-3 text-white truncate max-w-[10rem]" x-text="rig.name"></td>
+                  <td class="py-1 pr-3" x-text="rig.region"></td>
+                  <td class="py-1 pr-3 tabular-nums" x-text="rig.rpi"></td>
+                  <td class="py-1 pr-3 tabular-nums" x-text="rig.hash"></td>
+                  <td class="py-1 tabular-nums" x-text="rig.cost"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Balance + CTA -->
+        <div class="flex items-center justify-between pt-2">
+          <span class="font-mono text-xs text-gray-500" x-text="qBalance"></span>
+          <button type="button" @click="reviewRent()" :disabled="qCannotRent" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-mono text-sm">Review &amp; Rent →</button>
+        </div>
+      </div>
+      </div><!-- /modeQuick -->
+
+      <!-- ============ AUTOPILOT ============ -->
+      <div x-show="modeAutopilot" x-cloak class="space-y-4">
+        <p class="text-gray-500 font-mono text-[11px] leading-relaxed">Autopilot holds your target hashrate — renting the cheapest reliable rigs and topping up as they expire — until the budget or the time cap runs out. It fills in gradually, a rig at a time. Nothing is spent in DRY-RUN.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="space-y-1">
+            <div class="flex items-center justify-between h-6">
+              <span class="text-gray-500 font-mono text-xs uppercase tracking-wide">Target</span>
+              <div class="flex rounded overflow-hidden border border-navy-600 text-[10px] font-mono">
+                <button type="button" @click="setUnit('ph')" :class="unitPhClass" class="px-1.5 py-0.5 transition-colors">PH/s</button>
+                <button type="button" @click="setUnit('th')" :class="unitThClass" class="px-1.5 py-0.5 transition-colors">TH/s</button>
+              </div>
+            </div>
+            <input type="text" inputmode="decimal" x-model="apTarget" class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" :placeholder="unitLabelText">
+          </div>
+          <div class="space-y-1">
+            <span class="text-gray-500 font-mono text-xs uppercase tracking-wide flex items-center h-6">Time cap</span>
+            <div class="relative">
+              <input type="text" inputmode="decimal" x-model="apDays" class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 pr-12 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" placeholder="days">
+              <span class="absolute right-3 top-2.5 text-gray-600 font-mono text-xs">days</span>
+            </div>
+          </div>
+          <div class="space-y-1">
+            <div class="flex items-center justify-between h-6">
+              <span class="text-gray-500 font-mono text-xs uppercase tracking-wide">Budget</span>
+              <button type="button" @click="apMax()" :disabled="apMaxBusy" class="text-neon-ember/80 hover:text-neon-ember font-mono text-[10px] uppercase tracking-wide transition-colors disabled:opacity-60"><span x-show="apMaxBusy" x-cloak class="animate-pulse-neon">● </span>max</button>
+            </div>
+            <div class="relative">
+              <input type="text" inputmode="numeric" x-model="apBudget" class="no-spinner w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 pr-12 text-white font-mono tabular-nums text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none" placeholder="sats">
+              <span class="absolute right-3 top-2.5 text-gray-600 font-mono text-xs">sats</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <button type="button" @click="apPreset(500000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">500k</button>
+          <button type="button" @click="apPreset(1000000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">1M</button>
+          <button type="button" @click="apPreset(2500000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">2.5M</button>
+          <button type="button" @click="apPreset(5000000)" class="px-2 py-1 rounded border border-navy-600 text-gray-400 hover:text-white font-mono text-xs transition-colors">5M</button>
+        </div>
+        <div x-show="apError" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded-lg p-3 text-neon-pink text-sm font-mono" x-text="apError"></div>
+        <div x-show="apHasEstimate" x-cloak class="border-t border-navy-700 pt-4 space-y-2 font-mono text-sm">
+          <div class="text-gray-500 text-[10px] uppercase tracking-wide">Estimate</div>
+          <div class="flex justify-between"><span class="text-gray-500">Rigs to hold target</span><span class="text-white tabular-nums" x-text="apRigsText"></span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Burn rate</span><span class="text-white tabular-nums" x-text="apBurnText"></span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Est. spend (through cap)</span><span class="text-neon-yellow tabular-nums" x-text="apSpendText"></span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Budget runway</span><span class="text-white tabular-nums" x-text="apRunwayText"></span></div>
+          <div x-show="apShortfall" x-cloak class="bg-navy-800 border border-navy-600 rounded p-2 text-neon-yellow text-xs" x-text="apShortfallText"></div>
+          <p class="text-gray-600 text-[10px] leading-relaxed pt-1">Estimate only — actual spend depends on live market prices and rig availability, and never exceeds your budget cap.</p>
+        </div>
+        <div x-show="apStarted" x-cloak class="bg-neon-green/10 border border-neon-green/30 rounded-lg p-3 text-neon-green text-sm font-mono" x-text="apStartedText"></div>
+        <div class="flex items-center justify-end gap-3 pt-1">
+          <span x-show="apBusy" x-cloak class="text-neon-ember text-xs font-mono animate-pulse-neon" x-text="apBusyText"></span>
+          <button type="button" @click="apPreview()" :disabled="apBusy" class="bg-navy-800 border border-navy-600 text-gray-300 rounded-lg px-4 py-2.5 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm">Preview</button>
+          <button type="button" x-show="apHasEstimate" @click="startAutopilot()" :disabled="apBusy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green font-medium rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm">Start Autopilot</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Review & confirm modal -->
+    <div x-show="showReview" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 max-w-md w-full space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="font-mono text-lg text-neon-ember">Review &amp; Rent</h2>
+          <span :class="reviewBadgeClass" class="px-2 py-1 rounded border font-mono text-xs" x-text="reviewBadge"></span>
+        </div>
+        <div class="space-y-1 font-mono">
+          <div class="text-white text-sm" x-text="qHeadline"></div>
+          <div class="text-gray-400 text-xs flex items-start gap-2"><i data-lucide="check-circle" class="w-3.5 h-3.5 text-neon-green mt-0.5 flex-shrink-0"></i><span x-text="qFeeLine"></span></div>
+          <div class="text-gray-400 text-xs break-all flex items-start gap-2"><i data-lucide="network" class="w-3.5 h-3.5 text-gray-500 mt-0.5 flex-shrink-0"></i><span x-text="qPoolLine"></span></div>
+        </div>
+        <div class="border-t border-navy-700 pt-3 space-y-1 font-mono text-sm">
+          <div class="flex justify-between"><span class="text-gray-500">Duration</span><span class="text-white" x-text="qDurationOut"></span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Total (fee incl.)</span><span class="text-neon-yellow tabular-nums" x-text="qTotal"></span></div>
+        </div>
+        <div x-show="reconfirm" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="reconfirmText"></div>
+        <div x-show="reviewError" x-cloak class="bg-neon-pink/10 border border-neon-pink/30 rounded p-2 text-neon-pink text-xs font-mono" x-text="reviewError"></div>
+        <div class="flex gap-3 justify-end pt-2">
+          <button type="button" @click="closeReview()" class="border border-navy-600 text-gray-400 hover:text-white rounded-lg px-4 py-2.5 font-mono text-sm transition-colors">Cancel</button>
+          <button type="button" @click="confirmRent()" :disabled="reviewBusy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green font-medium rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm"><span x-show="reviewBusy" x-cloak class="animate-pulse-neon">● </span>Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Owner messaging modal. Owner-authored username + message are UNTRUSTED: x-text only. -->
+    <div x-show="showMsgModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click="closeMessages()">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-5 w-full max-w-lg space-y-3" @click.stop>
+        <div class="flex items-center justify-between">
+          <h2 class="font-mono text-neon-ember text-sm flex items-center gap-2"><i data-lucide="message-square" class="w-4 h-4"></i> Message owner — <span class="text-gray-300 truncate max-w-[16rem]" x-text="msgRigName"></span></h2>
+          <button type="button" @click="closeMessages()" class="text-gray-500 hover:text-white font-mono text-xs">✕</button>
+        </div>
+        <div class="max-h-72 overflow-y-auto space-y-2 border border-navy-800 rounded p-2 bg-navy-800/40">
+          <div x-show="msgThreadEmpty" x-cloak class="font-mono text-xs text-gray-500">No messages yet — start the conversation below.</div>
+          <template x-for="(m, i) in msgThread" :key="i">
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-2 font-mono text-[10px]">
+                <span :class="m.nameClass" x-text="m.username"></span>
+                <span x-show="m.is_support" x-cloak class="text-neon-yellow border border-neon-yellow/30 rounded px-1">support</span>
+                <span class="text-gray-600" x-text="m.whenText"></span>
+              </div>
+              <div class="font-mono text-xs text-gray-200 whitespace-pre-wrap break-words" x-text="m.message"></div>
+            </div>
+          </template>
+        </div>
+        <div x-show="msgError" x-cloak class="font-mono text-xs text-neon-pink" x-text="msgError"></div>
+        <div class="flex gap-2">
+          <textarea x-model="msgInput" rows="2" placeholder="Message the rig owner…" class="flex-1 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-xs focus:border-neon-ember/50 focus:outline-none resize-none"></textarea>
+          <button type="button" @click="sendMessage()" :disabled="msgBusy" class="self-end bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-xs rounded px-3 py-1.5 hover:bg-neon-ember/20 transition-colors disabled:opacity-50">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deposit modal -->
+    <div x-show="showDeposit" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click="closeDeposit()">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 max-w-sm w-full space-y-4 text-center" @click.stop>
+        <div class="flex items-center justify-between">
+          <h2 class="font-mono text-lg text-neon-ember flex items-center gap-2"><i data-lucide="bitcoin" class="w-4 h-4"></i> Deposit BTC</h2>
+          <button type="button" @click="closeDeposit()" class="text-gray-500 hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        <p class="text-gray-400 text-sm">Send BTC to your MiningRigRentals balance. Three confirmations are required before it can be spent.</p>
+        <div id="dashDepositQr" class="bg-white inline-block p-2 rounded"></div>
+        <div class="font-mono text-xs text-white break-all" x-text="depositAddr2"></div>
+        <div class="font-mono text-sm text-neon-yellow" x-text="balanceBig"></div>
+      </div>
+    </div>
+
+    <!-- Run-mode switch (DRY-RUN <-> LIVE) -->
+    <div x-show="showModeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click="closeModeModal()">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 max-w-md w-full space-y-4" @click.stop>
+        <div class="flex items-center justify-between">
+          <h2 class="font-mono text-lg text-neon-ember flex items-center gap-2"><i data-lucide="toggle-right" class="w-4 h-4"></i> Run mode</h2>
+          <button type="button" @click="closeModeModal()" class="text-gray-500 hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        <!-- DRY-RUN now -> offer LIVE -->
+        <div x-show="!modeIsLive" x-cloak class="space-y-3">
+          <p class="text-gray-400 text-sm font-mono leading-relaxed">You're in <span class="text-neon-yellow">DRY-RUN</span> — Pickhash only rehearses; nothing is rented or spent. Switching to <span class="text-neon-green">LIVE</span> lets it rent real hashrate and spend real Bitcoin on its own, within your budget and the safety ceilings.</p>
+          <div x-show="modeNeedsTyped" x-cloak class="space-y-1 border-t border-navy-700 pt-3">
+            <p class="text-gray-400 text-xs font-mono">Your MiningRigRentals key can withdraw funds. Type <span class="text-white font-bold">LIVE</span> to confirm you want autonomous spending enabled.</p>
+            <input type="text" x-model="modeTyped" @keydown.enter="setRunMode('live')" placeholder="type LIVE" class="w-full bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-green/50 focus:outline-none">
+          </div>
+          <div x-show="modeError" x-cloak class="text-neon-pink text-xs font-mono" x-text="modeError"></div>
+          <div class="flex justify-end gap-2">
+            <button type="button" @click="closeModeModal()" class="font-mono text-sm text-gray-400 border border-navy-600 rounded-lg px-4 py-2.5 hover:text-white transition-colors">Cancel</button>
+            <button type="button" @click="setRunMode('live')" :disabled="modeBusy" class="font-mono text-sm text-neon-green border border-neon-green/40 rounded-lg px-4 py-2.5 hover:bg-neon-green/10 transition-colors disabled:opacity-50"><span x-show="modeBusy" x-cloak class="animate-pulse-neon">● </span>Go LIVE</button>
+          </div>
+        </div>
+        <!-- LIVE now -> offer DRY-RUN -->
+        <div x-show="modeIsLive" x-cloak class="space-y-3">
+          <p class="text-gray-400 text-sm font-mono leading-relaxed">You're in <span class="text-neon-green">LIVE</span> — Pickhash can rent hashrate and spend real Bitcoin. Switch back to <span class="text-neon-yellow">DRY-RUN</span> to pause all real spending (rehearsal only). Rentals you've already paid for keep running.</p>
+          <div x-show="modeError" x-cloak class="text-neon-pink text-xs font-mono" x-text="modeError"></div>
+          <div class="flex justify-end gap-2">
+            <button type="button" @click="closeModeModal()" class="font-mono text-sm text-gray-400 border border-navy-600 rounded-lg px-4 py-2.5 hover:text-white transition-colors">Cancel</button>
+            <button type="button" @click="setRunMode('dry-run')" :disabled="modeBusy" class="font-mono text-sm text-neon-yellow border border-neon-yellow/40 rounded-lg px-4 py-2.5 hover:bg-neon-yellow/10 transition-colors disabled:opacity-50"><span x-show="modeBusy" x-cloak class="animate-pulse-neon">● </span>Switch to DRY-RUN</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Session history -->
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-5" x-show="showHistory" x-cloak>
+    <h1 class="font-mono text-xl text-neon-ember flex items-center gap-2"><i data-lucide="history" class="w-5 h-5"></i> Session history</h1>
+    <div x-show="historyEmpty" x-cloak class="text-gray-500 font-mono text-sm">No completed sessions yet — your finished rentals and their effective cost will appear here.</div>
+    <template x-for="s in historySessions" :key="s.id">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-3 card-hover">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <span class="font-mono text-sm text-white" x-text="s.dateText"></span>
+          <span class="font-mono text-xs text-gray-500" x-text="s.durationText"></span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono text-xs">
+          <div><div class="text-gray-500">Spent</div><div class="text-neon-yellow tabular-nums" x-text="s.spentText"></div></div>
+          <div><div class="text-gray-500">Effective cost</div><div class="text-white tabular-nums" x-text="s.effectiveText"></div></div>
+          <div x-show="s.hasRefund" x-cloak><div class="text-gray-500">Refund</div><div class="text-neon-green tabular-nums" x-text="s.refundText"></div></div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left font-mono text-xs">
+            <thead class="text-gray-600"><tr><th class="py-1 pr-3 font-normal">Rig</th><th class="py-1 pr-3 font-normal">Region</th><th class="py-1 pr-3 font-normal">Delivered</th><th class="py-1 pr-3 font-normal">Cost</th><th class="py-1 pr-3 font-normal">Score</th><th class="py-1 font-normal"></th></tr></thead>
+            <tbody class="text-gray-300">
+              <template x-for="rg in s.rigs" :key="rg.key">
+                <tr class="border-t border-navy-800">
+                  <td class="py-1 pr-3 text-white truncate max-w-[12rem]" x-text="rg.name"></td>
+                  <td class="py-1 pr-3" x-text="rg.region"></td>
+                  <td class="py-1 pr-3 tabular-nums" :class="rg.pctClass" x-text="rg.pctText"></td>
+                  <td class="py-1 pr-3 tabular-nums" x-text="rg.costText"></td>
+                  <td class="py-1 pr-3 tabular-nums text-gray-400" x-text="rg.scoreText"></td>
+                  <td class="py-1"><button type="button" @click="toggleBlacklist(rg)" :class="rg.blClass" class="border rounded px-2 py-0.5 text-[10px] font-mono transition-colors" x-text="rg.blLabel"></button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <!-- Dispute assistant: cards for rigs that ended below MRR's 93% auto-refund threshold -->
+        <template x-for="rg in s.rigs" :key="rg.key">
+          <div x-show="rg.disputable" x-cloak class="bg-neon-flame/10 border border-neon-flame/30 rounded-lg p-3 space-y-2">
+            <div class="font-mono text-xs text-neon-flame flex items-center gap-2"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 flex-shrink-0"></i><span x-text="rg.name"></span> under-delivered (<span x-text="rg.pctText"></span>)</div>
+            <div class="font-mono text-[11px] text-gray-400" x-text="rg.deadlineText"></div>
+            <div class="font-mono text-[11px] text-gray-500 leading-relaxed">MRR automatically reviews rentals that average below 93% and usually auto-refunds the under-delivered difference — you often don't need to do anything. File a Support Ticket only if that auto-refund doesn't come through.</div>
+            <div class="flex flex-wrap gap-2">
+              <a :href="rg.disputeUrl" target="_blank" rel="noopener noreferrer" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember rounded px-3 py-1.5 hover:bg-neon-ember/25 transition-colors font-mono text-xs">File dispute on MRR →</a>
+              <button type="button" @click="copyEvidence(rg.evidenceText)" class="border border-navy-600 text-gray-400 hover:text-white rounded px-3 py-1.5 font-mono text-xs">Copy evidence</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+  </main>
+
+  <!-- ============ MARKET ============ -->
+  <main class="max-w-5xl mx-auto px-4 py-6 space-y-6" x-show="showMarket" x-cloak>
+    <div x-show="marketEmpty" x-cloak class="text-gray-500 font-mono text-sm">No market snapshots yet — they’re captured every few minutes once the engine is running with MRR configured.</div>
+
+    <!-- Hash Value: your pay-rate vs the market rate -->
+    <div x-show="hvAvail" x-cloak class="bg-navy-900 border rounded-lg p-5 space-y-3" :class="hvBadgeClass">
+      <div class="flex items-center justify-between">
+        <h2 class="font-mono text-neon-ember text-lg">Hash value — your deal vs market</h2>
+        <span class="border rounded px-2 py-1 text-xs font-mono" :class="hvBadgeClass" x-text="hvBadge"></span>
+      </div>
+      <div class="grid grid-cols-3 gap-3 font-mono">
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">You pay</div><div class="text-white text-lg tabular-nums" x-text="hvPay"></div><div class="text-gray-600 text-[10px]">sats/PH·day (advertised)</div></div>
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Market (last-10 avg)</div><div class="text-white text-lg tabular-nums" x-text="hvMarket"></div><div class="text-gray-600 text-[10px]">sats/PH·day</div></div>
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Effective</div><div class="text-white text-lg tabular-nums" x-text="hvEff"></div><div class="text-gray-600 text-[10px]">sats/PH·day (delivered)</div></div>
+      </div>
+    </div>
+    <div x-show="hvShowHint" x-cloak class="bg-navy-900 border border-navy-600 rounded-lg p-4 font-mono text-xs text-gray-500">
+      Start a session to compare your pay-rate against the market rate.
+    </div>
+
+    <!-- Cheap-now + summary -->
+    <div x-show="hasMarket" x-cloak class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="sm:col-span-1 bg-navy-900 border rounded-lg p-5 flex flex-col justify-center" :class="cheapClass">
+        <div class="font-mono text-xs text-gray-500 uppercase tracking-wide">Right now</div>
+        <div class="font-mono text-2xl font-bold" x-text="cheapText"></div>
+        <div class="font-mono text-[11px] text-gray-400 mt-1 leading-relaxed" x-text="cheapSub"></div>
+      </div>
+      <div class="sm:col-span-2 bg-navy-900 border border-navy-700 rounded-lg p-5 flex items-center">
+        <div class="font-mono text-sm text-gray-300" x-text="mktSummary"></div>
+      </div>
+    </div>
+
+    <!-- Depth: cumulative available TH by price -->
+    <div x-show="depthHasData" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-2 card-hover">
+      <div class="flex justify-between text-gray-500 font-mono text-xs uppercase tracking-wide"><span>Market depth — available hashrate by price</span><span class="text-[10px] normal-case text-gray-600" x-text="depthYMaxLabel"></span></div>
+      <svg viewBox="0 0 800 240" class="w-full" style="height:auto">
+        <defs><linearGradient id="dpfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffb347" stop-opacity="0.25"></stop><stop offset="100%" stop-color="#ffb347" stop-opacity="0"></stop></linearGradient></defs>
+        <path :d="depthGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+        <path :d="depthLine" stroke="#ffb347" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+      </svg>
+      <div class="flex justify-between font-mono text-[10px] text-gray-600">
+        <template x-for="(lbl, i) in depthXLabels" :key="i"><span x-text="lbl"></span></template>
+      </div>
+      <div class="font-mono text-[11px] text-gray-600">X: price (sats/PH·day) · Y: cumulative TH available at or below that price</div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Price history -->
+      <div x-show="phHasData" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-2 card-hover">
+        <div class="flex justify-between text-gray-500 font-mono text-xs uppercase tracking-wide"><span>Price history (30d)</span><span class="text-[10px] normal-case text-gray-600" x-text="phYMaxLabel"></span></div>
+        <svg viewBox="0 0 800 240" class="w-full" style="height:auto">
+          <path :d="phGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+          <path :d="phLast10" stroke="#7aa2f7" stroke-width="2" fill="none" stroke-linejoin="round" stroke-dasharray="6 4"></path>
+          <path :d="phLowest" stroke="#ffb347" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+          <path :d="phPayLine" stroke="#ff006e" stroke-width="1.5" fill="none" stroke-dasharray="2 3" opacity="0.85"></path>
+        </svg>
+        <div class="flex justify-between font-mono text-[10px] text-gray-600">
+          <template x-for="(lbl, i) in phXLabels" :key="i"><span x-text="lbl"></span></template>
+        </div>
+        <div class="font-mono text-[11px] text-gray-600" x-text="phLegend"></div>
+      </div>
+
+      <!-- Region availability -->
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-3 card-hover">
+        <div class="text-gray-500 font-mono text-xs uppercase tracking-wide">Availability by region</div>
+        <div x-show="regionsEmpty" x-cloak class="font-mono text-xs text-gray-500">—</div>
+        <template x-for="rg in marketRegions" :key="rg.region">
+          <div class="space-y-1">
+            <div class="flex justify-between font-mono text-xs"><span class="text-gray-300" x-text="rg.region"></span><span class="text-gray-400 tabular-nums" x-text="rg.thText"></span></div>
+            <div class="h-2 bg-navy-800 rounded overflow-hidden"><div class="h-full bg-neon-ember/60 rounded" :style="rg.style"></div></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ SETTINGS ============ -->
+  <main class="max-w-3xl mx-auto px-4 py-6 space-y-6" x-show="showSettings" x-cloak>
+    <template x-for="group in settingsGroups" :key="group.ns">
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+        <h2 class="font-mono text-neon-ember text-lg" x-text="group.title"></h2>
+        <template x-for="f in group.fields" :key="f.key">
+          <div class="space-y-1 border-t border-navy-800 pt-3">
+            <div class="flex items-center justify-between gap-3">
+              <label class="font-mono text-sm text-gray-300" x-text="f.label"></label>
+              <div class="flex items-center gap-2">
+                <input x-show="f.isNum" type="text" inputmode="decimal" x-model="f.value" class="w-32 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm text-right focus:border-neon-ember/50 focus:outline-none">
+                <input x-show="f.isText" type="text" x-model="f.value" class="w-44 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+                <input x-show="f.isBool" type="checkbox" x-model="f.value" class="w-4 h-4 accent-neon-ember">
+                <select x-show="f.isEnum" x-model="f.value" class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm">
+                  <template x-for="opt in f.values" :key="opt"><option :value="opt" x-text="opt"></option></template>
+                </select>
+                <span class="font-mono text-xs text-gray-500 w-16" x-text="f.unit"></span>
+              </div>
+            </div>
+            <p class="font-mono text-[11px] text-gray-500 leading-relaxed" x-text="f.help"></p>
+          </div>
+        </template>
+        <div class="flex items-center gap-3 pt-2">
+          <button type="button" @click="saveGroup(group)" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors">Save</button>
+          <span x-show="group.saved" x-cloak class="font-mono text-xs text-neon-green">Saved ✓</span>
+          <span x-show="group.error" x-cloak class="font-mono text-xs text-neon-pink" x-text="group.error"></span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Connection: MiningRigRentals API credentials -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+      <h2 class="font-mono text-neon-ember text-lg">MiningRigRentals API</h2>
+      <p class="font-mono text-xs text-gray-400" x-text="skUser"></p>
+      <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Replace the API key and secret. Requires Rental: Write and Balance: Read (no withdraw). Changing keys resets the run mode to DRY-RUN.</p>
+      <input type="text" x-model="skKey" autocomplete="off" placeholder="New API key" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <input type="password" x-model="skSecret" autocomplete="off" placeholder="New API secret" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <div class="flex items-center gap-3">
+        <button type="button" @click="updateKeys()" :disabled="skBusy" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="skBusy" x-cloak class="animate-pulse-neon">● </span>Update credentials</button>
+        <span x-show="skReport" x-cloak class="font-mono text-xs" :class="skReportClass" x-text="skReport"></span>
+      </div>
+    </div>
+
+    <!-- Connection: stratum endpoint + worker -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+      <h2 class="font-mono text-neon-ember text-lg">Stratum endpoint</h2>
+      <p class="font-mono text-xs text-gray-400">Current: <span class="text-white" x-text="seCurrent"></span></p>
+      <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the worker username (btcaddress.worker). Each rig reports as your-worker-r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving; new rentals use the saved endpoint.</p>
+      <button type="button" x-show="seHashggAvail" x-cloak @click="seDetect()" :disabled="seBusy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+      <div class="grid grid-cols-3 gap-2">
+        <input type="text" x-model="seHost" placeholder="host (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+        <input type="text" x-model="sePort" placeholder="port" class="no-spinner bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      </div>
+      <input type="text" x-model="seWorker" placeholder="btcaddress.worker" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+      <div class="flex items-center gap-3">
+        <button type="button" @click="saveEndpoint()" :disabled="seBusy" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="seBusy" x-cloak class="animate-pulse-neon">● </span>Test &amp; save endpoint</button>
+        <span x-show="seReport" x-cloak class="font-mono text-xs" :class="seReportClass" x-text="seReport"></span>
+      </div>
+      <div x-show="seWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="seWarning"></div>
+    </div>
+
+    <!-- Diagnostics (read-only) -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-3">
+      <h2 class="font-mono text-neon-ember text-lg">Diagnostics</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+        <div><div class="text-gray-500 uppercase tracking-wide">MRR</div><div class="text-white" x-text="diagText.mrr"></div></div>
+        <div><div class="text-gray-500 uppercase tracking-wide">Run mode</div><div class="text-white" x-text="diagText.mode"></div></div>
+        <div><div class="text-gray-500 uppercase tracking-wide">Engine tick</div><div class="text-white" x-text="diagText.tick"></div></div>
+        <div><div class="text-gray-500 uppercase tracking-wide">HashGG host</div><div class="text-white" x-text="diagText.hashgg"></div></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Component styleguide (reachable at /styleguide) -->
+  <main class="max-w-7xl mx-auto px-4 py-6 space-y-8" x-show="onStyleguide" x-cloak>
+    <div>
+      <h1 class="font-mono text-xl text-neon-ember">Component styleguide</h1>
+      <p class="text-gray-500 font-mono text-xs mt-1">The building blocks every screen reuses. Ember is primary; green = healthy, pink = error/offline, yellow = attention.</p>
+    </div>
+
+    <!-- Cards -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Cards</h2>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="bg-navy-900 border border-navy-700 rounded-lg p-6">
+          <div class="text-gray-500 font-mono text-xs">Delivered</div>
+          <div class="font-mono tabular-nums text-3xl text-white mt-1">123.4 <span class="text-base text-gray-500">TH/s</span></div>
+        </div>
+        <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 card-hover">
+          <div class="text-gray-500 font-mono text-xs">Card with hover glow</div>
+          <div class="font-mono tabular-nums text-3xl text-neon-yellow mt-1">412,882 <span class="text-base text-gray-500">sats</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Inputs -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Inputs</h2>
+      <div class="grid gap-4 md:grid-cols-3">
+        <input type="text" placeholder="Spend (sats)"
+               class="no-spinner bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:ring-1 focus:ring-neon-ember/20 focus:outline-none">
+        <input type="text" placeholder="Hashrate (TH/s)"
+               class="no-spinner bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:ring-1 focus:ring-neon-ember/20 focus:outline-none">
+        <input type="text" placeholder="Duration"
+               class="no-spinner bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:ring-1 focus:ring-neon-ember/20 focus:outline-none">
+      </div>
+    </section>
+
+    <!-- Buttons: the tinted idiom generalizes to every accent -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Buttons</h2>
+      <div class="flex flex-wrap gap-3">
+        <button class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors">Review &amp; Rent</button>
+        <button class="bg-neon-green/10 border border-neon-green/30 text-neon-green font-medium rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors">Confirm</button>
+        <button class="bg-neon-pink/10 border border-neon-pink/30 text-neon-pink font-medium rounded-lg px-4 py-2.5 hover:bg-neon-pink/20 transition-colors">Stop session</button>
+        <button class="bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow font-medium rounded-lg px-4 py-2.5 hover:bg-neon-yellow/20 transition-colors">Deposit</button>
+      </div>
+    </section>
+
+    <!-- Error box -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Error box</h2>
+      <div class="bg-neon-pink/10 border border-neon-pink/30 rounded-lg p-3 text-neon-pink text-sm font-mono">
+        Wrong secret — check the API key and try again.
+      </div>
+    </section>
+
+    <!-- Health chips -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Health chips</h2>
+      <div class="flex flex-wrap gap-2 font-mono text-xs">
+        <span class="px-2 py-1 rounded bg-neon-yellow/10 text-neon-yellow border border-neon-yellow/30">RAMPING</span>
+        <span class="px-2 py-1 rounded bg-neon-green/10 text-neon-green border border-neon-green/30">HEALTHY</span>
+        <span class="px-2 py-1 rounded bg-neon-flame/10 text-neon-flame border border-neon-flame/30">DEGRADED</span>
+        <span class="px-2 py-1 rounded bg-neon-pink/10 text-neon-pink border border-neon-pink/30">OFFLINE</span>
+        <span class="px-2 py-1 rounded bg-navy-800 text-gray-400 border border-navy-600">ENDED</span>
+      </div>
+    </section>
+
+    <!-- Run-mode chips -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Run mode</h2>
+      <div class="flex flex-wrap gap-2 font-mono text-xs">
+        <span class="px-2 py-1 rounded bg-neon-yellow/10 text-neon-yellow border border-neon-yellow/30">DRY-RUN</span>
+        <span class="px-2 py-1 rounded bg-neon-green/10 text-neon-green border border-neon-green/30">LIVE</span>
+        <span class="px-2 py-1 rounded bg-navy-800 text-gray-400 border border-navy-600">PAUSED</span>
+      </div>
+    </section>
+
+    <!-- Sample chart frame (hand-rolled SVG, themed via fill-/stroke- utilities) -->
+    <section class="space-y-3">
+      <h2 class="font-mono text-sm text-gray-400 uppercase tracking-wide">Chart frame</h2>
+      <div class="bg-navy-900 border border-navy-700 rounded-lg p-4">
+        <svg viewBox="0 0 400 120" class="w-full h-32">
+          <!-- grid -->
+          <line x1="0" y1="30" x2="400" y2="30" class="stroke-navy-700" stroke-width="1"/>
+          <line x1="0" y1="60" x2="400" y2="60" class="stroke-navy-700" stroke-width="1"/>
+          <line x1="0" y1="90" x2="400" y2="90" class="stroke-navy-700" stroke-width="1"/>
+          <!-- delivered area + line -->
+          <path d="M0,90 L80,70 L160,74 L240,50 L320,44 L400,52 L400,120 L0,120 Z" class="fill-neon-ember/20"/>
+          <path d="M0,90 L80,70 L160,74 L240,50 L320,44 L400,52" class="stroke-neon-ember" fill="none" stroke-width="2"/>
+          <!-- target line (dashed) -->
+          <line x1="0" y1="48" x2="400" y2="48" class="stroke-neon-yellow" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="4" y="14" class="fill-gray-500 text-[10px] font-mono">TH/s</text>
+        </svg>
+      </div>
+    </section>
+  </main>
+
+</body>
+</html>

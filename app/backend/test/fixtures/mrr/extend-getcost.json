@@ -1,0 +1,14 @@
+[
+  {
+    "rentalid": "9000001",
+    "rigid": "800001",
+    "maxhrs": "96",
+    "current_hrs": 3,
+    "currency": "BTC",
+    "rate": { "price": "0.00050000", "hashrate": 0.25, "type": "ph" },
+    "cost": "0.00000521",
+    "success": true,
+    "message": "Not extended.",
+    "new_hrs": 4
+  }
+]

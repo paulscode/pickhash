@@ -1,0 +1,7 @@
+{
+  "BTC": { "confirmed": "0.00050000", "unconfirmed": "0.00000000" },
+  "LTC": { "confirmed": "0.00000000", "unconfirmed": "0.00000000" },
+  "ETH": { "confirmed": "0.00000000", "unconfirmed": "0.00000000" },
+  "BCH": { "confirmed": "0.00000000", "unconfirmed": "0.00000000" },
+  "DOGE": { "confirmed": "0.00000000", "unconfirmed": "0.00000000" }
+}

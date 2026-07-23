@@ -1,0 +1,41 @@
+{
+  "_note": "Synthetic end-of-rental capture (fabricated ids/amounts/telemetry). Preserves the real MRR shape of GET /rental/[id]/log + /graph + /account/transactions so the dispute evidence parser is exercised against the true field layout. A clean run: no offline periods.",
+  "log": {
+    "rentalid": "9000001",
+    "view": "renter",
+    "rental_log": [
+      { "id": "1000004", "time": "2024-01-01 03:00:02 UTC", "msg": "Rental #9000001 has finished." },
+      { "id": "1000003", "time": "2024-01-01 00:00:50 UTC", "msg": "Rental #9000001 has started." },
+      { "id": "1000002", "time": "2024-01-01 00:00:50 UTC", "msg": "Rental #9000001 of length 3/hr has been successfully paid for with a cost of 0.00001500 BTC at 0.0005 BTC per PHash/Day." },
+      { "id": "1000001", "time": "2024-01-01 00:00:49 UTC", "msg": "Rental request #9000001 has been created." }
+    ]
+  },
+  "graph": {
+    "rentalid": "9000001",
+    "rigid": "800001",
+    "chartdata": {
+      "time_start": "2024-01-01 00:00:49",
+      "time_end": "2024-01-01 03:00:49",
+      "timestamp_start": "1700000000",
+      "timestamp_end": "1700010800",
+      "bars": "[1700000000000,2.5E+14],[1700000060000,2.48E+14],[1700000120000,2.51E+14],[1700000180000,2.49E+14],[1700000240000,2.5E+14],[1700000300000,2.52E+14]",
+      "average": "[1700000000000,2.5E+14],[1700000060000,2.49E+14],[1700000120000,2.5E+14],[1700000180000,2.5E+14],[1700000240000,2.5E+14],[1700000300000,2.5E+14]",
+      "rejected": "[1700000000000,0],[1700000060000,0],[1700000120000,0],[1700000180000,0],[1700000240000,0],[1700000300000,0]",
+      "rentals": "none",
+      "offline": "none",
+      "pooloffline": "none"
+    },
+    "hashtype": "ph",
+    "advertised": { "raw": "250000000000000.000", "hashtype": 0.25 }
+  },
+  "tx": {
+    "total": "2",
+    "returned": 2,
+    "start": 0,
+    "limit": 20,
+    "transactions": [
+      { "id": "2000002", "type": "Rental Fee", "currency": "BTC", "amount": -4.5e-7, "when": "2024-01-01 00:00:49 UTC", "rental": "9000001", "rig": "800001", "status": "Cleared", "pending_seconds": 0 },
+      { "id": "2000001", "type": "Payment", "currency": "BTC", "amount": -0.0000150, "when": "2024-01-01 00:00:49 UTC", "rental": "9000001", "rig": "800001", "status": "Cleared", "pending_seconds": 0 }
+    ]
+  }
+}

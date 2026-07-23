@@ -1,0 +1,8 @@
+{
+  "_note": "GET /account. The exact deposit-address key path is NOT yet confirmed live (earlier checks fetched /account/balance, not /account) — this uses the documented per-currency deposit map. Verify the real shape before LIVE and adjust deposit.extractBtcAddress if needed.",
+  "username": "example",
+  "email": "user@example.com",
+  "deposit": {
+    "BTC": { "address": "bc1qexampledepositaddrxxxxxxxxxxxxxxxxxxxxx" }
+  }
+}

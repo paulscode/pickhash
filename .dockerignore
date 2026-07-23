@@ -1,0 +1,36 @@
+# Keep the build context small and free of secrets / private material.
+# The daemon receives everything not excluded here, even files the Dockerfile
+# never COPYs — so credentials and planning docs must be excluded explicitly.
+
+# Secrets — never send these to the build daemon.
+.env
+.env.local
+*.cookie
+secret.key
+data/
+
+# Private / gitignored material.
+internal_docs/
+references/
+builds/
+docker-images/
+
+# VCS + CI.
+.git
+.github
+.gitignore
+
+# Not needed in the image.
+node_modules/
+javascript/
+scripts/
+startos/
+assets/
+app/backend/test/
+*.s9pk
+*.md
+Makefile
+s9pk.mk
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore

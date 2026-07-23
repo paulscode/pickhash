@@ -1,0 +1,12 @@
+{
+  "_note": "PUT /rental response (rental-specific fields; embedded rig object omitted — see rig-search.json). renter/worker scrubbed. price.type is 'legacy'; price.paid excludes fee; use start_unix/end_unix for deadlines. average.percent starts '0.00' at create (ramp-up).",
+  "id": "9000001", "owner": "exampleowner1", "renter": "example",
+  "hashrate": { "advertised": { "hash": "0.25", "type": "ph", "nice": "250T" },
+                "average": { "hash": "0", "type": "ph", "nice": "0.00", "percent": "0.00" } },
+  "price": { "type": "legacy", "advertised": "0.00000000", "paid": "0.00001500", "currency": "BTC" },
+  "price_converted": { "type": "ph", "advertised": "0.00050000", "currency": "BTC" },
+  "length": "3", "extended": "0", "extensions": [],
+  "start": "2024-01-01 23:39:49 UTC", "end": "2024-01-01 02:39:49 UTC",
+  "start_unix": "1784677189", "end_unix": "1784687989", "ended": false, "was_refunded": false,
+  "profile_application": { "message": "Pool profile applied.", "alert": false, "original_pool_count": 1, "usable_pool_count": 1, "skipped_pool_count": 0 }
+}

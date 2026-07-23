@@ -1,0 +1,30 @@
+# Pickhash — plain-Docker deployment.
+# For StartOS or Umbrel, install the packaged app instead; this file is not used there.
+
+services:
+  pickhash:
+    build: .
+    image: paulscode/pickhash:dev
+    container_name: pickhash
+    restart: unless-stopped
+    ports:
+      # Loopback-only by default: the dashboard password is optional, so don't expose
+      # the money-spending API on the LAN out of the box. To reach it from another host,
+      # set a dashboard password first, then change this to "3030:3030" (and ideally put
+      # an authenticating reverse proxy in front).
+      - "127.0.0.1:3030:3030"
+    environment:
+      PORT: "3030"
+      DATA_DIR: /root/data
+      # Optional: point at a HashGG instance to auto-discover your public stratum
+      # endpoint. Leave unset to configure the endpoint manually in the wizard.
+      # HASHGG_HOST: host.docker.internal
+      # HASHGG_PORT: "3000"
+    volumes:
+      - ./data:/root/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/check-web.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

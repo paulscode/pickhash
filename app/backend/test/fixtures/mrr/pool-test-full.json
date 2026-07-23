@@ -1,0 +1,22 @@
+{
+  "_note": "PUT /account/pool/test method=full — a reachable endpoint whose stratum handshake times out (TCP connects, but no subscribe/auth/work). Dest scrubbed. Drives the compatibility-report failure path.",
+  "result": [
+    {
+      "source": "us-central01.miningrigrentals.com",
+      "dest": "203.0.113.10:23335",
+      "protocol": "stratum",
+      "connection": true,
+      "sub": false,
+      "auth": false,
+      "red": false,
+      "diffs": false,
+      "diff": 0,
+      "work": false,
+      "xnonce": false,
+      "ssl": false,
+      "error": "Timed out",
+      "executiontime": 6.233675099
+    }
+  ],
+  "error": []
+}

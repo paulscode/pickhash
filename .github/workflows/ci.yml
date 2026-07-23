@@ -1,0 +1,37 @@
+name: CI
+
+# Green-tests-and-builds gate on every PR and on main/tags. This is money-handling
+# software, so the pure quote/gate/packing logic is guarded by tests here before merge.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+# No repository secrets are used anywhere in this workflow: tests run entirely
+# offline against fixtures and a local mock, never against the live rental API.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to major-version tags; pin to full commit SHAs when hardening.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Unit tests
+        run: npm test
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build runtime image
+        run: docker build -t pickhash:ci .
+
+  # The StartOS 0.4.0 packaging build (npm ci && npm run build via ncc, plus a
+  # lockfile-integrity check) is added to this workflow once that packaging tree
+  # exists. It stays offline and secret-free like the jobs above.
