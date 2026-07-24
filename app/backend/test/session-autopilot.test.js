@@ -67,6 +67,20 @@ test('opens an autopilot session (row + feasibility estimate) and creates NO ren
   assert.ok(r.estimate.burnSatsHr > 0 && r.estimate.runwayHours > 0);
 });
 
+test('estimate does not over-provision a small target when only oversized rigs exist (and still starts)', async () => {
+  // Market has only 1 PH (1000 TH) rigs; target is 200 TH. The bounded packer must NOT "hold" 200
+  // with a giant rig (the old greedy did, reporting ~1000+ TH and ~6x burn). Expect a 0-cover
+  // estimate with a shortfall — but the session STILL opens, because eligible rigs exist and the
+  // live decide loop fills the gap as fitting rigs appear.
+  const big = [rawRig('b1', 1, 0.002), rawRig('b2', 1, 0.002)];
+  const r = await session.startAutopilotSession(db.get(), client(big), { targetTh: 200, timeCapHours: 24, budgetSats: 1_000_000 });
+  assert.ok(r.session_id > 0, 'session opens');
+  assert.equal(r.estimate.rigCount, 0, 'no giant rig rented to hold a small target');
+  assert.equal(r.estimate.coveredTh, 0);
+  assert.equal(r.estimate.shortfallTh, 200);
+  assert.ok(r.estimate.eligibleRigs >= 2, 'eligible rigs exist -> session is allowed');
+});
+
 test('refuses to open a second session while one is active', async () => {
   await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
   await assert.rejects(

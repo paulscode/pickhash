@@ -23,6 +23,39 @@ function sess(over = {}) {
 
 const ctx = (over = {}) => ({ now: 1000, fetchOk: true, hashrateTolerancePct: 5, minRpi: 90, ...over });
 
+// ---- packToTarget: shared overshoot-bounded packer (decide + the Autopilot estimate) ----
+
+const pack = (feasible, needed, over = {}) =>
+  decide.packToTarget(feasible, needed, { fitTol: 0.2, maxOvershoot: 1, budgetRemaining: Infinity, costOf: () => 0, ...over });
+
+test('packToTarget accumulates smaller rigs then closes the gap within fitTol', () => {
+  const r = pack([rig('a', { th: 100 }), rig('b', { th: 100 }), rig('c', { th: 100 })], 300);
+  assert.equal(r.selection.length, 3);
+  assert.equal(r.coveredTh, 300);
+});
+
+test('packToTarget does NOT over-provision a small target with a giant rig (the preview bug)', () => {
+  // Only a 1000 TH rig for a 200 TH target: overshoot 800 > 200*maxOvershoot -> take nothing,
+  // leave a bounded shortfall. The old greedy rented the giant rig and reported "holding" 1000 TH.
+  const r = pack([rig('big', { th: 1000 })], 200);
+  assert.equal(r.selection.length, 0);
+  assert.equal(r.coveredTh, 0);
+});
+
+test('packToTarget accepts a best-fit rig that overshoots within maxOvershoot', () => {
+  // 300 TH for a 200 target overshoots by 100 (== 200*0.5, within the ceiling) -> allowed.
+  const r = pack([rig('x', { th: 300 })], 200);
+  assert.equal(r.selection.length, 1);
+  assert.equal(r.coveredTh, 300);
+});
+
+test('packToTarget stops when the next rig would exceed the budget', () => {
+  const r = pack([rig('a', { th: 100 }), rig('b', { th: 100 }), rig('c', { th: 100 })], 300,
+    { budgetRemaining: 150, costOf: () => 100 });
+  assert.equal(r.selection.length, 1);   // first costs 100; a second (200) exceeds the 150 budget
+  assert.equal(r.coveredTh, 100);
+});
+
 // ---- Gating: who tops up ----
 
 test('a quick session never tops up', () => {

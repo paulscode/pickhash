@@ -28,6 +28,7 @@ const config = require('./config');
 const alerts = require('./alerts');
 const accounting = require('./engine/accounting');
 const ledgerFetch = require('./engine/ledger');
+const decide = require('./engine/decide');
 const { MrrAmbiguousError } = require('./mrr-client');
 
 const REPRICE_TOLERANCE = 0.02;   // >2% move at confirm -> re-confirm instead of executing
@@ -358,17 +359,21 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     stabilityTolerancePct: strat.stability_tolerance_pct,
     endpointDiff: endpoint ? endpoint.stratum_diff : null,
   });
-  const selected = [];
-  let coveredTh = 0;
-  let burnBtcHr = 0;
-  for (const r of cands) {
-    if (coveredTh >= targetTh) break;
-    selected.push(r); coveredTh += r.advertisedTh; burnBtcHr += r.hourBtc;
-  }
+  // Pack to the target with the SAME overshoot-bounded packer the live decide loop uses, so the
+  // preview reflects what execution will actually rent — a small target is never "held" by a giant
+  // rig (which inflated rigCount/coveredTh/burn/runway ~6x before this). costOf uses each rig's
+  // fee-inclusive minimum commit, so the budget only gates affordability here.
+  const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
+  const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 100) / 100;
+  const costOf = (r) => r.minCommitSats || 0;
+  const { selection } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: budgetSats, costOf });
+  const coveredTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
+  const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;
   return {
-    rigCount: selected.length,
+    eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    rigCount: selection.length,
     coveredTh,
     shortfallTh: Math.max(0, targetTh - coveredTh),
     burnSatsHr,
@@ -403,7 +408,10 @@ async function startAutopilotSession(conn, client, params = {}) {
     if (!endpoint || !endpoint.mrr_profile_id) throw new SessionError('no_endpoint');
 
     const estimate = await estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });
-    if (!estimate.rigCount) throw new SessionError('no_rigs_available');
+    // Start when ANY autopilot-eligible rig exists — not when the bounded pack happens to fit the
+    // target this instant. If only oversized rigs are up, decide holds what fits and fills the rest
+    // as the market shifts, rather than over-provisioning at start or refusing a workable session.
+    if (!estimate.eligibleRigs) throw new SessionError('no_rigs_available');
 
     const info = conn.prepare(
       `INSERT INTO sessions (mode, state, target_th, budget_sats, time_cap_hours, spent_sats, fee_sats, created_at, started_at)

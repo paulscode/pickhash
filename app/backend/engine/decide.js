@@ -38,6 +38,37 @@ function rentCostSats(hourBtc, hours) {
 }
 
 /**
+ * Pack cheapest-rank `feasible` rigs to cover `neededTh`, BOUNDING the overshoot of the rig that
+ * closes the gap so a small target is never filled by a hugely-oversized rig (over-provisioning we
+ * can't cancel). Rigs smaller than the gap accumulate cheapest-rank; the closing rig must fit within
+ * fitTol, else the minimum-overshoot rig within maxOvershoot, else stop (bounded shortfall). Budget-
+ * aware via costOf + budgetRemaining. Pure — the single source of truth for both the live decide loop
+ * and the pre-session estimate, so the Autopilot preview can never diverge from what execution does.
+ * Returns { selection: [rig], coveredTh, cost }.
+ */
+function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf }) {
+  const selection = [];
+  let selTh = 0;
+  let selCost = 0;
+  const used = new Set();
+  const take = (r) => { selection.push(r); selTh += r.advertisedTh; selCost += costOf(r); used.add(String(r.id)); };
+  while (selTh < neededTh - 1e-9) {
+    const gap = neededTh - selTh;
+    const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
+    if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
+    const fit = avail.find((r) => r.advertisedTh >= gap && r.advertisedTh <= gap * (1 + fitTol));
+    if (fit) { take(fit); break; }                                // closes the gap within tolerance (cheapest-rank among fits)
+    const smaller = avail.find((r) => r.advertisedTh < gap);
+    if (smaller) { take(smaller); continue; }                     // partial fill, no overshoot -> reduce the gap and re-evaluate
+    let best = null; let bestOver = Infinity;                     // every remaining rig overshoots beyond fitTol
+    for (const r of avail) { const over = r.advertisedTh - gap; if (over < bestOver) { bestOver = over; best = r; } }
+    if (best && bestOver <= gap * maxOvershoot) take(best);       // best-fit within the hard overshoot ceiling
+    break;                                                        // else leave the gap -> retry next tick, don't over-provision
+  }
+  return { selection, coveredTh: selTh, cost: selCost };
+}
+
+/**
  * Protective +1% rate cap for a rig, expressed per PH/day (what MRR's create expects).
  * Mirrors session.rateCapPhDay: priceBtcThDay is per TH/day, ×1000 to PH/day, +1% headroom.
  */
@@ -142,25 +173,9 @@ function decide(ctx = {}) {
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
   const anyAffordable = feasible.some((r) => costOf(r) <= budgetRemaining);
 
-  const selection = [];
-  let selTh = 0;
-  let selCost = 0;
-  const used = new Set();
-  const take = (r) => { selection.push({ rig: r, hours: hoursOf(r) }); selTh += r.advertisedTh; selCost += costOf(r); used.add(String(r.id)); };
-
-  while (selTh < neededTh - 1e-9) {
-    const gap = neededTh - selTh;
-    const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
-    if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
-    const fit = avail.find((r) => r.advertisedTh >= gap && r.advertisedTh <= gap * (1 + fitTol));
-    if (fit) { take(fit); break; }                                // closes the gap within tolerance (cheapest-rank among fits)
-    const smaller = avail.find((r) => r.advertisedTh < gap);
-    if (smaller) { take(smaller); continue; }                     // partial fill, no overshoot -> reduce the gap and re-evaluate
-    let best = null; let bestOver = Infinity;                     // every remaining rig overshoots beyond fitTol
-    for (const r of avail) { const over = r.advertisedTh - gap; if (over < bestOver) { bestOver = over; best = r; } }
-    if (best && bestOver <= gap * maxOvershoot) take(best);       // best-fit within the hard overshoot ceiling
-    break;                                                        // else leave the gap -> retry next tick, don't over-provision
-  }
+  // Fill the gap with the shared, overshoot-bounded packer (also used by the pre-session estimate).
+  const { selection: picked } = packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf });
+  const selection = picked.map((r) => ({ rig: r, hours: hoursOf(r) }));
 
   if (!selection.length) {
     // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
@@ -196,4 +211,4 @@ function decide(ctx = {}) {
   };
 }
 
-module.exports = { decide, contributionTh, rentCostSats, rateCapPhDay, FEE_RATE };
+module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapPhDay, FEE_RATE };
