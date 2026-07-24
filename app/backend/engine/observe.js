@@ -284,6 +284,10 @@ async function observe(conn, client, ctx = {}) {
     balance,
     endpoint,
     hashgg: hg,
+    // Whether HashGG is configured at all. Lets the tick metric distinguish "not
+    // configured" (n/a) from "configured but unreachable" (a real outage), so uptime
+    // stats don't read 0% HashGG for users who don't run it.
+    hashgg_configured: !!ctx.hashggHost,
     market: mkt,
   };
   const nextState = { rentals: nextRentals, marketAt, refundAt, pruneAt, market: mkt, balance, endpoint, hashgg: hg };

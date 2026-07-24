@@ -15,7 +15,7 @@ beforeEach(() => { db.get().prepare('DELETE FROM tick_metrics').run(); });
 const snapOk = {
   ts: 0, fetch_ok: { rentals: true }, session: { id: 1, target_th: 3000, spent_sats: 1408 },
   rentals: [{ delivered_th: 200, ended: false }], balance: { confirmed_sats: 47000, unconfirmed_sats: 0 },
-  endpoint: { ok: true }, market: { lowest: 0.0005, last10: 0.0006 }, hashgg: { reachable: true },
+  endpoint: { ok: true }, market: { lowest: 0.0005, last10: 0.0006 }, hashgg: { reachable: true }, hashgg_configured: true,
 };
 
 test('buildTickMetrics aggregates a snapshot; a null snapshot is an all-not-ok row', () => {
@@ -29,6 +29,17 @@ test('buildTickMetrics aggregates a snapshot; a null snapshot is an all-not-ok r
   assert.equal(z.mrr_ok, 0);
   assert.equal(z.endpoint_ok, 0);
   assert.equal(z.session_id, null);
+  assert.equal(z.hashgg_ok, null, 'a null snapshot leaves HashGG unknown, not "down"');
+});
+
+test('hashgg_ok is null (n/a) when HashGG is unconfigured, 1/0 only when it is', () => {
+  // Configured + reachable -> 1.
+  assert.equal(buildTickMetrics(snapOk, 0).hashgg_ok, 1);
+  // Configured but unreachable -> 0 (a real outage).
+  assert.equal(buildTickMetrics({ ...snapOk, hashgg: { reachable: false } }, 0).hashgg_ok, 0);
+  assert.equal(buildTickMetrics({ ...snapOk, hashgg: null }, 0).hashgg_ok, 0);
+  // Not configured -> null (n/a), so uptime stats don't count a HashGG "outage".
+  assert.equal(buildTickMetrics({ ...snapOk, hashgg_configured: false, hashgg: null }, 0).hashgg_ok, null);
 });
 
 test('the loop skips an overlapping tick instead of queueing it', async () => {
@@ -82,7 +93,7 @@ const snapFull = {
     { delivered_th: null, ended: false },  // null delivered -> summed as 0
   ],
   balance: { confirmed_sats: 47000, unconfirmed_sats: 1200 },
-  endpoint: { ok: true }, market: { lowest: 0.0005, last10: 0.0006 }, hashgg: { reachable: true },
+  endpoint: { ok: true }, market: { lowest: 0.0005, last10: 0.0006 }, hashgg: { reachable: true }, hashgg_configured: true,
 };
 
 test('persistTick round-trips every column of a full snapshot', () => {

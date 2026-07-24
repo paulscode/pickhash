@@ -17,13 +17,16 @@ const observeModule = require('./observe');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
-/** Per-tick aggregate row from a snapshot (pure). A null snapshot => an all-not-ok row. */
+/**
+ * Per-tick aggregate row from a snapshot (pure). A null snapshot => an all-not-ok row,
+ * with hashgg_ok left null (unknown) since we can't tell if HashGG is even configured.
+ */
 function buildTickMetrics(snapshot, now) {
   const ts = Math.floor(now / 1000);
   if (!snapshot) {
     return { ts, session_id: null, delivered_th: 0, target_th: 0, active_rentals: 0, spent_sats: 0,
       balance_confirmed_sats: null, balance_unconfirmed_sats: null, market_lowest: null, market_last10: null,
-      endpoint_ok: 0, mrr_ok: 0, hashgg_ok: 0 };
+      endpoint_ok: 0, mrr_ok: 0, hashgg_ok: null };
   }
   const s = snapshot;
   const delivered = s.rentals.reduce((a, r) => a + (r.delivered_th || 0), 0);
@@ -41,7 +44,9 @@ function buildTickMetrics(snapshot, now) {
     market_last10: s.market ? s.market.last10 : null,
     endpoint_ok: s.endpoint && s.endpoint.ok ? 1 : 0,
     mrr_ok: s.fetch_ok && s.fetch_ok.rentals ? 1 : 0,
-    hashgg_ok: s.hashgg && s.hashgg.reachable ? 1 : 0,
+    // null when HashGG isn't configured (n/a), else 1 reachable / 0 unreachable — so
+    // uptime stats never count a HashGG "outage" for users who don't run it.
+    hashgg_ok: s.hashgg_configured ? (s.hashgg && s.hashgg.reachable ? 1 : 0) : null,
   };
 }
 
