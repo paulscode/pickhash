@@ -38,12 +38,19 @@ function rentCostSats(hourBtc, hours) {
 }
 
 /**
- * Pack cheapest-rank `feasible` rigs to cover `neededTh`, BOUNDING the overshoot of the rig that
- * closes the gap so a small target is never filled by a hugely-oversized rig (over-provisioning we
- * can't cancel). Rigs smaller than the gap accumulate cheapest-rank; the closing rig must fit within
- * fitTol, else the minimum-overshoot rig within maxOvershoot, else stop (bounded shortfall). Budget-
- * aware via costOf + budgetRemaining. Pure — the single source of truth for both the live decide loop
- * and the pre-session estimate, so the Autopilot preview can never diverge from what execution does.
+ * Pack `feasible` rigs (rank-sorted cheapest-per-TH first) to cover `neededTh`, BOUNDING overshoot so
+ * a small target is never filled by a hugely-oversized rig (over-provisioning we can't cancel).
+ *
+ * Two roles, two cost metrics:
+ *   - Rigs SMALLER than the gap accumulate in rank order (cheapest per-TH — the right metric for TH
+ *     you'll fully use).
+ *   - The rig that CLOSES the gap is paid in full regardless of how much of it you need, so it's
+ *     chosen by cheapest ABSOLUTE hold-rate (delivery-adjusted), not per-TH rank — a clean fit
+ *     (<= fitTol) is preferred over a wasteful overshoot, and only overshoot within maxOvershoot is
+ *     allowed (else leave a bounded shortfall and retry next tick).
+ *
+ * Budget-aware via costOf + budgetRemaining. Pure — the single source of truth for both the live
+ * decide loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
  * Returns { selection: [rig], coveredTh, cost }.
  */
 function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf }) {
@@ -52,18 +59,27 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
   let selCost = 0;
   const used = new Set();
   const take = (r) => { selection.push(r); selTh += r.advertisedTh; selCost += costOf(r); used.add(String(r.id)); };
+  // Absolute ongoing cost to hold a rig, penalized for under-delivery — the metric for the closer,
+  // which you pay in full whether or not you use all its hashrate. cheapest() breaks ties on input
+  // (rank) order, so a rank-sorted feasible list keeps behavior stable when hold-costs are equal.
+  const del = (r) => (r.expectedDelivery > 0 ? r.expectedDelivery : 1);
+  const holdCost = (r) => (r.hourBtc || 0) / del(r);
+  const cheapest = (rigs) => rigs.reduce((a, b) => (holdCost(b) < holdCost(a) ? b : a));
+
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
     const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
-    const fit = avail.find((r) => r.advertisedTh >= gap && r.advertisedTh <= gap * (1 + fitTol));
-    if (fit) { take(fit); break; }                                // closes the gap within tolerance (cheapest-rank among fits)
+    // Clean-fit closers (cover the gap with <= fitTol overshoot): take the cheapest to HOLD.
+    const clean = avail.filter((r) => r.advertisedTh >= gap && r.advertisedTh <= gap * (1 + fitTol));
+    if (clean.length) { take(cheapest(clean)); break; }
+    // No clean fit: fill with the cheapest-per-TH rig smaller than the gap (no overshoot), then re-close.
     const smaller = avail.find((r) => r.advertisedTh < gap);
-    if (smaller) { take(smaller); continue; }                     // partial fill, no overshoot -> reduce the gap and re-evaluate
-    let best = null; let bestOver = Infinity;                     // every remaining rig overshoots beyond fitTol
-    for (const r of avail) { const over = r.advertisedTh - gap; if (over < bestOver) { bestOver = over; best = r; } }
-    if (best && bestOver <= gap * maxOvershoot) take(best);       // best-fit within the hard overshoot ceiling
-    break;                                                        // else leave the gap -> retry next tick, don't over-provision
+    if (smaller) { take(smaller); continue; }
+    // Only oversized rigs left: close with the cheapest to hold within the overshoot ceiling.
+    const over = avail.filter((r) => r.advertisedTh - gap <= gap * maxOvershoot);
+    if (over.length) { take(cheapest(over)); break; }
+    break;                                                        // every remaining rig overshoots beyond the ceiling -> shortfall
   }
   return { selection, coveredTh: selTh, cost: selCost };
 }

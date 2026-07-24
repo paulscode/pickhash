@@ -56,6 +56,25 @@ test('packToTarget stops when the next rig would exceed the budget', () => {
   assert.equal(r.coveredTh, 100);
 });
 
+test('packToTarget closes with the cheapest rig to HOLD, not the best per-TH rank', () => {
+  // Both fit the 100 TH gap within fitTol. rankFirst has the better per-TH rate (sorts first) but a
+  // higher ABSOLUTE hold-rate; the closer is paid in full, so it must pick the cheaper-to-hold rig.
+  const rankFirst = rig('rankFirst', { th: 120, hourBtc: 0.0011 });   // per-TH 9.2e-6 (ranks first)
+  const cheapHold = rig('cheapHold', { th: 100, hourBtc: 0.0010 });   // pricier per-TH, cheaper to hold
+  const r = pack([rankFirst, cheapHold], 100);
+  assert.deepEqual(r.selection.map((x) => x.id), ['cheapHold']);
+});
+
+test('packToTarget overshoot-closer minimizes hold cost, not overshoot', () => {
+  // Neither fits within fitTol (both > 120 for a 100 gap). Min-overshoot would grab tightFit (130);
+  // bigCheap (150) is cheaper to hold and still within maxOvershoot, so it wins.
+  const tightFit = rig('tightFit', { th: 130, hourBtc: 0.0013 });
+  const bigCheap = rig('bigCheap', { th: 150, hourBtc: 0.0010 });
+  const r = pack([tightFit, bigCheap], 100);
+  assert.deepEqual(r.selection.map((x) => x.id), ['bigCheap']);
+  assert.equal(r.coveredTh, 150);
+});
+
 // ---- Gating: who tops up ----
 
 test('a quick session never tops up', () => {
@@ -253,15 +272,16 @@ test('within the fit tolerance, the cheapest-rank rig among the fits is chosen',
   assert.deepEqual(r.actions.map((a) => a.rigId), ['cheapBig'], 'cheapest-rank among fitting rigs, not tightest fit');
 });
 
-test('between fit tolerance and the ceiling, the minimum-overshoot rig wins (best-fit)', () => {
-  // gap 100; no rig within +20%, but two within the +100% ceiling -> take the smaller overshoot.
+test('between fit tolerance and the ceiling, the cheapest-to-hold rig wins (even with more overshoot)', () => {
+  // gap 100; no rig within +20%, but two within the +100% ceiling. The closer is paid in full, so the
+  // cheaper-to-HOLD rig wins even though it overshoots more — you get >= the gap for less ongoing spend.
   const s = sess({ target_th: 100 });
   const market = [
-    rig('cheapHuge', { th: 190, hourBtc: 0.0001 }),  // cheapest but +90% overshoot
-    rig('dearClose', { th: 130, hourBtc: 0.0003 }),  // +30% overshoot -> best fit
+    rig('cheapHuge', { th: 190, hourBtc: 0.0001 }),  // +90% overshoot but 3x cheaper to hold
+    rig('dearClose', { th: 130, hourBtc: 0.0003 }),  // +30% overshoot but 3x the hold cost
   ];
   const r = decide.decide(ctx({ session: s, rentals: [], marketRigs: market }));
-  assert.deepEqual(r.actions.map((a) => a.rigId), ['dearClose'], 'min-overshoot beats rank once out of the fit band');
+  assert.deepEqual(r.actions.map((a) => a.rigId), ['cheapHuge'], 'min hold-cost beats min-overshoot within the ceiling');
 });
 
 test('a raised max_overshoot_pct lets a big rig fill a small gap (firm-floor policy)', () => {
