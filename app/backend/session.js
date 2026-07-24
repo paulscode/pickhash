@@ -366,8 +366,9 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
   const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 100) / 100;
   const costOf = (r) => r.minCommitSats || 0;
-  const { selection } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: budgetSats, costOf });
-  const coveredTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
+  // coveredTh is EXPECTED DELIVERED TH (the packer weights coverage by learned delivery), so the
+  // preview reflects the hashrate you'll actually hold, not headline advertised numbers.
+  const { selection, coveredTh } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: budgetSats, costOf });
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;

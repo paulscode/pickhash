@@ -75,6 +75,31 @@ test('packToTarget overshoot-closer minimizes hold cost, not overshoot', () => {
   assert.equal(r.coveredTh, 150);
 });
 
+test('packToTarget accumulates cheaper sub-gap rigs instead of a pricier single fit (path compare)', () => {
+  // Two 100 TH rigs at a cheaper per-TH beat one exact-fit 200 TH rig that is pricier -> accumulate.
+  const cheapA = rig('cheapA', { th: 100, hourBtc: 0.0010 });
+  const cheapB = rig('cheapB', { th: 100, hourBtc: 0.0010 });
+  const dearFit = rig('dearFit', { th: 200, hourBtc: 0.0022 });
+  const r = pack([cheapA, cheapB, dearFit], 200);
+  assert.deepEqual(r.selection.map((x) => x.id).sort(), ['cheapA', 'cheapB']);
+});
+
+test('packToTarget takes the single fit when closing beats accumulating (path compare, other way)', () => {
+  // One exact-fit 100 TH rig at a cheaper per-TH beats a smaller 60 TH rig that is pricier -> close.
+  const cheapFit = rig('cheapFit', { th: 100, hourBtc: 0.0010 });   // per-TH 1.0e-5
+  const dearSmall = rig('dearSmall', { th: 60, hourBtc: 0.0007 });  // per-TH 1.17e-5
+  const r = pack([cheapFit, dearSmall], 100);
+  assert.deepEqual(r.selection.map((x) => x.id), ['cheapFit']);
+});
+
+test('packToTarget covers EXPECTED DELIVERED TH (weights advertised by learned delivery)', () => {
+  // A rig advertising 100 TH but scored at 50% delivery covers only 50 TH, so a 100 TH gap needs two.
+  const half = (id) => ({ ...rig(id, { th: 100, hourBtc: 0.0010 }), expectedDelivery: 0.5 });
+  const r = pack([half('h1'), half('h2'), half('h3')], 100);
+  assert.equal(r.selection.length, 2, 'two 50%-delivery rigs cover the 100 TH delivered gap');
+  assert.ok(Math.abs(r.coveredTh - 100) < 1e-9, 'coveredTh is delivered (2 x 100 x 0.5)');
+});
+
 // ---- Gating: who tops up ----
 
 test('a quick session never tops up', () => {

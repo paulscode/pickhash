@@ -38,48 +38,55 @@ function rentCostSats(hourBtc, hours) {
 }
 
 /**
- * Pack `feasible` rigs (rank-sorted cheapest-per-TH first) to cover `neededTh`, BOUNDING overshoot so
- * a small target is never filled by a hugely-oversized rig (over-provisioning we can't cancel).
+ * Pack `feasible` rigs (rank-sorted cheapest-per-delivered-TH first) to cover `neededTh` as cheaply as
+ * possible, BOUNDING overshoot so a small target is never filled by a hugely-oversized rig.
  *
- * Two roles, two cost metrics:
- *   - Rigs SMALLER than the gap accumulate in rank order (cheapest per-TH — the right metric for TH
- *     you'll fully use).
- *   - The rig that CLOSES the gap is paid in full regardless of how much of it you need, so it's
- *     chosen by cheapest ABSOLUTE hold-rate (delivery-adjusted), not per-TH rank — a clean fit
- *     (<= fitTol) is preferred over a wasteful overshoot, and only overshoot within maxOvershoot is
- *     allowed (else leave a bounded shortfall and retry next tick).
+ * Coverage is in EXPECTED DELIVERED TH (advertised x learned delivery), so the target is held in real
+ * hashrate, not headline numbers. Each step takes whichever makes the cheapest progress toward the gap:
+ *   - a sub-gap rig (all of its delivered TH is useful) — compared by cost per delivered TH, or
+ *   - the closing rig (only `gap` of it is useful; the rest is paid overshoot) — a clean fit
+ *     (<= fitTol) preferred over a wasteful one, chosen by cheapest ABSOLUTE rate (delivery already
+ *     lives in coverage), and only overshoot within maxOvershoot allowed (else a bounded shortfall,
+ *     retried next tick).
  *
- * Budget-aware via costOf + budgetRemaining. Pure — the single source of truth for both the live
- * decide loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
- * Returns { selection: [rig], coveredTh, cost }.
+ * Budget-aware via costOf + budgetRemaining. Pure — the single source of truth for the live decide
+ * loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
+ * Returns { selection: [rig], coveredTh (expected delivered), cost }.
  */
 function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf }) {
   const selection = [];
-  let selTh = 0;
+  let selTh = 0;   // expected DELIVERED TH covered so far
   let selCost = 0;
   const used = new Set();
-  const take = (r) => { selection.push(r); selTh += r.advertisedTh; selCost += costOf(r); used.add(String(r.id)); };
-  // Absolute ongoing cost to hold a rig, penalized for under-delivery — the metric for the closer,
-  // which you pay in full whether or not you use all its hashrate. cheapest() breaks ties on input
-  // (rank) order, so a rank-sorted feasible list keeps behavior stable when hold-costs are equal.
   const del = (r) => (r.expectedDelivery > 0 ? r.expectedDelivery : 1);
-  const holdCost = (r) => (r.hourBtc || 0) / del(r);
-  const cheapest = (rigs) => rigs.reduce((a, b) => (holdCost(b) < holdCost(a) ? b : a));
+  const effTh = (r) => (r.advertisedTh || 0) * del(r);          // expected delivered TH (coverage weight)
+  const rate = (r) => (r.hourBtc || 0);                         // absolute hold cost/hr; delivery is in effTh
+  const cheapestRate = (rigs) => rigs.reduce((a, b) => (rate(b) < rate(a) ? b : a));
+  const take = (r) => { selection.push(r); selTh += effTh(r); selCost += costOf(r); used.add(String(r.id)); };
 
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
     const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
-    // Clean-fit closers (cover the gap with <= fitTol overshoot): take the cheapest to HOLD.
-    const clean = avail.filter((r) => r.advertisedTh >= gap && r.advertisedTh <= gap * (1 + fitTol));
-    if (clean.length) { take(cheapest(clean)); break; }
-    // No clean fit: fill with the cheapest-per-TH rig smaller than the gap (no overshoot), then re-close.
-    const smaller = avail.find((r) => r.advertisedTh < gap);
-    if (smaller) { take(smaller); continue; }
-    // Only oversized rigs left: close with the cheapest to hold within the overshoot ceiling.
-    const over = avail.filter((r) => r.advertisedTh - gap <= gap * maxOvershoot);
-    if (over.length) { take(cheapest(over)); break; }
-    break;                                                        // every remaining rig overshoots beyond the ceiling -> shortfall
+    // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot), by absolute rate.
+    const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap * (1 + fitTol));
+    const bestClean = clean.length ? cheapestRate(clean) : null;
+    // The cheapest sub-gap rig by cost-per-delivered-TH (feasible is rank-sorted, so the first wins).
+    const cheapSmall = avail.find((r) => effTh(r) < gap);
+    if (bestClean && cheapSmall) {
+      // Take whichever makes cheaper progress toward the gap: accumulate the sub-gap rig (all of its
+      // delivered TH is useful) vs close now (only `gap` of the closer is useful; the rest is paid
+      // overshoot). Cost per useful delivered TH: rate/effTh for the small rig, rate/gap for the closer.
+      const accumulateIsCheaper = rate(cheapSmall) / (effTh(cheapSmall) || 1) < rate(bestClean) / gap;
+      if (accumulateIsCheaper) { take(cheapSmall); continue; }
+      take(bestClean); break;
+    }
+    if (bestClean) { take(bestClean); break; }
+    if (cheapSmall) { take(cheapSmall); continue; }
+    // Only oversized rigs remain: close with the cheapest to hold within the overshoot ceiling.
+    const over = avail.filter((r) => effTh(r) - gap <= gap * maxOvershoot);
+    if (over.length) { take(cheapestRate(over)); break; }
+    break;                                                        // nothing covers the gap within the ceiling -> shortfall
   }
   return { selection, coveredTh: selTh, cost: selCost };
 }
@@ -175,22 +182,17 @@ function decide(ctx = {}) {
     return true;
   });
 
-  // Fill the gap. Pack cheapest-rank rigs, but BOUND the overshoot of the rig that closes the gap,
-  // so a small top-up isn't filled by a hugely-oversized rig — over-provisioning we can't cancel.
-  // Per closing rig, three tiers on its overshoot vs the remaining gap:
-  //   - within fitTol            -> cheapest-rank among the FITTING rigs (the normal case)
-  //   - between fitTol & maxOver -> the minimum-overshoot ("best-fit") rig
-  //   - beyond maxOver           -> take nothing; leave a bounded shortfall and retry next tick
-  //                                 (a shortfall self-heals as the market shifts; overshoot is permanent)
-  // Rigs SMALLER than the gap never overshoot, so they keep accumulating cheapest-rank as before.
+  // Fill the gap with the shared packer (also used by the pre-session estimate): accumulate the
+  // cheapest delivered-TH rigs and close with the cheapest rig that covers the gap without exceeding
+  // the overshoot ceiling. neededTh is a DELIVERED gap (target - delivered so far) and the packer's
+  // coverage is delivery-weighted, so coveredTh here is EXPECTED DELIVERED TH.
   const fitTol = (ctx.fitTolerancePct != null ? ctx.fitTolerancePct : 20) / 100;
   const maxOvershoot = (ctx.maxOvershootPct != null ? ctx.maxOvershootPct : 100) / 100;
   const hoursOf = (r) => Math.min(r.minHours || r.minRentalLength || 0, windowRemainingH);
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
   const anyAffordable = feasible.some((r) => costOf(r) <= budgetRemaining);
 
-  // Fill the gap with the shared, overshoot-bounded packer (also used by the pre-session estimate).
-  const { selection: picked } = packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf });
+  const { selection: picked, coveredTh } = packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf });
   const selection = picked.map((r) => ({ rig: r, hours: hoursOf(r) }));
 
   if (!selection.length) {
@@ -200,7 +202,6 @@ function decide(ctx = {}) {
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes };
   }
 
-  const coveredTh = selection.reduce((s, x) => s + x.rig.advertisedTh, 0);
   const shortfallTh = Math.max(0, neededTh - coveredTh);
   if (shortfallTh > 1e-9) notes.push('shortfall');
 
