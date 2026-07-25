@@ -96,6 +96,27 @@ test('runLifecycle keeps a session active while any rental still runs', async ()
   assert.equal(c.prepare('SELECT state FROM sessions WHERE id = ?').get(sid).state, 'active');
 });
 
+test('runLifecycle ends an autopilot session when the budget can no longer rent anything (before the time cap)', async () => {
+  const c = db.get();
+  const now = 5_000_000;                                  // ms
+  const startedSec = Math.floor(now / 1000) - 3600;      // 1h ago; time_cap 24h -> NOT past cap
+  // 81 sats left (8164 of 8245) — too little to rent anything; all rentals ended.
+  const sid = Number(c.prepare(
+    "INSERT INTO sessions (mode, state, target_th, budget_sats, spent_sats, time_cap_hours, created_at, started_at) VALUES ('autopilot','active',200,8245,8164,24,1,?)",
+  ).run(startedSec).lastInsertRowid);
+  c.prepare(`INSERT INTO rentals (session_id, mrr_id, rig_id, rig_name, advertised_th, length_hours, paid_sats, fee_sats, end_ts, ended, health, avg_percent, worker_name)
+             VALUES (?,1,1,'rig',100,3,4000,120,1000,1,'ended',96,'w')`).run(sid);
+  const snap = () => ({ session: c.prepare('SELECT * FROM sessions WHERE id = ?').get(sid) });
+
+  // Not 100% spent and not past the cap -> without the signal it stays active (the zombie).
+  await runLifecycle(c, snap(), now);
+  assert.equal(c.prepare('SELECT state FROM sessions WHERE id = ?').get(sid).state, 'active');
+
+  // The top-up couldn't afford anything -> end now instead of stranding it until the time cap.
+  await runLifecycle(c, snap(), now, { budgetExhausted: true });
+  assert.equal(c.prepare('SELECT state FROM sessions WHERE id = ?').get(sid).state, 'ended');
+});
+
 test('runLifecycle prompts a dispute for a rental that delivered nothing (null avg_percent)', async () => {
   const c = db.get();
   const sid = seedSession([{ mrr_id: 88, ended: true, pct: null, end_ts: 1_000_000 }]);

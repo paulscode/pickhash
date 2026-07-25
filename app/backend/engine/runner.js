@@ -49,8 +49,12 @@ async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
     // spare, which is exactly the premature-end failure the soak surfaced.
     const elapsedH = s.started_at ? (nowMs / 1000 - s.started_at) / 3600 : 0;
     const pastCap = (s.time_cap_hours || 0) > 0 && elapsedH >= s.time_cap_hours;
+    // Budget is "gone" not only at exact 100% spend, but also when the remainder is too small to rent
+    // anything — the caller passes budgetExhausted when this tick's top-up found no affordable rig.
+    // Without it, a tiny unspendable remainder (e.g. 81 of 8245 sats) would strand the session as
+    // "active" with zero live rentals until the time cap.
     const budgetGone = s.budget_sats != null && (s.spent_sats || 0) >= s.budget_sats;
-    const done = s.mode !== 'autopilot' || s.state === 'winding_down' || pastCap || budgetGone;
+    const done = s.mode !== 'autopilot' || s.state === 'winding_down' || pastCap || budgetGone || !!opts.budgetExhausted;
     if (done) {
       // Reconcile the final spend against MRR's own ledger (falls back to recorded on a blip).
       const ledger = await ledgerFetch.fetchSessionLedger(opts.client, s);
@@ -148,6 +152,12 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       if (r) log({ event: 'autopilot', ran: !!r.ran, reason: r.reason || null,
                    executed: ((r.outcome && r.outcome.executed) || []).length,
                    blocked: ((r.gateResult && r.gateResult.blocked) || []).map((b) => b.reason) });
+      // The top-up wanted hashrate but couldn't afford even the cheapest rig (decide's
+      // 'no_affordable_candidate'). If we're also holding nothing, the session can't make progress —
+      // close it now instead of showing "running" with zero rigs until the time cap.
+      if (r && r.plan && (r.plan.notes || []).includes('no_affordable_candidate')) {
+        await runLifecycle(conn, snapshot, now, { client, budgetExhausted: true });
+      }
     }
   } catch (e) { log({ event: 'autopilot_error', message: String(e && e.message) }); }
   try {
