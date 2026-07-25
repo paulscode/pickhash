@@ -33,7 +33,8 @@ const DEFAULTS = {
     // the common ~1M-sat range but well below a full balance, as defense in depth.
     max_session_budget_sats: 5000000,
     max_daily_spend_sats: 10000000,
-    rate_ceiling_sats_th_hour: null, // optional hard price ceiling (sats/TH/hr); null = off
+    blended_ceiling_sats_ph_day: null, // primary price cap: max BLENDED pay-rate (sats/PH·day); null = off
+    rate_ceiling_sats_th_hour: null, // optional per-rig backstop (sats/TH/hr); null = off (auto 2× blend when a blended cap is set)
     deposit_leadtime_hours: 2,      // low-balance early warning vs the 3-conf delay
     refund_watch_days: 14,          // how long an ended rental is watched for refunds
   },
@@ -109,7 +110,8 @@ const SETTINGS = {
   guardrails: {
     max_session_budget_sats: { type: 'int', min: 0, max: 1e12, unit: 'sats', label: 'Max session budget', help: 'Hard ceiling on any one session’s spend.' },
     max_daily_spend_sats: { type: 'int', min: 0, max: 1e12, unit: 'sats', label: 'Max daily spend', help: 'Rolling 24h spend ceiling across all sessions.' },
-    rate_ceiling_sats_th_hour: { type: 'floatOrNull', min: 0, unit: 'sats/TH/hr', label: 'Rate ceiling', help: 'Optional hard price ceiling in sats per TH per hour (blank = off). A recent SHA256 rig runs ~2 sats/TH/hr.' },
+    blended_ceiling_sats_ph_day: { type: 'floatOrNull', min: 0, unit: 'sats/PH·day', label: 'Blended rate ceiling', help: 'Cap on your overall blended pay-rate — the "you" line on the market chart (blank = off). Autopilot fills the target with the cheapest rigs while keeping the average under this; it leaves a shortfall rather than overpaying. Set it in the Autopilot preview per session, or here as a standing default.' },
+    rate_ceiling_sats_th_hour: { type: 'floatOrNull', min: 0, unit: 'sats/TH/hr', label: 'Per-rig backstop', help: 'Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies. A recent SHA256 rig runs ~2 sats/TH/hr.' },
     deposit_leadtime_hours: { type: 'number', min: 0, max: 168, unit: 'h', label: 'Low-balance lead time', help: 'Warn when runway drops under this.' },
     refund_watch_days: { type: 'int', min: 0, max: 90, unit: 'days', label: 'Refund watch', help: 'How long an ended rental is watched for refunds.' },
   },

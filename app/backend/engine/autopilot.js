@@ -19,11 +19,13 @@ const DAY = 86400;
 
 function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs) {
   const strat = config.get(conn, 'strategy');
+  const guard = config.get(conn, 'guardrails');
   return {
     session,
     rentals: snapshot.rentals || [],
     now: nowSec,
     fetchOk: !!(snapshot.fetch_ok && snapshot.fetch_ok.rentals),
+    blendedCeilingSatsPhDay: guard.blended_ceiling_sats_ph_day,
     hashrateTolerancePct: strat.hashrate_tolerance_pct,
     minRpi: strat.min_rpi,
     stabilityTolerancePct: strat.stability_tolerance_pct,

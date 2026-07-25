@@ -624,7 +624,10 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (!endpoint || !endpoint.mrr_profile_id) return sendJson(res, 400, { error: 'no_endpoint' });
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });
-      return sendJson(res, 200, { estimate });
+      // Surface any standing blended ceiling so the preview pre-fills it (a deliberate setting wins over
+      // the estimate); null for a first-time user, who then defaults to the estimated blend.
+      const currentCeiling = config.getKey(conn, 'guardrails', 'blended_ceiling_sats_ph_day');
+      return sendJson(res, 200, { estimate, current_blended_ceiling_sats_ph_day: currentCeiling });
     } catch {
       return sendJson(res, 502, { error: 'estimate_failed' });
     }
@@ -638,7 +641,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     try {
       const r = await session.startAutopilotSession(conn, client, {
         targetTh: body.target_th, timeCapHours: body.time_cap_hours, budgetSats: body.budget_sats,
-        rateCeilingSatsPhDay: body.rate_ceiling_sats_ph_day,
+        blendedCeilingSatsPhDay: body.blended_ceiling_sats_ph_day,
       });
       return sendJson(res, 200, r);
     } catch (e) {

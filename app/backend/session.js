@@ -435,14 +435,13 @@ async function startAutopilotSession(conn, client, params = {}) {
     const cap = config.getKey(conn, 'guardrails', 'max_session_budget_sats');
     if (cap != null && budgetSats > cap) throw new SessionError('exceeds_guardrail');
 
-    // Optional rate ceiling from the preview. The user enters it in sats/PH·day (the unit the market
-    // chart uses); the gate enforces sats/TH·hr, so convert (÷24000: 1 PH = 1000 TH, 1 day = 24 h).
-    // Persist as the standing guardrail so the existing gate check applies to this session and onward.
-    // Blank/0 clears the cap; an absent key leaves the current setting untouched (older clients).
-    if (params.rateCeilingSatsPhDay !== undefined) {
-      const phDay = Number(params.rateCeilingSatsPhDay);
-      const thHour = Number.isFinite(phDay) && phDay > 0 ? phDay / 24000 : null;
-      config.set(conn, 'guardrails', { rate_ceiling_sats_th_hour: thHour });
+    // Optional blended rate ceiling from the preview — the max blended pay-rate ("you" line), in the
+    // sats/PH·day unit the user sees. Persist as the standing guardrail so the decide loop enforces it
+    // for this session and onward. Blank/0 clears the cap; an absent key leaves the setting untouched.
+    if (params.blendedCeilingSatsPhDay !== undefined) {
+      const phDay = Number(params.blendedCeilingSatsPhDay);
+      const cap = Number.isFinite(phDay) && phDay > 0 ? Math.round(phDay) : null;
+      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: cap });
     }
 
     const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();

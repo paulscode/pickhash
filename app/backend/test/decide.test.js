@@ -28,6 +28,52 @@ const ctx = (over = {}) => ({ now: 1000, fetchOk: true, hashrateTolerancePct: 5,
 const pack = (feasible, needed, over = {}) =>
   decide.packToTarget(feasible, needed, { fitTol: 0.2, maxOvershoot: 1, budgetRemaining: Infinity, costOf: () => 0, ...over });
 
+// ---- blended rate ceiling (per-rig cap is a backstop) ----
+// crig: a rig with a chosen blended price in sats/PH·day (priceBtcThDay = sats/PH·day ÷ 1e11).
+const crig = (id, th, satsPhDay) => rig(id, { th, hourBtc: (satsPhDay / 1e11) * th / 24 });
+const CAP = (satsPhDay) => satsPhDay / 1e11;   // sats/PH·day -> BTC/TH·day
+
+test('blended cap admits a dear rig when cheap rigs dilute the average under the cap', () => {
+  // three at 50k + one at 90k, all 10 TH -> blend (50·3+90)/4 = 60k, exactly the cap -> all rentable.
+  const feasible = [crig('a', 10, 50000), crig('b', 10, 50000), crig('c', 10, 50000), crig('d', 10, 90000)];
+  const r = pack(feasible, 40, { blendCapBtcThDay: CAP(60000), rigBackstopBtcThDay: CAP(120000) });
+  assert.equal(r.selection.length, 4);
+  assert.equal(r.coveredTh, 40);
+});
+
+test('blended cap leaves a shortfall rather than a rig that can’t be diluted under it', () => {
+  const r = pack([crig('a', 10, 50000), crig('b', 10, 50000), crig('x', 10, 200000)], 30,
+    { blendCapBtcThDay: CAP(60000), rigBackstopBtcThDay: CAP(120000) });
+  assert.equal(r.selection.length, 2, 'only the two cheap rigs; the 200k is left out');
+  assert.equal(r.coveredTh, 20);
+});
+
+test('a lower cap blocks the dear rig a higher cap admitted (the fill-vs-price dial)', () => {
+  const feasible = [crig('a', 10, 50000), crig('b', 10, 50000), crig('c', 10, 50000), crig('d', 10, 90000)];
+  const r = pack(feasible, 40, { blendCapBtcThDay: CAP(55000), rigBackstopBtcThDay: CAP(110000) });
+  assert.equal(r.selection.length, 3, '90k would push the blend to 60k > 55k -> excluded');
+  assert.equal(r.coveredTh, 30);
+});
+
+test('per-rig backstop blocks an absurd rig even when the average could absorb it', () => {
+  const many = [];
+  for (let i = 0; i < 30; i++) many.push(crig('c' + i, 10, 50000));
+  many.push(crig('absurd', 10, 300000));   // blend-wise dilutable to ~58k, but 300k > 2× cap backstop
+  const r = pack(many, 310, { blendCapBtcThDay: CAP(60000), rigBackstopBtcThDay: CAP(120000) });
+  assert.ok(!r.selection.some((x) => x.id === 'absurd'), 'the backstop rejects it despite dilution headroom');
+  assert.equal(r.coveredTh, 300);
+});
+
+test('held rentals already over cap still admit cheaper rigs that pull the average down', () => {
+  // Held: one 100k rig (10 TH) -> held blend 100k, already over a 60k cap. A 50k rig moves it to 75k
+  // (toward the cap), so it's admitted; a 110k rig would worsen it, so it's rejected.
+  const held = { heldCostRateBtcDay: CAP(100000) * 10, heldAdvTh: 10 };
+  const ok = pack([crig('cheap', 10, 50000)], 10, { blendCapBtcThDay: CAP(60000), rigBackstopBtcThDay: CAP(120000), ...held });
+  assert.equal(ok.selection.length, 1, 'a rig cheaper than the held blend is admitted to recover toward the cap');
+  const no = pack([crig('pricier', 10, 110000)], 10, { blendCapBtcThDay: CAP(60000), rigBackstopBtcThDay: CAP(120000), ...held });
+  assert.equal(no.selection.length, 0, 'a rig that would worsen an already-over-cap blend is rejected');
+});
+
 test('packToTarget accumulates smaller rigs then closes the gap within fitTol', () => {
   const r = pack([rig('a', { th: 100 }), rig('b', { th: 100 }), rig('c', { th: 100 })], 300);
   assert.equal(r.selection.length, 3);
@@ -101,6 +147,19 @@ test('packToTarget covers EXPECTED DELIVERED TH (weights advertised by learned d
 });
 
 // ---- Gating: who tops up ----
+
+test('decide honors the blended ceiling: fills with cheap rigs, leaves a shortfall, flags blend_ceiling', () => {
+  const cheap = crig('cheap', 10, 50000);
+  const dear = crig('dear', 10, 200000);   // > 2× the 60k cap backstop, and would blow the average
+  const r = decide.decide(ctx({
+    session: sess({ target_th: 20 }), rentals: [], marketRigs: [cheap, dear],
+    blendedCeilingSatsPhDay: 60000,
+  }));
+  assert.equal(r.actions.length, 1, 'only the cheap rig is rented');
+  assert.equal(r.actions[0].rigId, 'cheap');
+  assert.ok(r.shortfallTh > 0, 'a shortfall is left rather than renting the dear rig');
+  assert.ok(r.notes.includes('blend_ceiling'));
+});
 
 test('a quick session never tops up', () => {
   const r = decide.decide(ctx({ session: sess({ mode: 'quick' }), rentals: [], marketRigs: [rig(1)] }));

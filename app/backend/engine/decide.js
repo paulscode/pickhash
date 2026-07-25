@@ -29,6 +29,9 @@
 const quote = require('../quote');
 
 const FEE_RATE = quote.FEE_RATE;
+// Per-rig sanity backstop when a blended cap is set: never rent a single rig priced above this
+// multiple of the blended cap, even if cheap holdings would dilute it under the average ("seatbelt").
+const BLEND_BACKSTOP_MULT = 2;
 
 /** Fee-inclusive cost to rent a rig for `hours` (reproduces MRR's per-rental rounding). */
 function rentCostSats(hourBtc, hours) {
@@ -53,20 +56,47 @@ function rentCostSats(hourBtc, hours) {
  * loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
  * Returns { selection: [rig], coveredTh (expected delivered), cost }.
  */
-function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf }) {
+function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf,
+  blendCapBtcThDay = Infinity, rigBackstopBtcThDay = Infinity, heldCostRateBtcDay = 0, heldAdvTh = 0 }) {
   const selection = [];
   let selTh = 0;   // expected DELIVERED TH covered so far
   let selCost = 0;
+  let selRateCost = 0;   // Σ priceBtcThDay × advertisedTh over the selection (BTC/day) — for the blended cap
+  let selAdv = 0;        // Σ advertisedTh over the selection (TH)
   const used = new Set();
   const del = (r) => (r.expectedDelivery > 0 ? r.expectedDelivery : 1);
   const effTh = (r) => (r.advertisedTh || 0) * del(r);          // expected delivered TH (coverage weight)
   const rate = (r) => (r.hourBtc || 0);                         // absolute hold cost/hr; delivery is in effTh
   const cheapestRate = (rigs) => rigs.reduce((a, b) => (rate(b) < rate(a) ? b : a));
-  const take = (r) => { selection.push(r); selTh += effTh(r); selCost += costOf(r); used.add(String(r.id)); };
+  const take = (r) => {
+    selection.push(r); selTh += effTh(r); selCost += costOf(r);
+    selRateCost += (r.priceBtcThDay || 0) * (r.advertisedTh || 0); selAdv += (r.advertisedTh || 0);
+    used.add(String(r.id));
+  };
+  // Blended cap: renting r must keep the advertised-TH-weighted blend of {held + selected + r} at or
+  // under the cap — the "you" rate the user sets. Because feasible is cheapest-first, the blend rises
+  // as rigs accumulate, so a pricier rig that's rejected now can become admissible once cheap rigs
+  // dilute it (that's the point — a few dear rigs are fine if the average stays under cap). rigBackstop
+  // is a per-rig sanity limit so dilution can't sneak in an absurd rig. Both default to Infinity (off).
+  const EPS = 1 + 1e-9;
+  const blendOk = (r) => {
+    const rigRate = r.priceBtcThDay || 0;
+    if (rigRate > rigBackstopBtcThDay * EPS) return false;
+    if (!Number.isFinite(blendCapBtcThDay)) return true;
+    const curAdv = heldAdvTh + selAdv;
+    const newAdv = curAdv + (r.advertisedTh || 0);
+    if (!(newAdv > 0)) return true;
+    const curBlend = curAdv > 0 ? (heldCostRateBtcDay + selRateCost) / curAdv : 0;
+    const newBlend = (heldCostRateBtcDay + selRateCost + rigRate * (r.advertisedTh || 0)) / newAdv;
+    // Under the cap normally; but if held rentals already push the blend over (sunk cost, or the cap
+    // was lowered mid-session), still admit rigs that DON'T worsen it — i.e. cheaper ones that pull the
+    // average back down toward the cap — rather than freezing all top-ups.
+    return newBlend <= Math.max(blendCapBtcThDay, curBlend) * EPS;
+  };
 
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
-    const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
+    const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining && blendOk(r));
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
     // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot), by absolute rate.
     const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap * (1 + fitTol));
@@ -192,18 +222,31 @@ function decide(ctx = {}) {
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
   const anyAffordable = feasible.some((r) => costOf(r) <= budgetRemaining);
 
-  const { selection: picked, coveredTh } = packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf });
+  // Blended rate ceiling ("you" rate). Held rentals are sunk, so a high held blend naturally restricts
+  // what new rigs can be added (only ones cheap enough to keep the running average under the cap).
+  const pricedActive = active.filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
+  const heldCostRateBtcDay = pricedActive.reduce((s, r) => s + r.rate_btc_th_day * r.advertised_th, 0);
+  const heldAdvTh = pricedActive.reduce((s, r) => s + r.advertised_th, 0);
+  const blendCapBtcThDay = ctx.blendedCeilingSatsPhDay != null ? ctx.blendedCeilingSatsPhDay / 1e11 : Infinity;
+  const rigBackstopBtcThDay = Number.isFinite(blendCapBtcThDay) ? blendCapBtcThDay * BLEND_BACKSTOP_MULT : Infinity;
+  const capped = Number.isFinite(blendCapBtcThDay);
+
+  const { selection: picked, coveredTh } = packToTarget(feasible, neededTh, {
+    fitTol, maxOvershoot, budgetRemaining, costOf,
+    blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh,
+  });
   const selection = picked.map((r) => ({ rig: r, hours: hoursOf(r) }));
 
   if (!selection.length) {
     // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
     // overshot the small gap beyond the ceiling (no_fit) — distinct so a soak can tell them apart.
     notes.push(anyAffordable ? 'no_fit' : 'no_affordable_candidate');
+    if (capped) notes.push('blend_ceiling');   // the cap may be what's holding it back
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes };
   }
 
   const shortfallTh = Math.max(0, neededTh - coveredTh);
-  if (shortfallTh > 1e-9) notes.push('shortfall');
+  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (capped) notes.push('blend_ceiling'); }
 
   const actions = selection.map((x) => {
     const { base: paidSats, fee: feeSats } = rentCostSats(x.rig.hourBtc, x.hours);
