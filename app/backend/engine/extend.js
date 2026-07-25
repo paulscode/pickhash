@@ -50,6 +50,27 @@ function planExtend({ rental, sim, tolerancePct, budgetRemainingSats, windowRema
   return { extend: true, lengthHours: length, costSats: cost };
 }
 
+/** Advertised-TH-weighted blended pay-rate (BTC/TH·day) across a session's live rentals — the "you" rate. */
+function sessionBlend(conn, sessionId) {
+  const rows = conn.prepare('SELECT rate_btc_th_day, advertised_th FROM rentals WHERE session_id = ? AND ended = 0').all(sessionId)
+    .filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
+  const adv = rows.reduce((s, r) => s + r.advertised_th, 0);
+  return adv > 0 ? rows.reduce((s, r) => s + r.rate_btc_th_day * r.advertised_th, 0) / adv : 0;
+}
+
+/**
+ * Blend-aware extend guard (pure). The blended ceiling governs new rents in decide(); this keeps
+ * renewals consistent with it. When the live blend is already over the cap, DON'T renew a rig whose
+ * own rate is above the cap — let it expire so decide refills cheaper and the average recovers. A rig
+ * at/under the cap, or an under-cap portfolio, is always fine to extend. capBtcThDay = Infinity = off.
+ */
+function blendAllowsExtend({ rigRateBtcThDay, liveBlendBtcThDay, capBtcThDay }) {
+  if (!Number.isFinite(capBtcThDay)) return true;
+  const EPS = 1 + 1e-9;
+  if (!(rigRateBtcThDay > capBtcThDay * EPS)) return true;   // rig at/under cap: never blocks
+  return liveBlendBtcThDay <= capBtcThDay * EPS;             // dear rig: only while the portfolio is still under cap
+}
+
 /**
  * Recently attempted? Time-boxed so a DRY-RUN rehearsal or a transient decline (e.g. a momentary
  * price spike) doesn't permanently disqualify a healthy rental — it's just re-evaluated after the
@@ -147,8 +168,16 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
     ? session.time_cap_hours - (nowSec - (session.started_at || nowSec)) / 3600
     : Infinity;
   const guard = config.get(conn, 'guardrails');
+  // Blended ceiling: don't renew a dear rig once the portfolio blend is already over the cap — skip it
+  // (marked, so it's not re-simulated for the retry window) and let decide replace it cheaper.
+  const capBtcThDay = guard.blended_ceiling_sats_ph_day != null ? guard.blended_ceiling_sats_ph_day / 1e11 : Infinity;
+  const blendNow = sessionBlend(conn, session.id);
 
   for (const rental of candidates) {
+    if (!blendAllowsExtend({ rigRateBtcThDay: rental.rate_btc_th_day, liveBlendBtcThDay: blendNow, capBtcThDay })) {
+      mark(rental.mrr_id, 'declined:blend_ceiling');
+      continue;   // try the next (cheaper) candidate this tick; this rig expires and decide refills
+    }
     const askHours = Math.min(rental.length_hours || 0, windowRemainingH);
     if (!(askHours > 0)) { mark(rental.mrr_id, 'declined:no_window'); return { ran: true, decided: 'no_window' }; }
 
@@ -213,4 +242,4 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   return { ran: false, reason: 'no_extendable_candidate' };   // every candidate's sim failed transiently
 }
 
-module.exports = { planExtend, runAutoExtend, originalHourly, EXTEND_WINDOW_SEC };
+module.exports = { planExtend, runAutoExtend, originalHourly, blendAllowsExtend, sessionBlend, EXTEND_WINDOW_SEC };

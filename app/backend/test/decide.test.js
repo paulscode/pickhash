@@ -161,6 +161,16 @@ test('decide honors the blended ceiling: fills with cheap rigs, leaves a shortfa
   assert.ok(r.notes.includes('blend_ceiling'));
 });
 
+test('a budget-limited shortfall is NOT mislabeled as blend_ceiling', () => {
+  const r = decide.decide(ctx({
+    session: sess({ target_th: 20, budget_sats: 100 }),   // affords ~1 rig, not 2
+    rentals: [], marketRigs: [crig('a', 10, 50000), crig('b', 10, 50000)],
+    blendedCeilingSatsPhDay: 100000,   // a high cap that never blocks these 50k rigs
+  }));
+  assert.ok(r.shortfallTh > 0 && r.notes.includes('shortfall'), 'budget forces a shortfall');
+  assert.ok(!r.notes.includes('blend_ceiling'), 'the cap blocked nothing, so no blend_ceiling note');
+});
+
 test('a quick session never tops up', () => {
   const r = decide.decide(ctx({ session: sess({ mode: 'quick' }), rentals: [], marketRigs: [rig(1)] }));
   assert.equal(r.actions.length, 0);

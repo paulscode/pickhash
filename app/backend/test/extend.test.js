@@ -8,6 +8,22 @@ const db = require('../db');
 const extend = require('../engine/extend');
 const config = require('../config');
 
+// ---- blendAllowsExtend (pure) ----
+// Rates in BTC/TH·day: cap 60k sats/PH·day = 6e-7; a 50k rig = 5e-7; a 90k rig = 9e-7.
+const CAP = 6e-7;
+test('blendAllowsExtend: no cap -> always allowed', () => {
+  assert.equal(extend.blendAllowsExtend({ rigRateBtcThDay: 9e-7, liveBlendBtcThDay: 9e-7, capBtcThDay: Infinity }), true);
+});
+test('blendAllowsExtend: a rig at/under the cap is always allowed', () => {
+  assert.equal(extend.blendAllowsExtend({ rigRateBtcThDay: 5e-7, liveBlendBtcThDay: 9e-7, capBtcThDay: CAP }), true);
+});
+test('blendAllowsExtend: a dear rig is allowed while the portfolio blend is still under cap', () => {
+  assert.equal(extend.blendAllowsExtend({ rigRateBtcThDay: 9e-7, liveBlendBtcThDay: 5.5e-7, capBtcThDay: CAP }), true);
+});
+test('blendAllowsExtend: a dear rig is blocked once the blend is already over cap', () => {
+  assert.equal(extend.blendAllowsExtend({ rigRateBtcThDay: 9e-7, liveBlendBtcThDay: 7e-7, capBtcThDay: CAP }), false);
+});
+
 // ---- planExtend (pure) ----
 
 const rental = { paid_sats: 60_000, fee_sats: 1_800, length_hours: 3 };   // original 61,800/3 = 20,600 sats/hr

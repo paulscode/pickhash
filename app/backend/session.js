@@ -435,15 +435,6 @@ async function startAutopilotSession(conn, client, params = {}) {
     const cap = config.getKey(conn, 'guardrails', 'max_session_budget_sats');
     if (cap != null && budgetSats > cap) throw new SessionError('exceeds_guardrail');
 
-    // Optional blended rate ceiling from the preview — the max blended pay-rate ("you" line), in the
-    // sats/PH·day unit the user sees. Persist as the standing guardrail so the decide loop enforces it
-    // for this session and onward. Blank/0 clears the cap; an absent key leaves the setting untouched.
-    if (params.blendedCeilingSatsPhDay !== undefined) {
-      const phDay = Number(params.blendedCeilingSatsPhDay);
-      const cap = Number.isFinite(phDay) && phDay > 0 ? Math.round(phDay) : null;
-      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: cap });
-    }
-
     const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
     if (!endpoint || !endpoint.mrr_profile_id) throw new SessionError('no_endpoint');
 
@@ -457,6 +448,17 @@ async function startAutopilotSession(conn, client, params = {}) {
       `INSERT INTO sessions (mode, state, target_th, budget_sats, time_cap_hours, spent_sats, fee_sats, created_at, started_at)
          VALUES ('autopilot', 'active', ?, ?, ?, 0, 0, ?, ?)`,
     ).run(targetTh, budgetSats, timeCapHours, nowSec(), nowSec());
+
+    // Persist the blended ceiling from the preview only now that the session is committed — a start
+    // that bailed earlier (no endpoint / no rigs) must not have changed the standing guardrail. The
+    // value is the max blended pay-rate ("you" line) in sats/PH·day; blank/0 clears it, an absent key
+    // leaves the setting untouched.
+    if (params.blendedCeilingSatsPhDay !== undefined) {
+      const phDay = Number(params.blendedCeilingSatsPhDay);
+      const ceil = Number.isFinite(phDay) && phDay > 0 ? Math.round(phDay) : null;
+      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: ceil });
+    }
+
     return {
       session_id: Number(info.lastInsertRowid),
       mode: 'autopilot', target_th: targetTh, budget_sats: budgetSats, time_cap_hours: timeCapHours,

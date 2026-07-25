@@ -82,7 +82,7 @@ document.addEventListener('alpine:init', () => {
     mqClass: 'text-gray-500 hover:text-white', maClass: 'bg-neon-ember/15 text-neon-ember',
     apTarget: '3', apDays: '7', apBudget: '1000000',
     apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false,
-    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '',
+    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '', apRateCeilTouched: false,
     apStarted: false, apStartedText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
     skKey: '', skSecret: '', skBusy: false, skReport: '', skReportClass: '', skUser: '',
@@ -557,10 +557,12 @@ document.addEventListener('alpine:init', () => {
       this.mqClass = this.modeQuick ? on : off;
       this.maClass = this.modeAutopilot ? on : off;
       this.apError = '';
+      this.apRateCeilTouched = false;   // fresh context on a mode switch -> ceiling re-defaults on next Preview
       if (this.modeAutopilot) { this.qHasQuote = false; this.quoteError = ''; }
       else { this.apHasEstimate = false; this.apStarted = false; this.scheduleQuote(0); }
     },
     apPreset(sats) { this.apBudget = String(sats); this.apHasEstimate = false; },
+    apCeilTouched() { this.apRateCeilTouched = true; },
     async apMax() {
       this.apMaxBusy = true;
       try {
@@ -595,9 +597,11 @@ document.addEventListener('alpine:init', () => {
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
       // Pre-fill the blended rate ceiling: a standing setting wins; otherwise default to the estimated
-      // blended rate (sats/PH·day). Either way the user adjusts it before starting.
-      this.apRateCeil = currentCeiling != null ? String(currentCeiling)
-        : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '');
+      // blended rate (sats/PH·day). Don't clobber a value the user has already typed this session.
+      if (!this.apRateCeilTouched) {
+        this.apRateCeil = currentCeiling != null ? String(currentCeiling)
+          : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '');
+      }
       this.apBurnText = `${this.fmtSats(est.burnSatsHr)} sats/hr`;
       // Estimated spend through the run: burn × time cap, but never more than the budget cap
       // (whichever cap ends the run first). An estimate only — actual spend tracks live prices.
@@ -636,6 +640,7 @@ document.addEventListener('alpine:init', () => {
       }
       this.apHasEstimate = false;
       this.apStarted = true;
+      this.apRateCeilTouched = false;   // next session's preview re-defaults the ceiling
       const days = Math.round((r.json.time_cap_hours || 0) / 24);
       const live = this.heroChip === 'LIVE';
       this.apStartedText = `Autopilot started — holding ${this.fmtHashTh(r.json.target_th)} until the budget or ${days}-day cap.${live ? '' : ' (DRY-RUN: rehearsing only — switch to LIVE to spend.)'}`;

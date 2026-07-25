@@ -94,9 +94,12 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     return newBlend <= Math.max(blendCapBtcThDay, curBlend) * EPS;
   };
 
+  let blendBlocked = false;   // did the cap/backstop reject an otherwise-affordable rig? (for an accurate note)
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
-    const avail = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining && blendOk(r));
+    const affordable = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
+    const avail = affordable.filter(blendOk);
+    if (affordable.length > avail.length) blendBlocked = true;
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
     // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot), by absolute rate.
     const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap * (1 + fitTol));
@@ -118,7 +121,7 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     if (over.length) { take(cheapestRate(over)); break; }
     break;                                                        // nothing covers the gap within the ceiling -> shortfall
   }
-  return { selection, coveredTh: selTh, cost: selCost };
+  return { selection, coveredTh: selTh, cost: selCost, blendBlocked };
 }
 
 /**
@@ -229,9 +232,8 @@ function decide(ctx = {}) {
   const heldAdvTh = pricedActive.reduce((s, r) => s + r.advertised_th, 0);
   const blendCapBtcThDay = ctx.blendedCeilingSatsPhDay != null ? ctx.blendedCeilingSatsPhDay / 1e11 : Infinity;
   const rigBackstopBtcThDay = Number.isFinite(blendCapBtcThDay) ? blendCapBtcThDay * BLEND_BACKSTOP_MULT : Infinity;
-  const capped = Number.isFinite(blendCapBtcThDay);
 
-  const { selection: picked, coveredTh } = packToTarget(feasible, neededTh, {
+  const { selection: picked, coveredTh, blendBlocked } = packToTarget(feasible, neededTh, {
     fitTol, maxOvershoot, budgetRemaining, costOf,
     blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh,
   });
@@ -241,12 +243,12 @@ function decide(ctx = {}) {
     // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
     // overshot the small gap beyond the ceiling (no_fit) — distinct so a soak can tell them apart.
     notes.push(anyAffordable ? 'no_fit' : 'no_affordable_candidate');
-    if (capped) notes.push('blend_ceiling');   // the cap may be what's holding it back
+    if (blendBlocked) notes.push('blend_ceiling');   // the cap specifically rejected an affordable rig
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes };
   }
 
   const shortfallTh = Math.max(0, neededTh - coveredTh);
-  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (capped) notes.push('blend_ceiling'); }
+  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (blendBlocked) notes.push('blend_ceiling'); }
 
   const actions = selection.map((x) => {
     const { base: paidSats, fee: feeSats } = rentCostSats(x.rig.hourBtc, x.hours);

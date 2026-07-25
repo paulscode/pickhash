@@ -564,7 +564,7 @@
           <div class="flex justify-between"><span class="text-gray-500">Est. rate</span><span class="text-white tabular-nums" x-text="apRateText"></span></div>
           <div class="flex justify-between items-center gap-3">
             <span class="text-gray-500">Rate ceiling <span class="text-gray-600 text-[10px]">blended · sats/PH·day</span></span>
-            <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+            <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" @input="apCeilTouched" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
           </div>
           <p class="text-gray-600 text-[10px] leading-relaxed">Caps your overall blended pay-rate — the “you” line on the market chart, not each rig. Autopilot fills the target with the cheapest rigs while holding the average under this; it leaves a shortfall rather than overpaying. Pre-filled with the estimate — raise to allow a higher average, lower to cap harder. Blank = no cap.</p>
           <div class="flex justify-between"><span class="text-gray-500">Burn rate</span><span class="text-white tabular-nums" x-text="apBurnText"></span></div>
