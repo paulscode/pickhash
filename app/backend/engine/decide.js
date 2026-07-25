@@ -187,7 +187,7 @@ function decide(ctx = {}) {
   // the overshoot ceiling. neededTh is a DELIVERED gap (target - delivered so far) and the packer's
   // coverage is delivery-weighted, so coveredTh here is EXPECTED DELIVERED TH.
   const fitTol = (ctx.fitTolerancePct != null ? ctx.fitTolerancePct : 20) / 100;
-  const maxOvershoot = (ctx.maxOvershootPct != null ? ctx.maxOvershootPct : 100) / 100;
+  const maxOvershoot = (ctx.maxOvershootPct != null ? ctx.maxOvershootPct : 50) / 100;
   const hoursOf = (r) => Math.min(r.minHours || r.minRentalLength || 0, windowRemainingH);
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
   const anyAffordable = feasible.some((r) => costOf(r) <= budgetRemaining);

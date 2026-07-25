@@ -364,7 +364,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   // rig (which inflated rigCount/coveredTh/burn/runway ~6x before this). costOf uses each rig's
   // fee-inclusive minimum commit, so the budget only gates affordability here.
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
-  const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 100) / 100;
+  const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50) / 100;
   const costOf = (r) => r.minCommitSats || 0;
   // coveredTh is EXPECTED DELIVERED TH (the packer weights coverage by learned delivery), so the
   // preview reflects the hashrate you'll actually hold, not headline advertised numbers.

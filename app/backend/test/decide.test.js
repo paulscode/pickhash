@@ -162,7 +162,7 @@ test('a rig still ramping counts at advertised, so we do NOT over-rent during ra
 test('a CONFIRMED degraded rig counts at its measured delivery, triggering a top-up for the gap', () => {
   // 100 TH rig confirmed degraded, only delivering 40 -> active 40 < 95 -> need 60 -> one rig.
   const s = sess({ target_th: 100 });
-  const r = decide.decide(ctx({ session: s, rentals: [{ rig_id: 9, advertised_th: 100, delivered_th: 40, health: 'degraded', ended: 0 }], marketRigs: [rig('x', { th: 100 })] }));
+  const r = decide.decide(ctx({ session: s, rentals: [{ rig_id: 9, advertised_th: 100, delivered_th: 40, health: 'degraded', ended: 0 }], marketRigs: [rig('x', { th: 60 })] }));
   assert.equal(r.actions.length, 1);
   assert.ok(Math.abs(r.activeTh - 40) < 1e-9);
 });
@@ -298,14 +298,15 @@ test('within the fit tolerance, the cheapest-rank rig among the fits is chosen',
 });
 
 test('between fit tolerance and the ceiling, the cheapest-to-hold rig wins (even with more overshoot)', () => {
-  // gap 100; no rig within +20%, but two within the +100% ceiling. The closer is paid in full, so the
-  // cheaper-to-HOLD rig wins even though it overshoots more — you get >= the gap for less ongoing spend.
+  // gap 100; no rig within +20%, but two within the ceiling (set to +100% here so both qualify). The
+  // closer is paid in full, so the cheaper-to-HOLD rig wins even though it overshoots more — you get
+  // >= the gap for less ongoing spend.
   const s = sess({ target_th: 100 });
   const market = [
     rig('cheapHuge', { th: 190, hourBtc: 0.0001 }),  // +90% overshoot but 3x cheaper to hold
     rig('dearClose', { th: 130, hourBtc: 0.0003 }),  // +30% overshoot but 3x the hold cost
   ];
-  const r = decide.decide(ctx({ session: s, rentals: [], marketRigs: market }));
+  const r = decide.decide(ctx({ session: s, rentals: [], marketRigs: market, maxOvershootPct: 100 }));
   assert.deepEqual(r.actions.map((a) => a.rigId), ['cheapHuge'], 'min hold-cost beats min-overshoot within the ceiling');
 });
 
@@ -365,7 +366,7 @@ test('the replace-lookahead with no available replacement leaves a shortfall (gr
 
 test('a CONFIRMED offline rig counts at its measured delivery, triggering a top-up', () => {
   const s = sess({ target_th: 100 });
-  const r = decide.decide(ctx({ session: s, rentals: [{ rig_id: 9, advertised_th: 100, delivered_th: 40, health: 'offline', ended: 0 }], marketRigs: [rig('x', { th: 100 })] }));
+  const r = decide.decide(ctx({ session: s, rentals: [{ rig_id: 9, advertised_th: 100, delivered_th: 40, health: 'offline', ended: 0 }], marketRigs: [rig('x', { th: 60 })] }));
   assert.equal(r.actions.length, 1);
   assert.ok(Math.abs(r.activeTh - 40) < 1e-9, 'offline contributes delivered, not advertised');
 });

@@ -20,7 +20,7 @@ const DEFAULTS = {
     auto_extend: false,             // opt-in
     auto_extend_price_tolerance_pct: 10,  // extend only if the new rate is within this of the original
     fit_tolerance_pct: 20,          // a top-up rig may overshoot the remaining gap by up to this % and still be chosen cheapest-rank-first
-    max_overshoot_pct: 100,         // beyond this % overshoot, leave a bounded shortfall and retry next tick rather than over-provision uncancellable capacity
+    max_overshoot_pct: 50,          // forced-close ceiling: beyond this % overshoot, leave a bounded shortfall and retry next tick rather than over-provision uncancellable capacity
     replace_lead_minutes: 5,        // start renting a rig's replacement this long before it ends (it cliffs at end_ts) to overlap the ~2.5min ramp dead-time; 0 disables the lookahead
     fallback_pool_enabled: false,   // opt-in safety-net pool at priority 1 (default OFF)
     owner_nudge_enabled: false,     // opt-in: message a rig owner when their rig sustains under-delivery (default OFF)
