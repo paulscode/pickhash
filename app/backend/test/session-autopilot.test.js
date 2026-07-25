@@ -100,6 +100,18 @@ test('estimate does not over-provision a small target when only oversized rigs e
   assert.ok(r.estimate.eligibleRigs >= 2, 'eligible rigs exist -> session is allowed');
 });
 
+test('estimate burn/coverage are budget-independent, so runway stays monotonic in budget', async () => {
+  const c = client();
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  const lo = await session.estimateAutopilot(db.get(), c, { targetTh: 300, budgetSats: 100000, endpoint: ep });
+  const hi = await session.estimateAutopilot(db.get(), c, { targetTh: 300, budgetSats: 200000, endpoint: ep });
+  assert.equal(lo.coveredTh, hi.coveredTh, 'coverage must not depend on budget');
+  assert.equal(lo.burnSatsHr, hi.burnSatsHr, 'burn rate must not depend on budget');
+  assert.equal(lo.blendedSatsPhDay, hi.blendedSatsPhDay, 'blended rate must not depend on budget');
+  assert.ok(hi.runwayHours > lo.runwayHours, 'more budget -> longer runway (monotonic)');
+  assert.ok(Math.abs(hi.runwayHours - 2 * lo.runwayHours) < 1e-6, 'runway scales linearly with budget');
+});
+
 test('refuses to open a second session while one is active', async () => {
   await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
   await assert.rejects(

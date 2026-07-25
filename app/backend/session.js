@@ -388,10 +388,13 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   // fee-inclusive minimum commit, so the budget only gates affordability here.
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
   const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50) / 100;
-  const costOf = (r) => r.minCommitSats || 0;
-  // coveredTh is EXPECTED DELIVERED TH (the packer weights coverage by learned delivery), so the
-  // preview reflects the hashrate you'll actually hold, not headline advertised numbers.
-  const { selection, coveredTh } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: budgetSats, costOf });
+  // Pack to the target WITHOUT a budget constraint. The cost to HOLD a target is a market property,
+  // so burn / rate / rig set must not shift with the budget — otherwise the affordability filter
+  // reshuffles the selection and runway (= budget / burn) goes non-monotonic (a bigger budget could
+  // show a SHORTER runway). The budget only enters below, as the runway divisor.
+  // coveredTh is EXPECTED DELIVERED TH (coverage is delivery-weighted), so the preview reflects the
+  // hashrate you'll actually hold, not headline advertised numbers.
+  const { selection, coveredTh } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0 });
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;

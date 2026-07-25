@@ -612,9 +612,10 @@ document.addEventListener('alpine:init', () => {
       if (est.runwayHours == null) {
         this.apRunwayText = 'no burn';
       } else {
-        const days = est.runwayHours / 24;
-        const ends = est.runwayHours < p.timeCapHours ? 'budget ends it' : 'time cap ends it';
-        this.apRunwayText = `${days.toFixed(1)} days · ${ends}`;
+        // Show the ACTUAL run length — whichever cap hits first — not the raw runway.
+        const budgetEndsIt = est.runwayHours < p.timeCapHours;
+        const days = Math.min(est.runwayHours, p.timeCapHours) / 24;
+        this.apRunwayText = `${days.toFixed(1)} days · ${budgetEndsIt ? 'budget ends it' : 'time cap ends it'}`;
       }
       this.apShortfall = est.shortfallTh > 0;
       this.apShortfallText = est.shortfallTh > 0
