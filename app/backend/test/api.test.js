@@ -402,6 +402,7 @@ test('hash value card is live-only, but the market "you" overlay persists after 
   assert.equal(st.json.hash_value.your_pay_sats_ph_day, null, 'card pay-rate is live-only');
   const mk = await call('GET', '/api/market');
   assert.equal(mk.json.price_history.pay_value, 55000, 'the "you" overlay persists from the last session that rented');
+  assert.equal(mk.json.price_history.pay_live, false, 'flagged not-live so the legend reads "you (last)"');
 });
 
 test('GET /api/status carries each rental\'s delivery percentage (for the health badge)', async () => {
@@ -481,15 +482,15 @@ test('payRateSatsPhDay: the "you" line persists after a session ends (most recen
   // Newer ended Quick Rent at 50,000 — the most recent priced session, so the "you" line shows this.
   const quick = insertSession({ mode: 'quick', state: 'ended' });
   insertRental({ session_id: quick, mrr_id: 6002, rate_btc_th_day: 5e-7, advertised_th: 100, ended: 1 });
-  assert.equal(api.payRateSatsPhDay(db.get()), 50000, 'most recent (Quick Rent) rate, even though ended');
+  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 50000, live: false }, 'most recent (Quick Rent) rate, marked not-live (labels "you (last)")');
 
   // A newest spend-free session (DRY-RUN: no priced rentals) must NOT blank the line.
   const dry = insertSession({ mode: 'live', state: 'ended' });
   insertRental({ session_id: dry, mrr_id: 6003, advertised_th: 100 });   // rate null -> unpriced, skipped
-  assert.equal(api.payRateSatsPhDay(db.get()), 50000, 'spend-free session skipped; last priced rate stays');
+  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 50000, live: false }, 'spend-free session skipped; last priced rate stays');
 
-  // An ACTIVE session with live rentals overrides the fallback with its current rate.
+  // An ACTIVE session with live rentals overrides the fallback with its current rate, marked live.
   const live = insertSession({ mode: 'live', state: 'active' });
   insertRental({ session_id: live, mrr_id: 6004, rate_btc_th_day: 4e-7, advertised_th: 100, ended: 0 });
-  assert.equal(api.payRateSatsPhDay(db.get()), 40000, 'active session live rate wins over the fallback');
+  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 40000, live: true }, 'active session live rate wins, marked live ("you")');
 });

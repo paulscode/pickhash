@@ -49,19 +49,20 @@ function hashValueFor(conn) {
  * Your blended pay-rate (sats/PH·day) for the market chart's "you" reference line. Prefers the active
  * session's LIVE rentals; when none are live (session ended, or between top-ups) it falls back to the
  * most recent session that actually rented — so the line persists after a session ends, whether the
- * last run was Autopilot or a Quick Rent. Returns null only when nothing has ever been rented (a
- * spend-free DRY-RUN session leaves no priced rentals, so it's naturally skipped).
+ * last run was Autopilot or a Quick Rent. A spend-free DRY-RUN leaves no priced rentals, so it's
+ * naturally skipped. Returns { rate: sats/PH·day|null, live } — live=false means the rate is from a
+ * finished session, so the UI can label it "you (last)".
  */
 function payRateSatsPhDay(conn) {
   const rateFrom = (rows) => market.hashValue(null, rows).your_pay_sats_ph_day;
   const active = conn.prepare("SELECT id FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get();
   if (active) {
     const live = rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ? AND ended = 0').all(active.id));
-    if (live != null) return live;
+    if (live != null) return { rate: live, live: true };
   }
   const recent = conn.prepare('SELECT session_id FROM rentals WHERE rate_btc_th_day IS NOT NULL AND advertised_th > 0 ORDER BY session_id DESC LIMIT 1').get();
-  if (!recent) return null;
-  return rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ?').all(recent.session_id));
+  if (!recent) return { rate: null, live: false };
+  return { rate: rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ?').all(recent.session_id)), live: false };
 }
 
 /** MRR credentials have been stored. */
@@ -322,13 +323,14 @@ async function handleApi(req, res, url, body, ctx = {}) {
         WHERE r.session_id = ? AND rs.ts >= ? ORDER BY rs.ts`,
     ).all(sid, sinceTs);
     const targetTh = latest ? latest.target_th : null;
+    const pr = payRateSatsPhDay(conn);
     return sendJson(res, 200, {
       range,
       delivered: charts.buildDelivered(ticks, { targetTh }),
       delivered_stacked: charts.buildDeliveredStacked(samples, ticks, { targetTh }),
       spend: charts.buildSpend(ticks, { budgetSats: latest ? latest.budget_sats : null }),
       // Overlay the pay-rate on the market chart; the dashboard's hash-value readout comes from /api/status.
-      market: charts.buildMarket(snaps, { payRate: payRateSatsPhDay(conn) }),
+      market: charts.buildMarket(snaps, { payRate: pr.rate, payLive: pr.live }),
     });
   }
 
@@ -341,6 +343,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     let depth = [];
     if (latest && latest.depth_json) { try { depth = JSON.parse(latest.depth_json); } catch { depth = []; } }
     const hv = hashValueFor(conn);
+    const pr = payRateSatsPhDay(conn);
     return sendJson(res, 200, {
       summary: latest ? {
         ts: latest.ts, lowest: latest.lowest, last10: latest.last10, last: latest.last,
@@ -348,7 +351,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
         lowest_sats_ph_day: latest.lowest != null ? Math.round(latest.lowest * 1e11) : null,
       } : null,
       depth_chart: charts.buildDepth(depth),
-      price_history: charts.buildMarket(history, { payRate: payRateSatsPhDay(conn) }),
+      price_history: charts.buildMarket(history, { payRate: pr.rate, payLive: pr.live }),
       regions: market.depthByRegion(depth),
       cheap_now: market.cheapNow(latest ? latest.lowest : null, history),
       hash_value: hv,

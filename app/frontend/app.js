@@ -116,10 +116,10 @@ document.addEventListener('alpine:init', () => {
     sLine: '', sArea: '', sCeilPath: '', sCeilLabel: '', sGridPath: '', sYMaxLabel: '', sXLabels: [],
     // market chart
     mLowest: '', mLast10: '', mGridPath: '', mYMaxLabel: '', mXLabels: [], mUnit: '', mHasData: false,
-    mPayLine: '', mCheapVal: '—', mLast10Val: '—', mPayShow: false, mPayVal: '—',
+    mPayLine: '', mCheapVal: '—', mLast10Val: '—', mPayShow: false, mPayVal: '—', mPayLabel: 'you',
     // Hash Value comparison (your pay-rate vs market rate)
     hvAvail: false, hvShowHint: false, hvBadge: '', hvBadgeClass: 'text-gray-500 border-navy-600', hvPay: '—', hvMarket: '—', hvEff: '—',
-    phPayLine: '', phCheapVal: '—', phLast10Val: '—', phPayShow: false, phPayVal: '—',
+    phPayLine: '', phCheapVal: '—', phLast10Val: '—', phPayShow: false, phPayVal: '—', phPayLabel: 'you',
     // crosshair
     crossShow: false, crossX: 0, tipX: 0, tipTextX: 0, tipText: '',
     // alerts strip
@@ -400,7 +400,7 @@ document.addEventListener('alpine:init', () => {
       this.mGridPath = mk.gridPath; this.mYMaxLabel = mk.yMaxLabel; this.mXLabels = mk.x.map((t) => t.label);
       this.mPayLine = mk.pay_line || '';
       const mv = this.mktLegendVals(mk);
-      this.mCheapVal = mv.cheap; this.mLast10Val = mv.last10; this.mPayShow = mv.payShow; this.mPayVal = mv.pay;
+      this.mCheapVal = mv.cheap; this.mLast10Val = mv.last10; this.mPayShow = mv.payShow; this.mPayVal = mv.pay; this.mPayLabel = mv.payLabel;
       // Hero: latest delivered vs target — read from the SAME series the chart shows
       // (stacked total when bands are up, else the aggregate) so the numeral, %, axis
       // label and crosshair never disagree.
@@ -851,6 +851,8 @@ document.addEventListener('alpine:init', () => {
         last10: cur(s[1] && s[1].current),
         payShow: !!(mk && mk.pay_value != null),
         pay: cur(mk && mk.pay_value),
+        // "you" while a session is live; "you (last)" when the rate is from a finished session.
+        payLabel: mk && mk.pay_live === false ? 'you (last)' : 'you',
       };
     },
     async loadMarket() {
@@ -879,7 +881,7 @@ document.addEventListener('alpine:init', () => {
       this.phGridPath = ph.gridPath || ''; this.phYMaxLabel = ph.yMaxLabel || ''; this.phXLabels = (ph.x || []).map((t) => t.label);
       this.phPayLine = ph.pay_line || '';
       const pv = this.mktLegendVals(ph);
-      this.phCheapVal = pv.cheap; this.phLast10Val = pv.last10; this.phPayShow = pv.payShow; this.phPayVal = pv.pay;
+      this.phCheapVal = pv.cheap; this.phLast10Val = pv.last10; this.phPayShow = pv.payShow; this.phPayVal = pv.pay; this.phPayLabel = pv.payLabel;
       const regs = d.regions || [];
       const maxTh = regs.reduce((mx, r) => Math.max(mx, r.th), 0) || 1;
       this.regionsEmpty = regs.length === 0;

@@ -265,6 +265,7 @@ function buildMarket(snapshots, opts = {}) {
     yMaxLabel: `${Math.round(yMax).toLocaleString('en-US')} sats/PH·day`,
     pay_line: payY != null ? `M${view.padL},${payY.toFixed(1)} L${(view.w - view.padR).toFixed(1)},${payY.toFixed(1)}` : '',
     pay_value: payRate != null ? Math.round(payRate) : null,
+    pay_live: payRate != null ? (opts.payLive === true) : null,   // false -> the UI labels it "you (last)"
     series: [seriesFor('lowest'), seriesFor('last10')],
   };
 }
