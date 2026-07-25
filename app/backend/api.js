@@ -638,6 +638,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     try {
       const r = await session.startAutopilotSession(conn, client, {
         targetTh: body.target_th, timeCapHours: body.time_cap_hours, budgetSats: body.budget_sats,
+        rateCeilingSatsPhDay: body.rate_ceiling_sats_ph_day,
       });
       return sendJson(res, 200, r);
     } catch (e) {

@@ -562,6 +562,11 @@
           <div class="text-gray-500 text-[10px] uppercase tracking-wide">Estimate</div>
           <div class="flex justify-between"><span class="text-gray-500">Rigs to hold target</span><span class="text-white tabular-nums" x-text="apRigsText"></span></div>
           <div class="flex justify-between"><span class="text-gray-500">Est. rate</span><span class="text-white tabular-nums" x-text="apRateText"></span></div>
+          <div class="flex justify-between items-center gap-3">
+            <span class="text-gray-500">Rate ceiling <span class="text-gray-600 text-[10px]">sats/PH·day</span></span>
+            <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+          </div>
+          <p class="text-gray-600 text-[10px] leading-relaxed">Autopilot won't rent any rig priced above this. Pre-filled with the estimate — raise it to allow pricier rigs, lower it to cap harder (may under-fill the target when the market runs high). Blank = no cap.</p>
           <div class="flex justify-between"><span class="text-gray-500">Burn rate</span><span class="text-white tabular-nums" x-text="apBurnText"></span></div>
           <div class="flex justify-between"><span class="text-gray-500">Est. spend (through cap)</span><span class="text-neon-yellow tabular-nums" x-text="apSpendText"></span></div>
           <div class="flex justify-between"><span class="text-gray-500">Budget runway</span><span class="text-white tabular-nums" x-text="apRunwayText"></span></div>

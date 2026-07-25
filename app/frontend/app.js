@@ -82,7 +82,7 @@ document.addEventListener('alpine:init', () => {
     mqClass: 'text-gray-500 hover:text-white', maClass: 'bg-neon-ember/15 text-neon-ember',
     apTarget: '3', apDays: '7', apBudget: '1000000',
     apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false,
-    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '',
+    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '',
     apStarted: false, apStartedText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
     skKey: '', skSecret: '', skBusy: false, skReport: '', skReportClass: '', skUser: '',
@@ -594,6 +594,8 @@ document.addEventListener('alpine:init', () => {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
+      // Pre-fill the rate ceiling with the estimated blended rate (sats/PH·day); the user adjusts before starting.
+      this.apRateCeil = est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '';
       this.apBurnText = `${this.fmtSats(est.burnSatsHr)} sats/hr`;
       // Estimated spend through the run: burn × time cap, but never more than the budget cap
       // (whichever cap ends the run first). An estimate only — actual spend tracks live prices.
@@ -617,7 +619,8 @@ document.addEventListener('alpine:init', () => {
       const p = this.apParams();
       if (!this.apValid(p)) { this.apError = 'Enter a target, time cap, and budget.'; return; }
       this.apBusy = true; this.apBusyText = 'Starting autopilot…'; this.apError = '';
-      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats });
+      const ceil = this.apRateCeil !== '' && Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : null;
+      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, rate_ceiling_sats_ph_day: ceil });
       this.apBusy = false;
       if (!r.ok) {
         const e = r.json.error;

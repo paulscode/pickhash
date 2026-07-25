@@ -69,6 +69,24 @@ test('opens an autopilot session (row + feasibility estimate) and creates NO ren
   assert.equal(r.estimate.blendedSatsPhDay, 50000, 'preview blended rate matches the market-chart basis');
 });
 
+test('a preview rate ceiling (sats/PH·day) is persisted as the sats/TH·hr guardrail', async () => {
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, rateCeilingSatsPhDay: 60000 });
+  // 60,000 sats/PH·day ÷ 24,000 (1 PH = 1000 TH, 1 day = 24 h) = 2.5 sats/TH·hr — the unit the gate enforces.
+  assert.equal(config.getKey(db.get(), 'guardrails', 'rate_ceiling_sats_th_hour'), 2.5);
+});
+
+test('a blank/zero preview ceiling clears the cap (no ceiling)', async () => {
+  config.set(db.get(), 'guardrails', { rate_ceiling_sats_th_hour: 3 });   // a prior cap
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, rateCeilingSatsPhDay: null });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'rate_ceiling_sats_th_hour'), null, 'null/blank clears the ceiling');
+});
+
+test('omitting the ceiling param leaves the existing guardrail untouched', async () => {
+  config.set(db.get(), 'guardrails', { rate_ceiling_sats_th_hour: 2.75 });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'rate_ceiling_sats_th_hour'), 2.75, 'absent key = no change to the standing setting');
+});
+
 test('estimate does not over-provision a small target when only oversized rigs exist (and still starts)', async () => {
   // Market has only 1 PH (1000 TH) rigs; target is 200 TH. The bounded packer must NOT "hold" 200
   // with a giant rig (the old greedy did, reporting ~1000+ TH and ~6x burn). Expect a 0-cover
