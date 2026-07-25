@@ -65,6 +65,8 @@ test('opens an autopilot session (row + feasibility estimate) and creates NO ren
   assert.equal(r.estimate.rigCount, 3);
   assert.equal(r.estimate.coveredTh, 300);
   assert.ok(r.estimate.burnSatsHr > 0 && r.estimate.runwayHours > 0);
+  // Blended rate (advertised-weighted, sats/PH·day): 0.0005 BTC/PH·day -> 5e-7 BTC/TH·day -> 50,000.
+  assert.equal(r.estimate.blendedSatsPhDay, 50000, 'preview blended rate matches the market-chart basis');
 });
 
 test('estimate does not over-provision a small target when only oversized rigs exist (and still starts)', async () => {

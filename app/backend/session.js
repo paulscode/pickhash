@@ -372,12 +372,19 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;
+  // Blended pay-rate (sats/PH·day), advertised-TH-weighted like the market chart's "you" line, so the
+  // preview is directly comparable to the cheapest / last-10 market rates. Raw rig rate (no fee), to
+  // match those market references. 1e11 = BTC/TH·day -> sats/PH·day.
+  const advTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
+  const costRateBtcDay = selection.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0);
+  const blendedSatsPhDay = advTh > 0 ? Math.round((costRateBtcDay / advTh) * 1e11) : null;
   return {
     eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     rigCount: selection.length,
     coveredTh,
     shortfallTh: Math.max(0, targetTh - coveredTh),
     burnSatsHr,
+    blendedSatsPhDay,
     runwayHours: Number.isFinite(runwayHours) ? Math.round(runwayHours * 10) / 10 : null,
   };
 }

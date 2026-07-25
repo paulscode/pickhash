@@ -82,7 +82,7 @@ document.addEventListener('alpine:init', () => {
     mqClass: 'text-gray-500 hover:text-white', maClass: 'bg-neon-ember/15 text-neon-ember',
     apTarget: '3', apDays: '7', apBudget: '1000000',
     apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false,
-    apRigsText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '',
+    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '',
     apStarted: false, apStartedText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
     skKey: '', skSecret: '', skBusy: false, skReport: '', skReportClass: '', skUser: '',
@@ -580,6 +580,7 @@ document.addEventListener('alpine:init', () => {
     applyEstimate(est, p) {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
+      this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
       this.apBurnText = `${this.fmtSats(est.burnSatsHr)} sats/hr`;
       // Estimated spend through the run: burn × time cap, but never more than the budget cap
       // (whichever cap ends the run first). An estimate only — actual spend tracks live prices.
