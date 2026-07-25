@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const db = require('../db');
+const config = require('../config');
 const { execute } = require('../engine/execute');
 const { MrrApiError, MrrAmbiguousError } = require('../mrr-client');
 
@@ -24,6 +25,10 @@ function mockClient(opts = {}) {
         return { id: String(state.nextId++), start_unix: 1000, end_unix: 1000 + 3 * 3600 };
       }
       if (/^\/rental\/\d+\/pool\/0$/.test(p)) return { message: 'ok' };
+      if (/^\/rental\/\d+\/pool\/1$/.test(p)) {
+        if (opts.poolOneFail) throw new MrrApiError('pool 1 rejected');
+        return { message: 'ok' };
+      }
       throw new Error('unexpected put ' + p);
     },
   };
@@ -74,6 +79,40 @@ test('a LIVE authorized rent creates the rental + worker override + decision and
   const s = db.get().prepare('SELECT spent_sats, fee_sats FROM sessions WHERE id = ?').get(sessionId);
   assert.equal(s.spent_sats, 61_800, 'spent advanced by the fee-inclusive cost (gate sees it next tick)');
   assert.equal(s.fee_sats, 1_800);
+});
+
+test('autopilot honors the Ocean fallback: attaches pool/1 (same address, .fallback tag) and records fallback=ocean', async () => {
+  // Regression: the fallback was wired only into the manual rent path — autopilot (which creates
+  // nearly all rentals) called rentOne without it, so Ocean never actually attached. Default is ON.
+  const client = mockClient();
+  await execute(db.get(), client, { sessionId, endpoint, gateResult: { authorized: [action(1)], wouldDo: [] } });
+  const poolOne = client.state.puts.filter((p) => /\/pool\/1$/.test(p[0]));
+  assert.equal(poolOne.length, 1, 'Ocean attached at priority 1');
+  assert.equal(poolOne[0][1].host, 'mine.ocean.xyz');
+  assert.equal(poolOne[0][1].port, 3334);
+  assert.equal(poolOne[0][1].priority, 1);
+  assert.equal(poolOne[0][1].user, 'bc1qx.fallback', 'same BTC address with the .fallback worker tag');
+  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback ocean/);
+});
+
+test('autopilot skips the Ocean fallback when disabled: no pool/1 attach', async () => {
+  config.set(db.get(), 'strategy', { fallback_pool_enabled: false });
+  try {
+    const client = mockClient();
+    await execute(db.get(), client, { sessionId, endpoint, gateResult: { authorized: [action(1)], wouldDo: [] } });
+    assert.equal(client.state.puts.filter((p) => /\/pool\/1$/.test(p[0])).length, 0, 'no Ocean attach when off');
+    assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback off/);
+  } finally {
+    config.set(db.get(), 'strategy', { fallback_pool_enabled: true });
+  }
+});
+
+test('a failed Ocean pool/1 attach is best-effort: the rental still succeeds (fallback=ocean_failed)', async () => {
+  const client = mockClient({ poolOneFail: true });
+  const r = await execute(db.get(), client, { sessionId, endpoint, gateResult: { authorized: [action(1)], wouldDo: [] } });
+  assert.equal(r.executed.length, 1, 'the rental is not failed over a best-effort fallback attach');
+  assert.ok(db.get().prepare('SELECT 1 FROM rentals WHERE session_id = ?').get(sessionId), 'rental persisted');
+  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback ocean_failed/);
 });
 
 test('an ambiguous create fires needs_reconcile, halts, persists no rental, and never retries', async () => {

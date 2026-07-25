@@ -12,6 +12,7 @@
 const { rentOne, persistRental, insertDecision } = require('../session');
 const { MrrAmbiguousError } = require('../mrr-client');
 const alerts = require('../alerts');
+const config = require('../config');
 
 function cost(a) { return (a.paidSats || 0) + (a.feeSats || 0); }
 
@@ -39,6 +40,9 @@ async function execute(conn, client, ctx) {
   }
 
   // LIVE: perform each authorized rent (the gate already capped to one/tick + all ceilings).
+  // Ocean safety-net at rental priority 1 — same knob the manual path honors (session.js). Autopilot
+  // creates nearly all rentals in practice, so without this the fallback would never actually attach.
+  const fallbackOcean = !!config.getKey(conn, 'strategy', 'fallback_pool_enabled');
   for (const a of gateResult.authorized || []) {
     // Intent-first audit row — the reconciliation anchor if we crash mid-create.
     insertDecision(conn, sessionId, false, {
@@ -47,7 +51,7 @@ async function execute(conn, client, ctx) {
     });
     let res;
     try {
-      res = await rentOne(client, a, endpoint);
+      res = await rentOne(client, a, endpoint, { fallbackOcean });
     } catch (e) {
       if (e instanceof MrrAmbiguousError) {
         insertDecision(conn, sessionId, false, { executed: { ambiguous: true, rig: a.rigId }, note: 'ambiguous_halt: autopilot create outcome unknown — not retried, reconcile next tick' });
@@ -63,8 +67,8 @@ async function execute(conn, client, ctx) {
     conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
       .run(cost(a), a.feeSats || 0, sessionId);
     insertDecision(conn, sessionId, false, {
-      executed: { mrr_id: res.mrrId, rig: a.rigId, worker: res.worker, pool_override: res.poolOverride },
-      note: `autopilot rented rig #${a.rigId} -> rental ${res.mrrId} (${res.poolOverride})`,
+      executed: { mrr_id: res.mrrId, rig: a.rigId, worker: res.worker, pool_override: res.poolOverride, fallback: res.fallback },
+      note: `autopilot rented rig #${a.rigId} -> rental ${res.mrrId} (${res.poolOverride}, fallback ${res.fallback})`,
     });
     executed.push({ mrr_id: res.mrrId, rig_id: a.rigId, advertised_th: a.advertisedTh, paid_sats: a.paidSats, fee_sats: a.feeSats });
   }
