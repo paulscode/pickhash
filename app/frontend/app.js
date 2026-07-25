@@ -126,7 +126,8 @@ document.addEventListener('alpine:init', () => {
     alertsList: [], hasAlerts: false,
     // history view
     showHistory: false, historySessions: [], historyEmpty: false, appReady: false,
-    showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '' },
+    showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
+    setupFallbackOcean: true,
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
     depthLine: '', depthGridPath: '', depthXLabels: [], depthYMaxLabel: '', depthHasData: false,
     phLowest: '', phLast10: '', phGridPath: '', phYMaxLabel: '', phXLabels: [], phHasData: false,
@@ -986,6 +987,10 @@ document.addEventListener('alpine:init', () => {
       if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
     },
+    // Persist the setup-wizard Ocean-fallback toggle (default on server-side, so only a change needs saving).
+    async saveFallbackOcean() {
+      await this.send('POST', '/api/config', { ns: 'strategy', patch: { fallback_pool_enabled: this.setupFallbackOcean } });
+    },
     async loadDiag() {
       const d = (await this.getJson('/api/diag')) || {};
       const m = d.mrr || {}; const e = d.engine || {};
@@ -994,6 +999,7 @@ document.addEventListener('alpine:init', () => {
         mode: d.run_mode || '—',
         tick: e.last_tick_age_sec != null ? `${e.last_tick_age_sec}s ago · ${e.ticks_last_hour}/hr` : 'no ticks yet',
         hashgg: d.hashgg_host_set ? 'set' : 'not set (endpoint auto-repair off)',
+        fallback: (d.fallback && d.fallback.enabled) ? `Ocean · ${d.fallback.worker || 'your address'}` : 'off',
       };
     },
     async loadHistory() {

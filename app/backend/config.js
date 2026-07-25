@@ -22,7 +22,7 @@ const DEFAULTS = {
     fit_tolerance_pct: 20,          // a top-up rig may overshoot the remaining gap by up to this % and still be chosen cheapest-rank-first
     max_overshoot_pct: 50,          // forced-close ceiling: beyond this % overshoot, leave a bounded shortfall and retry next tick rather than over-provision uncancellable capacity
     replace_lead_minutes: 5,        // start renting a rig's replacement this long before it ends (it cliffs at end_ts) to overlap the ~2.5min ramp dead-time; 0 disables the lookahead
-    fallback_pool_enabled: false,   // opt-in safety-net pool at priority 1 (default OFF)
+    fallback_pool_enabled: true,    // Ocean safety-net at rental priority 1 (same BTC address); engages only if your endpoint drops
     owner_nudge_enabled: false,     // opt-in: message a rig owner when their rig sustains under-delivery (default OFF)
     region_include: [],
     region_exclude: [],
@@ -101,7 +101,7 @@ const SETTINGS = {
     fit_tolerance_pct: { type: 'int', min: 0, max: 500, unit: '%', label: 'Fit tolerance', help: 'A top-up rig may overshoot the gap by up to this and stay cheapest-first.' },
     max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot, hold a shortfall and retry rather than over-provision.' },
     replace_lead_minutes: { type: 'int', min: 0, max: 60, unit: 'min', label: 'Replace lead', help: 'Rent a replacement this long before a rig ends (0 disables the lookahead).' },
-    fallback_pool_enabled: { type: 'bool', label: 'Fallback pool', help: 'Attach an opt-in safety-net pool at priority 1.' },
+    fallback_pool_enabled: { type: 'bool', label: 'Fallback pool (Ocean)', help: 'If your endpoint becomes unreachable, rented hashrate fails over to Ocean, mining to your same Bitcoin address instead of being wasted. Your node stays primary — Ocean only engages on failure.' },
     owner_nudge_enabled: { type: 'bool', label: 'Nudge under-delivering owners', help: 'Automatically message a rig owner (once) when their rig sustains under-delivery. Off by default.' },
     region_include: { type: 'strlist', label: 'Region include', help: 'Comma-separated regions to restrict to (empty = any).' },
     region_exclude: { type: 'strlist', label: 'Region exclude', help: 'Comma-separated regions to avoid.' },

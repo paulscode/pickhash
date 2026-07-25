@@ -323,6 +323,8 @@ test('GET /api/diag reports engine liveness + MRR identity, no secrets', async (
   assert.ok('configured' in r.json.mrr, 'mrr block present');
   assert.ok('ticks_last_hour' in r.json.engine, 'engine liveness present');
   assert.ok('endpoint' in r.json, 'active endpoint reported (null when none) for the Settings editor');
+  assert.equal(r.json.fallback.pool, 'Ocean', 'fallback pool surfaced for the UI');
+  assert.equal(r.json.fallback.enabled, true, 'on by default');
   assert.ok(!/mrr_key|mrr_secret|password/i.test(JSON.stringify(r.json)), 'no secrets in diag');
 });
 

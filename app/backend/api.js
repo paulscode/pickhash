@@ -21,6 +21,8 @@ const deposit = require('./deposit');
 const auth = require('./auth');
 const quoteService = require('./quote-service');
 const session = require('./session');
+// Aliased at module scope: the /api/diag handler shadows `session` with a local DB row.
+const { OCEAN_FALLBACK, oceanFallbackWorker } = session;
 const charts = require('./charts');
 const market = require('./market');
 const messaging = require('./messaging');
@@ -544,6 +546,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
       engine: { last_tick_ts: lastTick, last_tick_age_sec: lastTick != null ? nowSec - lastTick : null, ticks_last_hour: ticksHour },
       session,
       endpoint: ep ? { host: ep.host, port: ep.port, worker: ep.worker_base, source: ep.source } : null,
+      fallback: {
+        enabled: !!config.get(conn, 'strategy').fallback_pool_enabled,
+        pool: 'Ocean',
+        host: OCEAN_FALLBACK.host, port: OCEAN_FALLBACK.port,
+        worker: ep ? oceanFallbackWorker(ep.worker_base) : null,
+      },
       hashgg_host_set: !!process.env.HASHGG_HOST,
       alerts: alerts.listActive(conn),
     });

@@ -17,7 +17,7 @@ test('returns defaults for an untouched namespace', () => {
     const s = config.get(conn, 'strategy');
     assert.equal(s.min_rpi, 90);
     assert.equal(s.health_debounce_minutes, 10);
-    assert.equal(s.fallback_pool_enabled, false);
+    assert.equal(s.fallback_pool_enabled, true);   // Ocean safety-net on by default
   });
 });
 

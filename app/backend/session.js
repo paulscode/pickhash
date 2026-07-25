@@ -86,8 +86,18 @@ function insertDecision(conn, sessionId, dryRun, fields) {
   );
 }
 
+// Ocean fallback pool (priority 1): a safety net that only engages if the primary endpoint drops.
+// Ocean runs real vardiff (so a rig starved by an endpoint difficulty mismatch actually hashes) and
+// pays out to the SAME Bitcoin address, so a fallback still earns for the user — and MRR can't deny a
+// refund for "no backup pool". The '.fallback' worker tag makes fallback hashrate obvious on Ocean.
+const OCEAN_FALLBACK = { host: 'mine.ocean.xyz', port: 3334 };
+function oceanFallbackWorker(workerBase) {
+  const address = String(workerBase || '').split('.')[0];   // strip any '.worker' suffix -> the BTC address
+  return address ? `${address}.fallback` : null;
+}
+
 /** Create one real rental + apply the per-rental worker pool override. Impure. */
-async function rentOne(client, intent, endpoint) {
+async function rentOne(client, intent, endpoint, opts = {}) {
   const created = await client.put('/rental', {
     rig: intent.rigId,
     length: intent.lengthHours,
@@ -109,7 +119,19 @@ async function rentOne(client, intent, endpoint) {
     // attribution. Note it rather than fail the whole session.
     poolOverride = 'fallback_shared_worker';
   }
-  return { mrrId, worker, poolOverride, created };
+  // Optional Ocean fallback at priority 1. Best-effort: a failure here just means this rental has no
+  // safety net — it still runs on the primary, so never fail the rental over it.
+  let fallback = 'off';
+  const fbWorker = opts.fallbackOcean ? oceanFallbackWorker(endpoint.worker_base) : null;
+  if (fbWorker) {
+    fallback = 'ocean';
+    try {
+      await client.put(`/rental/${mrrId}/pool/1`, { host: OCEAN_FALLBACK.host, port: OCEAN_FALLBACK.port, user: fbWorker, pass: 'x', priority: 1 });
+    } catch {
+      fallback = 'ocean_failed';
+    }
+  }
+  return { mrrId, worker, poolOverride, fallback, created };
 }
 
 function persistRental(conn, sessionId, intent, res) {
@@ -221,6 +243,7 @@ async function startSession(conn, client, quoteId, opts = {}) {
  */
 async function executeSession(conn, client, stored, { dryRun, sessionId, confirmedSats }) {
   const endpoint = stored.endpoint;
+  const fallbackOcean = !!config.get(conn, 'strategy').fallback_pool_enabled;   // Ocean safety-net at priority 1
   // Hard spend ceiling: the user's actual budget (budget-locked modes) or, when the spend
   // itself was the computed output, the total they confirmed. NO headroom — a pricier
   // re-packed replacement for a taken rig must never push spend past this, so the gate
@@ -288,7 +311,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
       // LIVE create — no retry on an ambiguous outcome.
       let res;
       try {
-        res = await rentOne(client, intent, endpoint);
+        res = await rentOne(client, intent, endpoint, { fallbackOcean });
       } catch (e) {
         if (e instanceof MrrAmbiguousError) {
           insertDecision(conn, sessionId, dryRun, { executed: { ambiguous: true, rig: intent.rigId }, note: 'ambiguous_halt: create outcome unknown — not retried, reconcile next tick' });
@@ -310,7 +333,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
 
       persistRental(conn, sessionId, intent, res);
       insertDecision(conn, sessionId, dryRun, {
-        executed: { mrr_id: res.mrrId, rig: intent.rigId, worker: res.worker, pool_override: res.poolOverride },
+        executed: { mrr_id: res.mrrId, rig: intent.rigId, worker: res.worker, pool_override: res.poolOverride, fallback: res.fallback },
         note: `rented rig #${intent.rigId} -> rental ${res.mrrId} (${res.poolOverride})`,
       });
       executed.push({ mrr_id: res.mrrId, rig_id: intent.rigId, rig_name: intent.rigName, region: intent.region,
@@ -463,4 +486,4 @@ async function stopSession(conn, client = null) {
   return { stopped: true, state: 'ended' };
 }
 
-module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapPhDay, SessionError };
+module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapPhDay, SessionError, OCEAN_FALLBACK, oceanFallbackWorker };
