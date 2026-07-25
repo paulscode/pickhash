@@ -757,18 +757,30 @@
       </div>
     </div>
 
-    <!-- Depth: cumulative available TH by price -->
-    <div x-show="depthHasData" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-2 card-hover">
-      <div class="flex justify-between text-gray-500 font-mono text-xs uppercase tracking-wide"><span>Market depth — available hashrate by price</span><span class="text-[10px] normal-case text-gray-600" x-text="depthYMaxLabel"></span></div>
-      <svg viewBox="0 0 800 240" class="w-full" style="height:auto">
-        <defs><linearGradient id="dpfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffb347" stop-opacity="0.25"></stop><stop offset="100%" stop-color="#ffb347" stop-opacity="0"></stop></linearGradient></defs>
-        <path :d="depthGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
-        <path :d="depthLine" stroke="#ffb347" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+    <!-- Impact: cumulative hashrate you've directed at your OWN node -->
+    <div x-show="impactHasData" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-5 space-y-3 card-hover">
+      <div class="flex items-end justify-between gap-3">
+        <div>
+          <div class="text-gray-500 font-mono text-xs uppercase tracking-wide">Hashrate you've aimed at your own node</div>
+          <div class="font-mono text-3xl font-bold text-neon-green tabular-nums" x-text="impactTotal"></div>
+          <div class="text-gray-600 font-mono text-[11px]">cumulative petahash-days mined on the block templates you built</div>
+        </div>
+        <span class="text-[10px] font-mono text-gray-600" x-text="impactYMaxLabel"></span>
+      </div>
+      <svg viewBox="0 0 800 240" class="w-full" style="height:auto" @mousemove="onImpactCrosshair($event)" @mouseleave="hideImpactCrosshair()">
+        <defs><linearGradient id="impfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06ffa5" stop-opacity="0.28"></stop><stop offset="100%" stop-color="#06ffa5" stop-opacity="0"></stop></linearGradient></defs>
+        <path :d="impactGridPath" stroke="#283764" stroke-width="0.5" opacity="0.6" fill="none"></path>
+        <path :d="impactArea" fill="url(#impfill)" stroke="none"></path>
+        <path :d="impactLine" stroke="#06ffa5" stroke-width="2" fill="none" stroke-linejoin="round"></path>
+        <g x-show="impCrossShow" x-cloak>
+          <line :x1="impCrossX" y1="12" :x2="impCrossX" y2="220" stroke="#06ffa5" stroke-width="0.5" opacity="0.6"></line>
+          <rect :x="impTipX" y="6" width="84" height="18" rx="3" fill="#141b34" stroke="#283764"></rect>
+          <text :x="impTipTextX" y="19" fill="#e5e7eb" font-size="10" text-anchor="middle" x-text="impTipText"></text>
+        </g>
       </svg>
       <div class="flex justify-between font-mono text-[10px] text-gray-600">
-        <template x-for="(lbl, i) in depthXLabels" :key="i"><span x-text="lbl"></span></template>
+        <template x-for="(lbl, i) in impactXLabels" :key="i"><span x-text="lbl"></span></template>
       </div>
-      <div class="font-mono text-[11px] text-gray-600">X: price (sats/PH·day) · Y: cumulative TH available at or below that price</div>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

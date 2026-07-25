@@ -236,6 +236,23 @@ test('buildDepth builds a cumulative TH-by-price step curve (and an empty model 
   assert.ok(m.line.startsWith('M'), 'an SVG path was produced');
 });
 
+test('buildImpact accumulates delivered TH·hours into a PH·days curve (empty when no work)', () => {
+  assert.equal(charts.buildImpact([]).empty, true);
+  assert.equal(charts.buildImpact([{ start: 1, end: 2, thHours: 0 }]).empty, true, '0-delivery sessions do not count');
+  // Two sessions: 24,000 then 48,000 TH·h -> cumulative 1 then 3 PH·days (÷1000 ÷24).
+  const m = charts.buildImpact([
+    { start: 100, end: 200, thHours: 24000 },
+    { start: 500, end: 600, thHours: 48000 },
+  ]);
+  assert.equal(m.empty, false);
+  assert.ok(Math.abs(m.total_ph_days - 3) < 1e-9, 'cumulative PH·days');
+  assert.equal(m.total_label, '3.00 PH·days');
+  // Curve rises during each session, flat between: (s1,0)(e1,1)(s2,1)(e2,3).
+  assert.equal(m.points[0].vy, 0);
+  assert.ok(Math.abs(m.points[m.points.length - 1].vy - 3) < 1e-9, 'ends at the running total');
+  assert.ok(m.line.startsWith('M') && m.area.endsWith('Z'), 'line + filled area produced');
+});
+
 test('buildMarket overlays a pay-rate reference line + per-series current values', () => {
   const snaps = [{ ts: 100, lowest: 4e-7, last10: 5e-7 }, { ts: 200, lowest: 4.2e-7, last10: 5.1e-7 }];
   const m = charts.buildMarket(snaps, { payRate: 52000 });

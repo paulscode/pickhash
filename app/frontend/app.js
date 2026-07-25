@@ -129,7 +129,8 @@ document.addEventListener('alpine:init', () => {
     showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
     fallbackOcean: true,
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
-    depthLine: '', depthGridPath: '', depthXLabels: [], depthYMaxLabel: '', depthHasData: false,
+    impactHasData: false, impactTotal: '0 PH·days', impactLine: '', impactArea: '', impactGridPath: '', impactXLabels: [], impactYMaxLabel: '', impactPoints: [],
+    impCrossShow: false, impCrossX: 0, impTipX: 0, impTipTextX: 0, impTipText: '',
     phLowest: '', phLast10: '', phGridPath: '', phYMaxLabel: '', phXLabels: [], phHasData: false,
     navDashClass: 'tab-active pb-1', navHistClass: 'hover:text-white pb-1', navSetClass: 'hover:text-white pb-1', navMktClass: 'hover:text-white pb-1',
 
@@ -450,6 +451,17 @@ document.addEventListener('alpine:init', () => {
       this.tipText = `${(nearest.vy / div).toFixed(dp)} ${this.dUnit}`;
     },
     hideCrosshair() { this.crossShow = false; },
+    onImpactCrosshair(ev) {
+      if (!this.impactPoints.length) return;
+      const rect = ev.currentTarget.getBoundingClientRect();
+      const vx = ((ev.clientX - rect.left) / rect.width) * 800;
+      let nearest = this.impactPoints[0];
+      for (const p of this.impactPoints) { if (Math.abs(p.x - vx) < Math.abs(nearest.x - vx)) nearest = p; }
+      this.impCrossShow = true; this.impCrossX = nearest.x;
+      this.impTipX = Math.min(716, Math.max(4, nearest.x - 42)); this.impTipTextX = this.impTipX + 42;
+      this.impTipText = `${nearest.vy.toFixed(nearest.vy < 10 ? 2 : 1)} PH·days`;
+    },
+    hideImpactCrosshair() { this.impCrossShow = false; },
     async ackAlert(id) {
       await this.send('POST', '/api/alerts/ack', { id });
       await this.refreshStatus();
@@ -872,11 +884,13 @@ document.addEventListener('alpine:init', () => {
         this.cheapSub = `cheaper than ${100 - cn.percentile}% of the last ${cn.samples} snapshots · ${vs}`;
         this.cheapClass = cn.label === 'cheap' ? 'text-neon-green border-neon-green/40' : cn.label === 'pricey' ? 'text-neon-pink border-neon-pink/40' : 'text-neon-yellow border-neon-yellow/40';
       } else { this.cheapText = '—'; this.cheapSub = 'not enough market history yet'; this.cheapClass = 'text-gray-500 border-navy-600'; }
-      const dc = d.depth_chart || {};
-      this.depthHasData = !dc.empty;
-      this.depthLine = dc.line || ''; this.depthGridPath = dc.gridPath || '';
-      this.depthXLabels = (dc.x || []).map((t) => t.label);
-      this.depthYMaxLabel = dc.y ? `${dc.y.max} ${dc.y.unit}` : '';
+      const im = d.impact || {};
+      this.impactHasData = !im.empty;
+      this.impactTotal = im.total_label || '0 PH·days';
+      this.impactLine = im.line || ''; this.impactArea = im.area || ''; this.impactGridPath = im.gridPath || '';
+      this.impactPoints = im.points || [];
+      this.impactXLabels = (im.x || []).map((t) => t.label);
+      this.impactYMaxLabel = im.y ? `${(im.y.max).toFixed(im.y.max < 10 ? 2 : 1)} ${im.y.unit}` : '';
       const ph = d.price_history || { series: [{}, {}], x: [] };
       this.phHasData = (((ph.series || [])[0] || {}).points || []).length > 0;
       this.phLowest = ((ph.series || [])[0] || {}).line || ''; this.phLast10 = ((ph.series || [])[1] || {}).line || '';

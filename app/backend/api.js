@@ -346,6 +346,13 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (latest && latest.depth_json) { try { depth = JSON.parse(latest.depth_json); } catch { depth = []; } }
     const hv = hashValueFor(conn);
     const pr = payRateSatsPhDay(conn);
+    // Cumulative hashrate directed at the user's own node (PH·days) — the durable per-session record.
+    const impactEvents = conn.prepare(
+      "SELECT started_at, ended_at, summary_json FROM sessions WHERE state = 'ended' AND summary_json IS NOT NULL AND ended_at IS NOT NULL ORDER BY started_at",
+    ).all().map((s) => {
+      let thHours = 0; try { thHours = JSON.parse(s.summary_json).delivered_th_hours || 0; } catch { thHours = 0; }
+      return { start: s.started_at, end: s.ended_at, thHours };
+    });
     return sendJson(res, 200, {
       summary: latest ? {
         ts: latest.ts, lowest: latest.lowest, last10: latest.last10, last: latest.last,
@@ -353,6 +360,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
         lowest_sats_ph_day: latest.lowest != null ? Math.round(latest.lowest * 1e11) : null,
       } : null,
       depth_chart: charts.buildDepth(depth),
+      impact: charts.buildImpact(impactEvents),
       price_history: charts.buildMarket(history, { payRate: pr.rate, payLive: pr.live }),
       regions: market.depthByRegion(depth),
       cheap_now: market.cheapNow(latest ? latest.lowest : null, history),

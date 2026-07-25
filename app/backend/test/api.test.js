@@ -342,6 +342,7 @@ test('GET /api/market returns depth, regions, price history, and a cheap-now rea
   assert.equal(r.json.summary.available_th, 300);
   assert.equal(r.json.summary.lowest_sats_ph_day, 100000, 'lowest 1e-6 BTC/TH·day -> 100k sats/PH·day');
   assert.equal(r.json.depth_chart.total_th, 300);
+  assert.ok(r.json.impact && 'total_ph_days' in r.json.impact, 'impact chart (hashrate at your node) present');
   assert.deepEqual(r.json.regions.map((x) => x.region), ['eu', 'us'], 'eu 200 TH ranks above us 100 TH');
   assert.equal(r.json.cheap_now.available, true);
   assert.equal(r.json.cheap_now.label, 'cheap', 'current 1e-6 is below the prior 2e-6');

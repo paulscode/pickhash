@@ -312,4 +312,45 @@ function buildDepth(depth, opts = {}) {
   };
 }
 
-module.exports = { buildDelivered, buildDeliveredStacked, buildSpend, buildMarket, buildDepth, niceCeil, hashUnit, timeAxis, VIEW };
+/**
+ * Cumulative hashrate you've directed at your OWN node, over time, in PH·days. The durable record is
+ * each ended session's delivered_th_hours (advertised × delivered% × length); the curve rises during
+ * a session and rests flat between. `events` = [{ start, end, thHours }]. Pure -> SVG geometry.
+ */
+function buildImpact(events, opts = {}) {
+  const view = { ...VIEW, ...opts.view };
+  const PH_DAY = 1000 * 24;   // TH·hours in one PH·day (1000 TH = 1 PH, ×24h)
+  const evs = (events || [])
+    .filter((e) => e && e.thHours > 0 && e.start != null && e.end != null && e.end >= e.start)
+    .sort((a, b) => a.start - b.start);
+  if (!evs.length) {
+    return { view, kind: 'impact', empty: true, line: '', area: '', points: [], gridPath: '',
+      x: [], y: { max: 1, unit: 'PH·days', ticks: [] }, total_ph_days: 0, total_label: '0 PH·days' };
+  }
+  let cum = 0;
+  const raw = [];
+  for (const e of evs) { raw.push({ ts: e.start, v: cum / PH_DAY }); cum += e.thHours; raw.push({ ts: e.end, v: cum / PH_DAY }); }
+  const totalPhDays = cum / PH_DAY;
+  const minTs = raw[0].ts;
+  const maxTs = Math.max(raw[raw.length - 1].ts, minTs + 1);
+  const yMax = niceCeil(totalPhDays * 1.1);
+  const sx = scale(minTs, maxTs, view.padL, view.w - view.padR);
+  const sy = scale(0, yMax, view.h - view.padB, view.padT);
+  const points = raw.map((p) => ({ x: sx(p.ts), y: sy(p.v), vx: p.ts, vy: p.v }));
+  const line = path(points);
+  const baseY = sy(0);
+  const area = `${line} L${points[points.length - 1].x.toFixed(1)},${baseY.toFixed(1)} L${points[0].x.toFixed(1)},${baseY.toFixed(1)} Z`;
+  const dp = totalPhDays < 10 ? 2 : totalPhDays < 100 ? 1 : 0;
+  const ydp = yMax < 1 ? 3 : yMax < 10 ? 2 : 1;
+  return {
+    view, kind: 'impact', empty: false,
+    total_ph_days: totalPhDays,
+    total_label: `${totalPhDays.toFixed(dp)} PH·days`,
+    y: { max: yMax, unit: 'PH·days', ticks: yTicks(yMax, 1, ydp).map((t) => ({ ...t, y: sy(t.v) })) },
+    x: timeAxis(minTs, maxTs).ticks.map((t) => ({ ...t, x: sx(t.ts) })),
+    gridPath: gridPath(view, yTicks(yMax, 1, ydp).map((t) => ({ y: sy(t.v) }))),
+    line, area, points,
+  };
+}
+
+module.exports = { buildDelivered, buildDeliveredStacked, buildSpend, buildMarket, buildDepth, buildImpact, niceCeil, hashUnit, timeAxis, VIEW };
