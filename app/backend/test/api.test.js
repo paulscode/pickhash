@@ -46,10 +46,10 @@ function insertTick(row) {
   db.get().prepare('INSERT INTO tick_metrics (ts, session_id, delivered_th, target_th, spent_sats) VALUES (@ts,@session_id,@delivered_th,@target_th,@spent_sats)').run(row);
 }
 function insertRental(row) {
-  const r = { session_id: null, mrr_id: null, rig_id: 1, rig_name: 'Rig', region: 'US', advertised_th: 500, length_hours: 24, paid_sats: 0, fee_sats: 0, start_ts: 1000, end_ts: null, avg_percent: null, refund_sats: 0, evidence_json: null, ...row };
+  const r = { session_id: null, mrr_id: null, rig_id: 1, rig_name: 'Rig', region: 'US', advertised_th: 500, length_hours: 24, paid_sats: 0, fee_sats: 0, rate_btc_th_day: null, start_ts: 1000, end_ts: null, avg_percent: null, ended: 0, refund_sats: 0, evidence_json: null, ...row };
   db.get().prepare(
-    `INSERT INTO rentals (session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours, paid_sats, fee_sats, start_ts, end_ts, avg_percent, refund_sats, evidence_json)
-       VALUES (@session_id,@mrr_id,@rig_id,@rig_name,@region,@advertised_th,@length_hours,@paid_sats,@fee_sats,@start_ts,@end_ts,@avg_percent,@refund_sats,@evidence_json)`,
+    `INSERT INTO rentals (session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours, paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, avg_percent, ended, refund_sats, evidence_json)
+       VALUES (@session_id,@mrr_id,@rig_id,@rig_name,@region,@advertised_th,@length_hours,@paid_sats,@fee_sats,@rate_btc_th_day,@start_ts,@end_ts,@avg_percent,@ended,@refund_sats,@evidence_json)`,
   ).run(r);
 }
 function insertSample(row) {
@@ -387,17 +387,21 @@ test('GET /api/metrics overlays the pay-rate on its market chart', async () => {
   assert.equal(r.json.market.pay_value, 52000, 'pay overlay present on the metrics market chart');
 });
 
-test('hash value: market data but no active session -> unavailable, no pay overlay', async () => {
+test('hash value card is live-only, but the market "you" overlay persists after a session ends', async () => {
   const c = db.get();
   c.prepare('DELETE FROM market_snapshots').run();
   c.prepare("UPDATE sessions SET state = 'ended' WHERE state IN ('active','winding_down')").run();
   const now = Math.floor(Date.now() / 1000);
   c.prepare('INSERT INTO market_snapshots (ts, lowest, last10, available_rigs, available_th, depth_json) VALUES (?,?,?,?,?,?)').run(now, 4e-7, 5e-7, 1, 100, '[]');
+  // The most recent session ended, but it rented (55,000 sats/PH·day) — the overlay should persist.
+  const ended = insertSession({ state: 'ended' });
+  insertRental({ session_id: ended, mrr_id: 8201, rate_btc_th_day: 5.5e-7, advertised_th: 100, ended: 1 });
+
   const st = await call('GET', '/api/status');
-  assert.equal(st.json.hash_value.available, false, 'market present but nothing held -> unavailable');
-  assert.equal(st.json.hash_value.your_pay_sats_ph_day, null);
+  assert.equal(st.json.hash_value.available, false, 'the LIVE comparison card needs an active session');
+  assert.equal(st.json.hash_value.your_pay_sats_ph_day, null, 'card pay-rate is live-only');
   const mk = await call('GET', '/api/market');
-  assert.equal(mk.json.price_history.pay_value, null, 'no pay overlay without an active session');
+  assert.equal(mk.json.price_history.pay_value, 55000, 'the "you" overlay persists from the last session that rented');
 });
 
 test('GET /api/status carries each rental\'s delivery percentage (for the health badge)', async () => {
@@ -467,4 +471,25 @@ test('every money route refuses cleanly when MRR is not configured (no client ->
     assert.equal(r.status, 400, `${p} -> 400`);
     assert.equal(r.json.error, 'mrr_not_configured', `${p} refuses without MRR`);
   }
+});
+
+test('payRateSatsPhDay: the "you" line persists after a session ends (most recent priced session)', () => {
+  const api = require('../api');
+  // Older ended Autopilot session at 60,000 sats/PH·day (6e-7 BTC/TH·day x 1e11).
+  const older = insertSession({ mode: 'live', state: 'ended' });
+  insertRental({ session_id: older, mrr_id: 6001, rate_btc_th_day: 6e-7, advertised_th: 100, ended: 1 });
+  // Newer ended Quick Rent at 50,000 — the most recent priced session, so the "you" line shows this.
+  const quick = insertSession({ mode: 'quick', state: 'ended' });
+  insertRental({ session_id: quick, mrr_id: 6002, rate_btc_th_day: 5e-7, advertised_th: 100, ended: 1 });
+  assert.equal(api.payRateSatsPhDay(db.get()), 50000, 'most recent (Quick Rent) rate, even though ended');
+
+  // A newest spend-free session (DRY-RUN: no priced rentals) must NOT blank the line.
+  const dry = insertSession({ mode: 'live', state: 'ended' });
+  insertRental({ session_id: dry, mrr_id: 6003, advertised_th: 100 });   // rate null -> unpriced, skipped
+  assert.equal(api.payRateSatsPhDay(db.get()), 50000, 'spend-free session skipped; last priced rate stays');
+
+  // An ACTIVE session with live rentals overrides the fallback with its current rate.
+  const live = insertSession({ mode: 'live', state: 'active' });
+  insertRental({ session_id: live, mrr_id: 6004, rate_btc_th_day: 4e-7, advertised_th: 100, ended: 0 });
+  assert.equal(api.payRateSatsPhDay(db.get()), 40000, 'active session live rate wins over the fallback');
 });
