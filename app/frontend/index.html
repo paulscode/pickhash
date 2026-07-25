@@ -137,7 +137,7 @@
       <div x-show="poolWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="poolWarning"></div>
       <!-- Ocean fallback (on by default) — called out here so the user is aware and can opt out. -->
       <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
-        <input type="checkbox" x-model="setupFallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
+        <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">
           <span class="text-neon-flame">Fall back to Ocean if your endpoint drops</span> (recommended).
           Your rented hashrate normally mines your own templates through your node. If that becomes
@@ -865,6 +865,15 @@
         <span x-show="seReport" x-cloak class="font-mono text-xs" :class="seReportClass" x-text="seReport"></span>
       </div>
       <div x-show="seWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="seWarning"></div>
+      <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
+        <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
+        <span class="text-xs font-mono text-gray-300 leading-relaxed">
+          <span class="text-neon-flame">Fall back to Ocean if this endpoint drops</span> (recommended).
+          Rented hashrate normally mines your own templates here; if this endpoint becomes unreachable it
+          fails over to <span class="text-white">Ocean</span>, mining to your <span class="text-white">same
+          Bitcoin address</span> — so no rented time is wasted. Only engages on failure.
+        </span>
+      </label>
     </div>
 
     <!-- Diagnostics (read-only) -->

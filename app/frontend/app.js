@@ -127,7 +127,7 @@ document.addEventListener('alpine:init', () => {
     // history view
     showHistory: false, historySessions: [], historyEmpty: false, appReady: false,
     showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
-    setupFallbackOcean: true,
+    fallbackOcean: true,
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
     depthLine: '', depthGridPath: '', depthXLabels: [], depthYMaxLabel: '', depthHasData: false,
     phLowest: '', phLast10: '', phGridPath: '', phYMaxLabel: '', phXLabels: [], phHasData: false,
@@ -905,6 +905,7 @@ document.addEventListener('alpine:init', () => {
       const m = d.mrr || {};
       this.skUser = m.configured ? `Connected as ${m.username || m.userid}` : 'Not connected';
       this.seHashggAvail = !!d.hashgg_host_set;
+      this.fallbackOcean = !!(d.fallback && d.fallback.enabled);   // reflect the saved setting on the endpoint card
       const ep = d.endpoint;
       if (ep) {
         this.seCurrent = `${ep.host}:${ep.port} · ${ep.worker}`;
@@ -965,7 +966,8 @@ document.addEventListener('alpine:init', () => {
       const titles = { strategy: 'Strategy', guardrails: 'Guardrails', notifications: 'Notifications', ui: 'Display' };
       this.settingsGroups = Object.keys(schema).map((ns) => ({
         ns, title: titles[ns] || ns, saved: false, error: '',
-        fields: Object.keys(schema[ns]).map((key) => {
+        // fallback_pool_enabled is surfaced on the Stratum endpoint card instead of here.
+        fields: Object.keys(schema[ns]).filter((key) => !(ns === 'strategy' && key === 'fallback_pool_enabled')).map((key) => {
           const spec = schema[ns][key];
           const val = values[ns] ? values[ns][key] : undefined;
           const isBool = spec.type === 'bool';
@@ -989,7 +991,7 @@ document.addEventListener('alpine:init', () => {
     },
     // Persist the setup-wizard Ocean-fallback toggle (default on server-side, so only a change needs saving).
     async saveFallbackOcean() {
-      await this.send('POST', '/api/config', { ns: 'strategy', patch: { fallback_pool_enabled: this.setupFallbackOcean } });
+      await this.send('POST', '/api/config', { ns: 'strategy', patch: { fallback_pool_enabled: this.fallbackOcean } });
     },
     async loadDiag() {
       const d = (await this.getJson('/api/diag')) || {};
