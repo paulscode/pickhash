@@ -116,10 +116,10 @@ document.addEventListener('alpine:init', () => {
     sLine: '', sArea: '', sCeilPath: '', sCeilLabel: '', sGridPath: '', sYMaxLabel: '', sXLabels: [],
     // market chart
     mLowest: '', mLast10: '', mGridPath: '', mYMaxLabel: '', mXLabels: [], mUnit: '', mHasData: false,
-    mPayLine: '', mLegend: '',
+    mPayLine: '', mCheapVal: '—', mLast10Val: '—', mPayShow: false, mPayVal: '—',
     // Hash Value comparison (your pay-rate vs market rate)
     hvAvail: false, hvShowHint: false, hvBadge: '', hvBadgeClass: 'text-gray-500 border-navy-600', hvPay: '—', hvMarket: '—', hvEff: '—',
-    phPayLine: '', phLegend: '',
+    phPayLine: '', phCheapVal: '—', phLast10Val: '—', phPayShow: false, phPayVal: '—',
     // crosshair
     crossShow: false, crossX: 0, tipX: 0, tipTextX: 0, tipText: '',
     // alerts strip
@@ -398,7 +398,9 @@ document.addEventListener('alpine:init', () => {
       this.mHasData = (mk.series[0].points || []).length > 0;
       this.mLowest = mk.series[0].line; this.mLast10 = mk.series[1].line; this.mUnit = mk.y.unit;
       this.mGridPath = mk.gridPath; this.mYMaxLabel = mk.yMaxLabel; this.mXLabels = mk.x.map((t) => t.label);
-      this.mPayLine = mk.pay_line || ''; this.mLegend = this.mktLegend(mk);
+      this.mPayLine = mk.pay_line || '';
+      const mv = this.mktLegendVals(mk);
+      this.mCheapVal = mv.cheap; this.mLast10Val = mv.last10; this.mPayShow = mv.payShow; this.mPayVal = mv.pay;
       // Hero: latest delivered vs target — read from the SAME series the chart shows
       // (stacked total when bands are up, else the aggregate) so the numeral, %, axis
       // label and crosshair never disagree.
@@ -839,13 +841,17 @@ document.addEventListener('alpine:init', () => {
       this.hvBadge = over === 0 ? 'at market' : (under ? `${sign} under market` : `${sign} over market`);
       this.hvBadgeClass = under ? 'text-neon-green border-neon-green/40' : 'text-neon-pink border-neon-pink/40';
     },
-    // Legend line with each market line's current value (fixes the "can't read the lines" complaint).
-    mktLegend(mk) {
+    // Split each market line's current value out so the legend can show a color swatch per line
+    // (fixes "which line is which" / "the 'you' line looks missing").
+    mktLegendVals(mk) {
       const cur = (v) => (v != null ? this.fmtSats(v) : '—');
       const s = mk && mk.series ? mk.series : [];
-      let out = `cheapest ${cur(s[0] && s[0].current)} · last-10 ${cur(s[1] && s[1].current)}`;
-      if (mk && mk.pay_value != null) out += ` · you ${cur(mk.pay_value)}`;
-      return `${out} (sats/PH·day)`;
+      return {
+        cheap: cur(s[0] && s[0].current),
+        last10: cur(s[1] && s[1].current),
+        payShow: !!(mk && mk.pay_value != null),
+        pay: cur(mk && mk.pay_value),
+      };
     },
     async loadMarket() {
       const d = (await this.getJson('/api/market')) || {};
@@ -871,7 +877,9 @@ document.addEventListener('alpine:init', () => {
       this.phHasData = (((ph.series || [])[0] || {}).points || []).length > 0;
       this.phLowest = ((ph.series || [])[0] || {}).line || ''; this.phLast10 = ((ph.series || [])[1] || {}).line || '';
       this.phGridPath = ph.gridPath || ''; this.phYMaxLabel = ph.yMaxLabel || ''; this.phXLabels = (ph.x || []).map((t) => t.label);
-      this.phPayLine = ph.pay_line || ''; this.phLegend = this.mktLegend(ph);
+      this.phPayLine = ph.pay_line || '';
+      const pv = this.mktLegendVals(ph);
+      this.phCheapVal = pv.cheap; this.phLast10Val = pv.last10; this.phPayShow = pv.payShow; this.phPayVal = pv.pay;
       const regs = d.regions || [];
       const maxTh = regs.reduce((mx, r) => Math.max(mx, r.th), 0) || 1;
       this.regionsEmpty = regs.length === 0;
