@@ -228,6 +228,9 @@ test('buildDepth builds a cumulative TH-by-price step curve (and an empty model 
   assert.equal(m.total_th, 300, 'cumulative available TH');
   assert.equal(m.hash_unit, 'TH/s', '<1000 TH -> TH/s axis');
   assert.equal(m.price_unit, 'sats/PH·day');
+  // Starts at the FIRST real cumulative value (100 @ the cheapest price), not a synthetic (0,0).
+  assert.equal(m.points[0].vy, 100, 'no leading zero — begins at the first collected value');
+  assert.equal(m.points[0].vx, 1e-6 * 1e11, 'and at the first (cheapest) price');
   // The curve steps up to the full 300 at the top price; last point's value is the total.
   assert.equal(m.points[m.points.length - 1].vy, 300);
   assert.ok(m.line.startsWith('M'), 'an SVG path was produced');

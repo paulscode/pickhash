@@ -281,22 +281,27 @@ function buildDepth(depth, opts = {}) {
   let cum = 0;
   const cumPts = rows.map((d) => { cum += d.th; return { price: d.priceBtcThDay * SATS_PH_DAY, cumTh: cum }; });
   const totalTh = cum;
+  // Start the x-axis and the curve at the FIRST real price/cumulative point — no synthetic (0,0)
+  // anchor, which otherwise drew a leading line up from zero. Guard a degenerate single-price domain.
+  const xLo = cumPts[0].price;
   const xMax = niceCeil(cumPts[cumPts.length - 1].price);
+  const xMin = xLo < xMax ? xLo : 0;
   const u = hashUnit(totalTh);
   const yMax = niceCeil(totalTh / u.div) * u.div;
-  const sx = scale(0, xMax, view.padL, view.w - view.padR);
+  const sx = scale(xMin, xMax, view.padL, view.w - view.padR);
   const sy = scale(0, yMax, view.h - view.padB, view.padT);
-  // Step curve from (0,0): horizontal to each price, then up by that price's TH.
-  const pts = [{ x: sx(0), y: sy(0), vx: 0, vy: 0 }];
-  let prev = 0;
+  // Cumulative step curve starting at the first real value: step horizontal (cumulative unchanged)
+  // to each next price, then up to its new cumulative.
+  const pts = [];
+  let prev = null;
   for (const p of cumPts) {
-    pts.push({ x: sx(p.price), y: sy(prev), vx: p.price, vy: prev });
+    if (prev !== null) pts.push({ x: sx(p.price), y: sy(prev), vx: p.price, vy: prev });
     pts.push({ x: sx(p.price), y: sy(p.cumTh), vx: p.price, vy: p.cumTh });
     prev = p.cumTh;
   }
   const yTk = yTicks(yMax, u.div, u.dp);
   const xTk = [];
-  for (let i = 0; i <= 4; i++) { const v = (xMax * i) / 4; xTk.push({ v, x: sx(v), label: Math.round(v).toLocaleString('en-US') }); }
+  for (let i = 0; i <= 4; i++) { const v = xMin + ((xMax - xMin) * i) / 4; xTk.push({ v, x: sx(v), label: Math.round(v).toLocaleString('en-US') }); }
   return {
     view, kind: 'depth', empty: false,
     total_th: totalTh, price_unit: 'sats/PH·day', hash_unit: u.unit,
