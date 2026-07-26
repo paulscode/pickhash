@@ -1070,7 +1070,10 @@ document.addEventListener('alpine:init', () => {
         // Reflect the name as the endpoint everywhere: settings host/current line AND the setup host
         // field (so a re-test targets the name, not the stale raw IP — which would re-raise the warning).
         this.seHost = r.json.name; this.poolHost = r.json.name;
-        this.seCurrent = `${r.json.name}:${this.sePort} · ${this.seWorker}`;
+        // Only refresh the Settings "Current:" line when its fields are populated (i.e. invoked from
+        // Settings, not the first-run wizard where sePort/seWorker are empty). loadConnection sets it
+        // authoritatively otherwise.
+        if (this.sePort) this.seCurrent = `${r.json.name}:${this.sePort} · ${this.seWorker}`;
         // The endpoint is a NAME now, not a bare IP — clear the "MRR won't refund IP pools" warning and
         // the raw-IP gates so the setup/settings panels reflect the fix.
         this.poolWarning = ''; this.seWarning = ''; this.bareIp = false; this.seIsIp = false;
