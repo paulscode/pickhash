@@ -65,6 +65,8 @@ async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
       // reconciled from MRR's ledger at close, so the halt (which exists only to stop a re-extend
       // race) is moot — and must not persist to block a FUTURE session's autopilot.
       for (const r of rentals) alerts.resolveReconcile(conn, `xamb${r.mrr_id}`, nowMs);
+      // A rate-ceiling hold is moot once the session closes — resolve it so it doesn't linger.
+      alerts.runTransition(conn, { kind: 'rate_ceiling_hold', key: String(s.id), bad: false, now: nowMs });
       alerts.fireOnce(conn, { kind: 'session_ended', key: String(s.id), now: nowMs, context: { summary } });
     }
   }
@@ -157,6 +159,20 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       // close it now instead of showing "running" with zero rigs until the time cap.
       if (r && r.plan && (r.plan.notes || []).includes('no_affordable_candidate')) {
         await runLifecycle(conn, snapshot, now, { client, budgetExhausted: true });
+      }
+      // Surface a SUSTAINED hold-below-target caused specifically by the blended rate ceiling (the
+      // cap rejected affordable rigs — not a market/budget block). Arm on the first such tick, fire
+      // after ~10 min so a brief no-fit gap doesn't alarm, resolve when it fills or the ceiling is
+      // raised. Without this, a too-tight ceiling silently pins autopilot far below target (a soak
+      // sat at ~8% of target for 2h with no on-screen reason).
+      if (snapshot.session) {
+        const plan = r && r.plan;
+        const heldByCeiling = !!(plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
+        alerts.runTransition(conn, {
+          kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
+          thresholdMs: 10 * 60 * 1000,
+          context: heldByCeiling ? { active_th: Math.round(plan.activeTh), target_th: Math.round(plan.targetTh), shortfall_th: Math.round(plan.shortfallTh) } : {},
+        });
       }
     }
   } catch (e) { log({ event: 'autopilot_error', message: String(e && e.message) }); }

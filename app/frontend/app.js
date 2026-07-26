@@ -488,6 +488,7 @@ document.addEventListener('alpine:init', () => {
         endpoint_repaired: `Your pool endpoint moved${c.to ? ` to ${c.to.host}:${c.to.port}` : ''} — active rentals were re-pointed to it`,
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
+        rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
       };
       return map[a.kind] || a.kind;
     },
@@ -596,11 +597,13 @@ document.addEventListener('alpine:init', () => {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
-      // Pre-fill the blended rate ceiling: a standing setting wins; otherwise default to the estimated
-      // blended rate (sats/PH·day). Don't clobber a value the user has already typed this session.
+      // Pre-fill the blended rate ceiling: a standing setting wins; otherwise the suggested cap (the
+      // estimated blend + headroom, so the fill isn't strangled hugging the estimate). Falls back to
+      // the bare blend. Don't clobber a value the user has already typed this session.
       if (!this.apRateCeilTouched) {
         this.apRateCeil = currentCeiling != null ? String(currentCeiling)
-          : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '');
+          : (est.suggestedCeilingSatsPhDay != null ? String(est.suggestedCeilingSatsPhDay)
+            : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : ''));
       }
       this.apBurnText = `${this.fmtSats(est.burnSatsHr)} sats/hr`;
       // Estimated spend through the run: burn × time cap, but never more than the budget cap

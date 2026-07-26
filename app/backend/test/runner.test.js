@@ -290,6 +290,34 @@ test('tickOnce runs the top-up AND auto-extend cycle on a normal (non-adopt) tic
   } finally { restore.forEach((r) => r()); }
 });
 
+test('tickOnce arms then fires a rate_ceiling_hold when the blend ceiling pins autopilot below target, and resolves on heal', async () => {
+  const c = db.get();
+  const sid = seedAutopilot(c);   // autopilot active, no rentals -> lifecycle no-ops, spend cycle runs
+  const heldPlan = { notes: ['no_fit', 'blend_ceiling'], activeTh: 24, targetTh: 300, shortfallTh: 276 };
+  const restore = [
+    stub(autopilot, 'runCycle', spy({ ran: true, plan: heldPlan })),
+    stub(extend, 'runAutoExtend', spy({ ran: false })),
+  ];
+  const key = String(sid);
+  const holdRow = () => c.prepare("SELECT * FROM alerts WHERE kind='rate_ceiling_hold' AND key=? ORDER BY id DESC LIMIT 1").get(key);
+  try {
+    const snap = () => ({ session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid), rentals: [], fetch_ok: {}, reconciliation: { adopt: [], unattributable: [] } });
+    const T = 5_000_000;
+    // First ceiling-blocked tick only ARMS (10-min threshold guards against a brief no-fit gap).
+    await tickOnce(c, DATA, snap(), { now: T, client: {} });
+    assert.equal(holdRow().state, 'armed', 'first ceiling-blocked tick arms the hold');
+    // Past the threshold, a sustained hold FIRES with the shortfall context for the UI.
+    await tickOnce(c, DATA, snap(), { now: T + 10 * 60 * 1000 + 1, client: {} });
+    const fired = holdRow();
+    assert.equal(fired.state, 'fired', 'a sustained ceiling hold fires after the threshold');
+    assert.equal(JSON.parse(fired.context_json).shortfall_th, 276, 'fired context carries the shortfall for the alert copy');
+    // Heal: the fill recovers -> decide returns within_tolerance (no plan) -> the hold resolves.
+    autopilot.runCycle = spy({ ran: false, reason: 'within_tolerance' });
+    await tickOnce(c, DATA, snap(), { now: T + 11 * 60 * 1000, client: {} });
+    assert.equal(holdRow().state, 'resolved', 'the hold resolves once the fill recovers');
+  } finally { restore.forEach((r) => r()); }
+});
+
 test('tickOnce with no MRR client skips the spend cycle but still runs lifecycle/alerts', async () => {
   const c = db.get();
   const sid = seedSession([{ mrr_id: 1, ended: true, pct: 97 }]);   // all rentals ended -> lifecycle closes it

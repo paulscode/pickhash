@@ -45,6 +45,12 @@ class SessionError extends Error {
 
 function nowSec() { return Math.floor(Date.now() / 1000); }
 
+// The SUGGESTED blended ceiling is the estimated blend plus this much room. Pre-filling the cap at
+// the bare estimate leaves ~0 headroom: the first rentals set a running blend right at the estimate,
+// so any rig priced a hair above stalls the fill — autopilot sat at 8% of target for ~2h in a soak.
+// The margin is baked into the number the user SEES (and can edit down), not added silently at enforce.
+const CEILING_HEADROOM = 1.15;
+
 /** Per-rig protective price cap (BTC per PH per day, +1% headroom), rounded like the API. */
 function rateCapPhDay(rateBtcThDay) {
   return Number((rateBtcThDay * 1000 * RATE_CAP_HEADROOM).toFixed(8));
@@ -411,6 +417,9 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     shortfallTh: Math.max(0, targetTh - coveredTh),
     burnSatsHr,
     blendedSatsPhDay,
+    // Suggested cap = estimated blend + headroom, so the pre-filled ceiling gives the live fill room
+    // instead of strangling it at the estimate. Shown to the user (editable), not enforced silently.
+    suggestedCeilingSatsPhDay: blendedSatsPhDay != null ? Math.round(blendedSatsPhDay * CEILING_HEADROOM) : null,
     runwayHours: Number.isFinite(runwayHours) ? Math.round(runwayHours * 10) / 10 : null,
   };
 }

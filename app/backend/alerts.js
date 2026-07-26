@@ -40,6 +40,7 @@ const SEVERITY = {
   endpoint_repaired: 'warning',
   rental_extended: 'info',
   rental_adopted: 'warning',
+  rate_ceiling_hold: 'warning',
 };
 
 function currentActive(conn, kind, key) {

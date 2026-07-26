@@ -67,6 +67,10 @@ test('opens an autopilot session (row + feasibility estimate) and creates NO ren
   assert.ok(r.estimate.burnSatsHr > 0 && r.estimate.runwayHours > 0);
   // Blended rate (advertised-weighted, sats/PH·day): 0.0005 BTC/PH·day -> 5e-7 BTC/TH·day -> 50,000.
   assert.equal(r.estimate.blendedSatsPhDay, 50000, 'preview blended rate matches the market-chart basis');
+  // Suggested ceiling carries headroom over the bare blend, so the pre-filled cap doesn't strangle
+  // the live fill (Math.round(50000 * 1.15)).
+  assert.equal(r.estimate.suggestedCeilingSatsPhDay, 57500, 'suggested ceiling is the blend + 15% headroom');
+  assert.ok(r.estimate.suggestedCeilingSatsPhDay > r.estimate.blendedSatsPhDay, 'suggested cap leaves room above the estimated blend');
 });
 
 test('a preview blended ceiling (sats/PH·day) is persisted as the guardrail', async () => {
