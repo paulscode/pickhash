@@ -40,6 +40,10 @@ document.addEventListener('alpine:init', () => {
     poolWarning: '',
     poolOk: false,
     poolFailed: false,
+    bareIp: false,            // tested setup endpoint is a raw IP -> offer DuckDNS
+    // DuckDNS (give a raw-IP endpoint a stable name; shared by setup Step 2 + Settings endpoint card)
+    duckdnsWant: true, duckdnsSub: '', duckdnsToken: '', duckdnsBusy: false,
+    duckdnsReport: '', duckdnsReportClass: '', duckdnsEnabled: false, duckdnsName: '', seIsIp: false,
     depositAddr: '',
     depositConfirmed: 0,
 
@@ -288,6 +292,8 @@ document.addEventListener('alpine:init', () => {
       this.poolOk = !!r.json.ok;
       this.poolFailed = !r.json.ok;
       this.poolWarning = r.json.warning || '';
+      this.bareIp = !!r.json.bare_ip;   // a raw IP -> surface the DuckDNS naming option
+      this.duckdnsReport = '';
       const pr = r.json.probe || {};
       this.poolReportText = this.poolOk
         ? `Endpoint serves work (subscribe ${pr.msToSubscribe}ms, first work ${pr.msToFirstWork}ms, difficulty ${pr.difficulty}).`
@@ -491,6 +497,7 @@ document.addEventListener('alpine:init', () => {
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
         rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
         rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the Ocean fallback${c.messaged ? ' and messaged the owner' : ''}`,
+        duckdns_update_failed: `Your endpoint's IP changed but the DuckDNS name couldn't be updated${c.name ? ` (${c.name}.duckdns.org)` : ''} — it may point at the old IP. Check your DuckDNS token.`,
       };
       return map[a.kind] || a.kind;
     },
@@ -945,6 +952,10 @@ document.addEventListener('alpine:init', () => {
       this.seHashggAvail = !!d.hashgg_host_set;
       this.fallbackOcean = !!(d.fallback && d.fallback.enabled);   // reflect the saved setting on the endpoint card
       this.rerouteDeadRigs = !!(d.fallback && d.fallback.reroute_dead_rigs);
+      this.seIsIp = !!(d.endpoint && d.endpoint.is_ip);
+      this.duckdnsEnabled = !!(d.duckdns && d.duckdns.enabled);
+      this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
+      if (d.duckdns && d.duckdns.subdomain) this.duckdnsSub = d.duckdns.subdomain;
       const ep = d.endpoint;
       if (ep) {
         this.seCurrent = `${ep.host}:${ep.port} · ${ep.worker}`;
@@ -1039,6 +1050,36 @@ document.addEventListener('alpine:init', () => {
     },
     async saveRerouteDeadRigs() {
       await this.send('POST', '/api/config', { ns: 'strategy', patch: { dead_rig_reroute_enabled: this.rerouteDeadRigs } });
+    },
+    // --- DuckDNS: give a raw-IP endpoint a stable name (CSP build -> multi-condition gates are methods) ---
+    showDuckdnsSetup() { return this.poolOk && this.bareIp && !this.duckdnsEnabled; },   // setup Step 2
+    seShowDuckdnsSetup() { return this.seIsIp && !this.duckdnsEnabled; },                // Settings endpoint card
+    duckdnsCantSubmit() { return this.duckdnsBusy || !this.duckdnsSub || !this.duckdnsToken; },
+    async setupDuckdns() {
+      this.duckdnsBusy = true; this.duckdnsReport = '';
+      const r = await this.send('POST', '/api/duckdns/setup', { subdomain: this.duckdnsSub, token: this.duckdnsToken });
+      this.duckdnsBusy = false;
+      if (r.ok && r.json && r.json.ok) {
+        this.duckdnsEnabled = true; this.duckdnsName = r.json.name; this.duckdnsToken = ''; this.seHost = r.json.name;
+        this.duckdnsReport = `Using ${r.json.name} — new rentals point here.`; this.duckdnsReportClass = 'text-neon-green';
+      } else {
+        this.duckdnsReport = this.duckdnsErr(r.json && r.json.error); this.duckdnsReportClass = 'text-neon-pink';
+      }
+    },
+    duckdnsErr(e) {
+      return e === 'invalid_subdomain' ? 'Enter a valid DuckDNS subdomain (letters, numbers, hyphens).'
+        : e === 'token_required' ? 'Enter your DuckDNS token.'
+        : e === 'duckdns_rejected' ? 'DuckDNS rejected that — double-check the subdomain and token.'
+        : e === 'not_resolving' ? 'The name isn’t resolving to your IP yet — DuckDNS can be slow; give it a minute and try again.'
+        : e === 'endpoint_not_ip' ? 'The endpoint isn’t a raw IP — no name needed.'
+        : e === 'no_endpoint' ? 'Test an endpoint first.'
+        : 'Could not set up the DuckDNS name — try again.';
+    },
+    async disableDuckdns() {
+      this.duckdnsBusy = true; this.duckdnsReport = '';
+      const r = await this.send('POST', '/api/duckdns/disable', {});
+      this.duckdnsBusy = false;
+      if (r.ok) { this.duckdnsEnabled = false; this.duckdnsName = ''; await this.loadConnection(); }
     },
     async loadDiag() {
       const d = (await this.getJson('/api/diag')) || {};

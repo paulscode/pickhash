@@ -15,6 +15,7 @@ const config = require('./config');
 const mrr = require('./mrr');
 const stratum = require('./stratum');
 const hashgg = require('./hashgg');
+const duckdns = require('./duckdns');
 const endpoint = require('./endpoint');
 const bootstrap = require('./bootstrap');
 const deposit = require('./deposit');
@@ -224,6 +225,14 @@ async function handleApi(req, res, url, body, ctx = {}) {
            VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       ).run(`endpoint:${host}:${port}`, 'manual', host, port, user, probe.difficulty,
         JSON.stringify({ probe, mrrAdvisory, isIp, at: Math.floor(Date.now() / 1000) }));
+      // If the endpoint identity changed out from under an active DuckDNS name (the user saved a
+      // different host), disable DuckDNS — the name tracked the old endpoint. They can re-enable it
+      // for the new one. (Re-saving the SAME name keeps it.)
+      const dcfg = config.get(conn, 'duckdns');
+      if (dcfg.enabled && dcfg.subdomain && duckdns.fqdn(dcfg.subdomain) !== host) {
+        config.set(conn, 'duckdns', { enabled: false });
+        duckdns.clearToken(conn);
+      }
     }
 
     return sendJson(res, 200, {
@@ -553,7 +562,8 @@ async function handleApi(req, res, url, body, ctx = {}) {
       run_mode: config.getKey(conn, 'run', 'mode') || 'dry-run',
       engine: { last_tick_ts: lastTick, last_tick_age_sec: lastTick != null ? nowSec - lastTick : null, ticks_last_hour: ticksHour },
       session,
-      endpoint: ep ? { host: ep.host, port: ep.port, worker: ep.worker_base, source: ep.source } : null,
+      endpoint: ep ? { host: ep.host, port: ep.port, worker: ep.worker_base, source: ep.source, is_ip: net.isIP(ep.host) > 0 } : null,
+      duckdns: (() => { const d = config.get(conn, 'duckdns'); return { enabled: !!d.enabled, subdomain: d.subdomain || null, name: d.subdomain ? duckdns.fqdn(d.subdomain) : null, ip: d.ip || null }; })(),
       fallback: {
         enabled: !!config.get(conn, 'strategy').fallback_pool_enabled,
         reroute_dead_rigs: !!config.get(conn, 'strategy').dead_rig_reroute_enabled,
@@ -657,6 +667,25 @@ async function handleApi(req, res, url, body, ctx = {}) {
       }
       return sendJson(res, 502, { error: 'autopilot_failed' });
     }
+  }
+
+  // Give the active raw-IP endpoint a stable DuckDNS name (MRR won't refund IP-pointed rentals).
+  // Registers + verifies-resolves before adopting the name; a failure leaves the raw IP untouched.
+  if (p === '/api/duckdns/setup' && method === 'POST') {
+    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
+    const client = mrr.clientFromStore(conn, ctx.dataDir);
+    try {
+      const r = await duckdns.applyName(conn, ctx.dataDir, client, { subdomain: body.subdomain, token: body.token, runMode });
+      return sendJson(res, r.ok ? 200 : 400, r);
+    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
+  }
+  if (p === '/api/duckdns/disable' && method === 'POST') {
+    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
+    const client = mrr.clientFromStore(conn, ctx.dataDir);
+    try {
+      const r = await duckdns.removeName(conn, ctx.dataDir, client, { runMode });
+      return sendJson(res, 200, r);
+    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
   }
 
   return sendJson(res, 404, { error: 'not_found' });

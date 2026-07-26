@@ -42,6 +42,7 @@ const SEVERITY = {
   rental_adopted: 'warning',
   rate_ceiling_hold: 'warning',
   rig_rerouted: 'warning',
+  duckdns_update_failed: 'warning',
 };
 
 function currentActive(conn, kind, key) {

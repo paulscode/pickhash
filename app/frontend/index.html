@@ -135,6 +135,29 @@
       <p x-show="poolOk" x-cloak class="text-sm font-mono text-neon-green" x-text="poolReportText"></p>
       <p x-show="poolFailed" x-cloak class="text-sm font-mono text-neon-pink" x-text="poolReportText"></p>
       <div x-show="poolWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="poolWarning"></div>
+      <!-- DuckDNS: shown ONLY when the tested endpoint is a raw IP (MRR won't refund IP-pointed
+           rentals). On by default; uncheck to keep the raw IP. Gated by a method (CSP build). -->
+      <div x-show="showDuckdnsSetup()" x-cloak class="bg-navy-800/50 border border-neon-ember/25 rounded-lg p-3 space-y-2.5">
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input type="checkbox" x-model="duckdnsWant" class="mt-0.5" style="accent-color:#ff7847">
+          <span class="text-xs font-mono text-gray-300 leading-relaxed">
+            <span class="text-neon-ember">Give this IP a free name via DuckDNS</span> (recommended).
+            MiningRigRentals won't refund rentals pointed at a bare IP. A free
+            <a href="https://www.duckdns.org" target="_blank" rel="noopener" class="text-neon-flame underline">DuckDNS</a>
+            name fixes that — we point it at your endpoint and keep it in sync if the IP changes.
+          </span>
+        </label>
+        <div x-show="duckdnsWant" x-cloak class="space-y-2 ml-6">
+          <div class="grid grid-cols-3 gap-2 items-center">
+            <input type="text" x-model="duckdnsSub" placeholder="subdomain" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+            <span class="text-gray-500 font-mono text-xs">.duckdns.org</span>
+          </div>
+          <input type="password" x-model="duckdnsToken" placeholder="DuckDNS token" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+          <button type="button" @click="setupDuckdns()" :disabled="duckdnsCantSubmit()" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="duckdnsBusy" x-cloak class="animate-pulse-neon">● </span>Set up name</button>
+          <p x-show="duckdnsReport" x-cloak class="text-xs font-mono" :class="duckdnsReportClass" x-text="duckdnsReport"></p>
+        </div>
+      </div>
+      <p x-show="duckdnsEnabled" x-cloak class="text-xs font-mono text-neon-green">✓ Using <span x-text="duckdnsName"></span> — new rentals point here.</p>
       <!-- Ocean fallback (on by default) — called out here so the user is aware and can opt out. -->
       <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
         <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
@@ -893,6 +916,28 @@
         <span x-show="seReport" x-cloak class="font-mono text-xs" :class="seReportClass" x-text="seReport"></span>
       </div>
       <div x-show="seWarning" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono" x-text="seWarning"></div>
+      <!-- DuckDNS: name a raw-IP endpoint. Shown only when the active endpoint is a raw IP and DuckDNS
+           isn't already on; when on, the state block below shows the name + a revert. -->
+      <div x-show="seShowDuckdnsSetup()" x-cloak class="bg-navy-800/50 border border-neon-ember/25 rounded-lg p-3 space-y-2">
+        <p class="text-xs font-mono text-gray-300 leading-relaxed">
+          <span class="text-neon-ember">Give this IP a free name via DuckDNS</span>. MRR won't refund rentals pointed at a bare IP. Enter a free
+          <a href="https://www.duckdns.org" target="_blank" rel="noopener" class="text-neon-flame underline">DuckDNS</a>
+          subdomain + token; we point it at your endpoint and keep it in sync.
+        </p>
+        <div class="grid grid-cols-3 gap-2 items-center">
+          <input type="text" x-model="duckdnsSub" placeholder="subdomain" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+          <span class="text-gray-500 font-mono text-xs">.duckdns.org</span>
+        </div>
+        <input type="password" x-model="duckdnsToken" placeholder="DuckDNS token" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
+        <div class="flex items-center gap-3">
+          <button type="button" @click="setupDuckdns()" :disabled="duckdnsCantSubmit()" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="duckdnsBusy" x-cloak class="animate-pulse-neon">● </span>Set up name</button>
+          <span x-show="duckdnsReport" x-cloak class="text-xs font-mono" :class="duckdnsReportClass" x-text="duckdnsReport"></span>
+        </div>
+      </div>
+      <div x-show="duckdnsEnabled" x-cloak class="flex items-center justify-between bg-navy-800/50 border border-neon-green/25 rounded-lg p-3">
+        <span class="text-xs font-mono text-gray-300">Endpoint name: <span class="text-neon-green" x-text="duckdnsName"></span> <span class="text-gray-500">(DuckDNS)</span></span>
+        <button type="button" @click="disableDuckdns()" :disabled="duckdnsBusy" class="text-xs font-mono text-gray-400 hover:text-neon-pink underline disabled:opacity-50">Use raw IP</button>
+      </div>
       <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
         <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">

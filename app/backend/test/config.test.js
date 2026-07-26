@@ -27,7 +27,7 @@ test('the canonical knob list includes the spend guardrails', () => {
     for (const k of ['max_session_budget_sats', 'max_daily_spend_sats', 'refund_watch_days', 'deposit_leadtime_hours']) {
       assert.ok(k in g, `guardrail ${k} present`);
     }
-    assert.deepEqual(Object.keys(config.all(conn)).sort(), ['guardrails', 'notifications', 'strategy', 'ui']);
+    assert.deepEqual(Object.keys(config.all(conn)).sort(), ['duckdns', 'guardrails', 'notifications', 'strategy', 'ui']);
   });
 });
 

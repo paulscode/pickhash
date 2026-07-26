@@ -45,6 +45,15 @@ const DEFAULTS = {
   ui: {
     hashrate_unit: 'ph',            // primary display unit (PH/s); sub-PH toggles to TH/s
   },
+  // DuckDNS: give a raw-IP stratum endpoint a stable DNS name (MRR won't refund IP-pointed rentals).
+  // Not in SETTINGS -> surfaced on the endpoint card, not the generic settings list; the token is a
+  // secret (secrets table), never here. `ip` is the address the name currently points at.
+  duckdns: {
+    enabled: false,
+    subdomain: null,
+    ip: null,
+    updated_at: null,             // unix secs of the last successful DuckDNS push (drives the daily keepalive)
+  },
 };
 
 function nowSeconds() { return Math.floor(Date.now() / 1000); }

@@ -22,6 +22,7 @@ const deadRigFallback = require('./dead-rig-fallback');
 const ownerNudge = require('./owner-nudge');
 const ledgerFetch = require('./ledger');
 const config = require('../config');
+const duckdns = require('../duckdns');
 const mrr = require('../mrr');
 
 /** Close a session whose rentals have all ended; prompt disputes for under-delivered rigs. */
@@ -146,14 +147,30 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     alerts.raiseReconcile(conn, { key: `mrr${stray.mrrId}`, now, context: { mrr_id: stray.mrrId, rig: stray.rigId } });
   }
 
-  // Endpoint auto-repair, debounced on a CONFIRMED outage (endpoint_down fired ~150s) so a probe
-  // blip or an oscillating HashGG report can't churn MRR pool writes every tick.
-  try {
-    const plan = endpointRepair.planRepair({ storedEndpoint: snapshot.endpoint, endpointOk: !!(snapshot.endpoint && snapshot.endpoint.ok), hashgg: snapshot.hashgg });
-    if (plan && alerts.newRentsHalted(conn)) {
-      await endpointRepair.repair(conn, client, { plan, runMode: config.getKey(conn, 'run', 'mode') || 'dry-run', now });
-    }
-  } catch (e) { log({ event: 'endpoint_repair_error', message: String(e && e.message) }); }
+  // A HashGG IP change is handled ONE of two ways, never both:
+  //  - DuckDNS on: the endpoint host is a STABLE name, so we just re-point the name at the new IP (one
+  //    DuckDNS update, no MRR pool rewrites). endpoint-repair MUST NOT run — it would see name != IP
+  //    every tick and clobber the name back to a raw IP.
+  //  - DuckDNS off: endpoint-repair re-points active rentals' pools to the new HashGG endpoint.
+  if (config.getKey(conn, 'duckdns', 'enabled')) {
+    try {
+      const hg = snapshot.hashgg;
+      const hashggIp = hg && hg.publicEndpoint && hg.publicEndpoint.isIp ? hg.publicEndpoint.host : null;
+      const r = await duckdns.maybeRefresh(conn, dataDir, { hashggIp, nowSec: Math.floor(now / 1000) });
+      if (r && r.ran) log({ event: 'duckdns_refresh', updated: !!r.updated, ip_changed: !!r.ipChanged, error: r.error || null });
+      // A failed push AFTER the IP changed means the name now points at a dead IP — surface it (sustained).
+      alerts.runTransition(conn, { kind: 'duckdns_update_failed', key: 'duckdns', bad: !!(r && r.ran && r.ipChanged && !r.updated), now, thresholdMs: 5 * 60 * 1000, context: { name: config.getKey(conn, 'duckdns', 'subdomain') } });
+    } catch (e) { log({ event: 'duckdns_refresh_error', message: String(e && e.message) }); }
+  } else {
+    // Endpoint auto-repair, debounced on a CONFIRMED outage (endpoint_down fired ~150s) so a probe
+    // blip or an oscillating HashGG report can't churn MRR pool writes every tick.
+    try {
+      const plan = endpointRepair.planRepair({ storedEndpoint: snapshot.endpoint, endpointOk: !!(snapshot.endpoint && snapshot.endpoint.ok), hashgg: snapshot.hashgg });
+      if (plan && alerts.newRentsHalted(conn)) {
+        await endpointRepair.repair(conn, client, { plan, runMode: config.getKey(conn, 'run', 'mode') || 'dry-run', now });
+      }
+    } catch (e) { log({ event: 'endpoint_repair_error', message: String(e && e.message) }); }
+  }
 
   try {
     if (client && !skipSpendCycle) {
