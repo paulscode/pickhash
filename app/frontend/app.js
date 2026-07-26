@@ -44,6 +44,9 @@ document.addEventListener('alpine:init', () => {
     // DuckDNS (give a raw-IP endpoint a stable name; shared by setup Step 2 + Settings endpoint card)
     duckdnsWant: true, duckdnsSub: '', duckdnsToken: '', duckdnsBusy: false,
     duckdnsReport: '', duckdnsReportClass: '', duckdnsEnabled: false, duckdnsName: '', seIsIp: false,
+    // Derived gate flags kept as plain booleans (the CSP Alpine build has no precedent for method
+    // calls in x-show); recomputed wherever their inputs change.
+    showDuckdns: false, seShowDuckdns: false,
     depositAddr: '',
     depositConfirmed: 0,
 
@@ -294,6 +297,7 @@ document.addEventListener('alpine:init', () => {
       this.poolWarning = r.json.warning || '';
       this.bareIp = !!r.json.bare_ip;   // a raw IP -> surface the DuckDNS naming option
       this.duckdnsReport = '';
+      this.showDuckdns = this.poolOk && this.bareIp && !this.duckdnsEnabled;
       const pr = r.json.probe || {};
       this.poolReportText = this.poolOk
         ? `Endpoint serves work (subscribe ${pr.msToSubscribe}ms, first work ${pr.msToFirstWork}ms, difficulty ${pr.difficulty}).`
@@ -956,6 +960,10 @@ document.addEventListener('alpine:init', () => {
       this.duckdnsEnabled = !!(d.duckdns && d.duckdns.enabled);
       this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
       if (d.duckdns && d.duckdns.subdomain) this.duckdnsSub = d.duckdns.subdomain;
+      this.seShowDuckdns = this.seIsIp && !this.duckdnsEnabled;   // settings gate (plain bool for the CSP build)
+      // Derive the bare-IP warning from the CURRENT endpoint state so it reflects reality on every load
+      // (and reappears after reverting DuckDNS), not only right after a pool test.
+      this.seWarning = this.seShowDuckdns ? 'Bare-IP endpoint — MiningRigRentals won’t refund rentals pointed at an IP. Name it below.' : '';
       const ep = d.endpoint;
       if (ep) {
         this.seCurrent = `${ep.host}:${ep.port} · ${ep.worker}`;
@@ -1051,19 +1059,22 @@ document.addEventListener('alpine:init', () => {
     async saveRerouteDeadRigs() {
       await this.send('POST', '/api/config', { ns: 'strategy', patch: { dead_rig_reroute_enabled: this.rerouteDeadRigs } });
     },
-    // --- DuckDNS: give a raw-IP endpoint a stable name (CSP build -> multi-condition gates are methods) ---
-    showDuckdnsSetup() { return this.poolOk && this.bareIp && !this.duckdnsEnabled; },   // setup Step 2
-    seShowDuckdnsSetup() { return this.seIsIp && !this.duckdnsEnabled; },                // Settings endpoint card
-    duckdnsCantSubmit() { return this.duckdnsBusy || !this.duckdnsSub || !this.duckdnsToken; },
+    // --- DuckDNS: give a raw-IP endpoint a stable name ---
     async setupDuckdns() {
+      if (!this.duckdnsSub || !this.duckdnsToken) { this.duckdnsReport = 'Enter a DuckDNS subdomain and token.'; this.duckdnsReportClass = 'text-neon-pink'; return; }
       this.duckdnsBusy = true; this.duckdnsReport = '';
       const r = await this.send('POST', '/api/duckdns/setup', { subdomain: this.duckdnsSub, token: this.duckdnsToken });
       this.duckdnsBusy = false;
       if (r.ok && r.json && r.json.ok) {
-        this.duckdnsEnabled = true; this.duckdnsName = r.json.name; this.duckdnsToken = ''; this.seHost = r.json.name;
+        this.duckdnsEnabled = true; this.duckdnsName = r.json.name; this.duckdnsToken = '';
+        // Reflect the name as the endpoint everywhere: settings host/current line AND the setup host
+        // field (so a re-test targets the name, not the stale raw IP — which would re-raise the warning).
+        this.seHost = r.json.name; this.poolHost = r.json.name;
+        this.seCurrent = `${r.json.name}:${this.sePort} · ${this.seWorker}`;
         // The endpoint is a NAME now, not a bare IP — clear the "MRR won't refund IP pools" warning and
         // the raw-IP gates so the setup/settings panels reflect the fix.
         this.poolWarning = ''; this.seWarning = ''; this.bareIp = false; this.seIsIp = false;
+        this.showDuckdns = false; this.seShowDuckdns = false;
         this.duckdnsReport = `Using ${r.json.name} — new rentals point here.`; this.duckdnsReportClass = 'text-neon-green';
       } else {
         this.duckdnsReport = this.duckdnsErr(r.json && r.json.error); this.duckdnsReportClass = 'text-neon-pink';
@@ -1083,6 +1094,7 @@ document.addEventListener('alpine:init', () => {
       const r = await this.send('POST', '/api/duckdns/disable', {});
       this.duckdnsBusy = false;
       if (r.ok) { this.duckdnsEnabled = false; this.duckdnsName = ''; await this.loadConnection(); }
+      else { this.duckdnsReport = 'Could not revert to the raw IP — try again.'; this.duckdnsReportClass = 'text-neon-pink'; }
     },
     async loadDiag() {
       const d = (await this.getJson('/api/diag')) || {};

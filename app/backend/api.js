@@ -230,8 +230,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // for the new one. (Re-saving the SAME name keeps it.)
       const dcfg = config.get(conn, 'duckdns');
       if (dcfg.enabled && dcfg.subdomain && duckdns.fqdn(dcfg.subdomain) !== host) {
-        config.set(conn, 'duckdns', { enabled: false });
-        duckdns.clearToken(conn);
+        duckdns.disableState(conn);   // config + token + resolve any fired duckdns_update_failed alert
       }
     }
 
@@ -285,6 +284,26 @@ async function handleApi(req, res, url, body, ctx = {}) {
   }
   // Other setup endpoints (MRR keys, pool, funding) are added in later steps.
   if (p.startsWith('/api/setup/')) return sendJson(res, 404, { error: 'not_found' });
+
+  // DuckDNS naming of a raw-IP endpoint. ABOVE the setup gate on purpose: the endpoint step of the
+  // first-run wizard offers it (a VPS-tunnel endpoint is a bare IP), so it must work before setup is
+  // complete — and it's still used from Settings afterward. Auth/CSRF already applied above.
+  if (p === '/api/duckdns/setup' && method === 'POST') {
+    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
+    const client = mrr.clientFromStore(conn, ctx.dataDir);
+    try {
+      const r = await duckdns.applyName(conn, ctx.dataDir, client, { subdomain: body.subdomain, token: body.token, runMode });
+      return sendJson(res, r.ok ? 200 : 400, r);
+    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
+  }
+  if (p === '/api/duckdns/disable' && method === 'POST') {
+    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
+    const client = mrr.clientFromStore(conn, ctx.dataDir);
+    try {
+      const r = await duckdns.removeName(conn, ctx.dataDir, client, { runMode });
+      return sendJson(res, 200, r);
+    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
+  }
 
   // --- Setup gate: the rest of the API is closed until the wizard completes ---
   if (!isSetupComplete(conn)) return sendJson(res, 412, { needs_setup: true });
@@ -667,25 +686,6 @@ async function handleApi(req, res, url, body, ctx = {}) {
       }
       return sendJson(res, 502, { error: 'autopilot_failed' });
     }
-  }
-
-  // Give the active raw-IP endpoint a stable DuckDNS name (MRR won't refund IP-pointed rentals).
-  // Registers + verifies-resolves before adopting the name; a failure leaves the raw IP untouched.
-  if (p === '/api/duckdns/setup' && method === 'POST') {
-    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
-    const client = mrr.clientFromStore(conn, ctx.dataDir);
-    try {
-      const r = await duckdns.applyName(conn, ctx.dataDir, client, { subdomain: body.subdomain, token: body.token, runMode });
-      return sendJson(res, r.ok ? 200 : 400, r);
-    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
-  }
-  if (p === '/api/duckdns/disable' && method === 'POST') {
-    const runMode = config.getKey(conn, 'run', 'mode') || 'dry-run';
-    const client = mrr.clientFromStore(conn, ctx.dataDir);
-    try {
-      const r = await duckdns.removeName(conn, ctx.dataDir, client, { runMode });
-      return sendJson(res, 200, r);
-    } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
   }
 
   return sendJson(res, 404, { error: 'not_found' });

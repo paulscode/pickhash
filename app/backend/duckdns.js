@@ -120,9 +120,17 @@ async function applyName(conn, dataDir, client, { subdomain, token, runMode, upd
   if (!upd.ok) return { ok: false, error: 'duckdns_rejected', detail: upd.response };   // bad token/domain
   if (!(await verifyFn(sub, ip))) return { ok: false, error: 'not_resolving' };   // never adopt a name that doesn't point where we expect
   const name = fqdn(sub);
-  storeToken(conn, dataDir, token);
-  config.set(conn, 'duckdns', { enabled: true, subdomain: sub, ip, updated_at: Math.floor(Date.now() / 1000) });
-  conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(name, ep.id);
+  // Adopt the name atomically: token + config + endpoint host must flip together, or a crash between
+  // them leaves an inconsistent state (config says enabled+name while the endpoint host is still the
+  // raw IP, so rentals wouldn't get the name). No await inside the transaction (the network calls ran
+  // above); the best-effort MRR repoint below is outside it.
+  conn.exec('BEGIN');
+  try {
+    storeToken(conn, dataDir, token);
+    config.set(conn, 'duckdns', { enabled: true, subdomain: sub, ip, updated_at: Math.floor(Date.now() / 1000) });
+    conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(name, ep.id);
+    conn.exec('COMMIT');
+  } catch (e) { try { conn.exec('ROLLBACK'); } catch { /* no active txn */ } throw e; }
   let repointed = 0;
   if (runMode === 'live' && client) {
     for (const r of ownPoolRentals(conn)) {
@@ -132,13 +140,25 @@ async function applyName(conn, dataDir, client, { subdomain, token, runMode, upd
   return { ok: true, name, repointed };
 }
 
+/**
+ * Turn the integration OFF (config + token + any fired alert). Does NOT touch the endpoint host — a
+ * caller reverts that only when appropriate. The alert-resolve matters because the tick loop's refresh
+ * step (the only other resolver) is gated on duckdns.enabled and stops the moment it's disabled, so a
+ * fired duckdns_update_failed would otherwise latch forever. Shared by removeName and the endpoint-
+ * change auto-disable in the pool-test route.
+ */
+function disableState(conn) {
+  config.set(conn, 'duckdns', { enabled: false });
+  clearToken(conn);
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'duckdns_update_failed' AND state IN ('armed','fired')").run(Math.floor(Date.now() / 1000));
+}
+
 /** Turn DuckDNS off and revert the endpoint (and live rentals' pools) to the backing IP. */
 async function removeName(conn, dataDir, client, { runMode } = {}) {
   const cfg = config.get(conn, 'duckdns');
   const ip = cfg.ip;
   const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
-  config.set(conn, 'duckdns', { enabled: false });
-  clearToken(conn);
+  disableState(conn);
   if (ep && ip) {
     conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(ip, ep.id);
     if (runMode === 'live' && client) {
@@ -173,4 +193,4 @@ async function maybeRefresh(conn, dataDir, { hashggIp, nowSec, updateFn = update
   return { ran: true, updated: false, error: upd.response, ipChanged };   // ipChanged + !updated == name is now stale
 }
 
-module.exports = { normalizeSubdomain, fqdn, validSubdomain, update, verifyResolves, storeToken, readToken, clearToken, applyName, removeName, maybeRefresh, DOMAIN_SUFFIX };
+module.exports = { normalizeSubdomain, fqdn, validSubdomain, update, verifyResolves, storeToken, readToken, clearToken, disableState, applyName, removeName, maybeRefresh, DOMAIN_SUFFIX };

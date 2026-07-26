@@ -232,8 +232,20 @@ async function observe(conn, client, ctx = {}) {
       // Resolve to a validated IP every tick and PIN the probe to it — the stored host may be a DNS
       // name that has since rebound to an internal/metadata address; never probe the raw hostname.
       const ip = await endpointUtil.resolvePinnedIp(ep.host);
-      if (!ip) { fetchOk.endpoint = false; }
-      else {
+      if (!ip) {
+        if (require('node:net').isIP(ep.host) > 0) {
+          // A raw-IP endpoint refused because the literal is blocked (internal/metadata) — keep the
+          // existing SSRF-guard behavior: don't probe, hold as a fetch blip.
+          fetchOk.endpoint = false;
+        } else {
+          // A HOSTNAME that doesn't resolve to a usable address (NXDOMAIN, or a name that rebound to a
+          // blocked IP) is a REAL endpoint failure, not a blip. Mark it not-ok so a sustained failure
+          // escalates to endpoint_down (the ~150s debounce absorbs a transient DNS hiccup). Critical
+          // once the endpoint is a DuckDNS name: an IP literal always resolves, so holding this as a
+          // blip would silently strand autopilot buying rigs for a dead/reclaimed name.
+          endpoint = { host: ep.host, port: ep.port, ok: false, difficulty: null, reachable: false };
+        }
+      } else {
         const p = await stratum.probe(ip, ep.port, ep.worker_base, { timeoutMs: ctx.probeTimeoutMs || 8000 });
         endpoint = { host: ep.host, port: ep.port, ok: !!p.gotWork, difficulty: p.difficulty, reachable: p.reachable };
       }

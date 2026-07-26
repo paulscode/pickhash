@@ -443,3 +443,16 @@ test('observe pins the endpoint probe to a validated IP: probes a good one, refu
     await new Promise((r) => strat.close(r));
   }
 });
+
+test('observe marks a non-resolving HOSTNAME endpoint not-ok (a dead DuckDNS name escalates to endpoint_down, not a held blip)', async () => {
+  const conn = db.get();
+  conn.prepare('DELETE FROM pool_endpoints').run();
+  conn.prepare("INSERT INTO pool_endpoints (host, port, worker_base, active) VALUES ('nonexistent-pickhash.invalid', 3333, 'bc1qx.w', 1)").run();
+  try {
+    const out = await observe.observe(conn, mockClient(), { now: NOW_MS, marketSkip: true, prevState: { rentals: {}, marketAt: NOW_MS } });
+    assert.equal(out.snapshot.fetch_ok.endpoint, true, 'a non-resolving hostname is a REAL reading, not a held fetch blip');
+    assert.ok(out.snapshot.endpoint && out.snapshot.endpoint.ok === false, 'marked not-ok so a sustained failure feeds endpoint_down');
+  } finally {
+    conn.prepare('DELETE FROM pool_endpoints').run();
+  }
+});

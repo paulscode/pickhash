@@ -11,7 +11,7 @@ const config = require('../config');
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'pickhash-duckdns-'));
 before(() => db.open(DATA));
 after(() => { db.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
-beforeEach(() => { const c = db.get(); for (const t of ['pool_endpoints', 'rentals', 'sessions', 'config', 'secrets']) c.prepare(`DELETE FROM ${t}`).run(); });
+beforeEach(() => { const c = db.get(); for (const t of ['pool_endpoints', 'rentals', 'sessions', 'config', 'secrets', 'alerts']) c.prepare(`DELETE FROM ${t}`).run(); });
 
 const seedIpEndpoint = (host = '203.0.113.9') => db.get().prepare("INSERT INTO pool_endpoints (name,source,host,port,worker_base,active) VALUES ('e','manual',?,3333,'bc1q.wk',1)").run(host);
 
@@ -98,6 +98,15 @@ test('removeName reverts the endpoint to the backing IP and clears the token', a
   assert.equal(c.prepare('SELECT host FROM pool_endpoints WHERE active=1').get().host, '203.0.113.9');
   assert.equal(config.get(c, 'duckdns').enabled, false);
   assert.equal(duckdns.readToken(c, DATA), null);
+});
+
+test('removeName resolves a fired duckdns_update_failed alert (no latch after disable)', async () => {
+  const c = db.get();
+  seedIpEndpoint('myrig.duckdns.org');
+  config.set(c, 'duckdns', { enabled: true, subdomain: 'myrig', ip: '203.0.113.9' });
+  c.prepare("INSERT INTO alerts (kind,key,severity,state,armed_at,fired_at) VALUES ('duckdns_update_failed','duckdns','warning','fired',1,1)").run();
+  await duckdns.removeName(c, DATA, null, { runMode: 'dry-run' });
+  assert.equal(c.prepare("SELECT state FROM alerts WHERE kind='duckdns_update_failed'").get().state, 'resolved');
 });
 
 // ---- maybeRefresh (IP-change + keepalive) ----
