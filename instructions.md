@@ -19,7 +19,9 @@ through everything; you'll need:
    to talk to the marketplace.
 3. **Your stratum endpoint.** Where the rented hashrate should point. If you run
    **HashGG** on this server, Pickhash can auto-discover your public endpoint;
-   otherwise enter `host:port` manually.
+   otherwise enter `host:port` manually. If that endpoint is a **raw IP**, Pickhash
+   offers to give it a free, stable name via DuckDNS — see *Naming a raw-IP endpoint*
+   below.
 
 Once setup is complete, choose a **target hashrate**, a **budget**, and a **duration**,
 and Pickhash handles the rest: finding reliable rigs, pricing, creating rentals,
@@ -31,6 +33,27 @@ offline rigs, refunds).
 HashGG is listed as an optional companion. It exposes your Datum Gateway stratum port
 to the internet so Pickhash can discover your public endpoint automatically. It is not
 required — Pickhash works with any reachable `host:port` you enter manually.
+
+## Naming a raw-IP endpoint (DuckDNS)
+
+MiningRigRentals does **not** refund rentals pointed at a bare IP address, so a raw-IP
+endpoint leaves you exposed if a rig under-delivers. This mainly affects the **VPS-tunnel**
+setup, where your public endpoint is the VPS's own IP. (A HashGG *playit* tunnel already
+hands you a hostname, so this won't apply there.)
+
+When the endpoint you test is a raw IP, Pickhash shows a **DuckDNS** option — on by default —
+in first-run setup and on **Settings → Stratum endpoint**:
+
+1. Create a free subdomain and copy your token at [duckdns.org](https://www.duckdns.org).
+2. Enter the subdomain and token. Pickhash points `<your-subdomain>.duckdns.org` at your
+   endpoint's IP, **verifies it resolves**, and then uses the name for all rentals — so the
+   marketplace treats it as a hostname (refund-eligible).
+3. Pickhash keeps the name in sync: if your VPS IP ever changes, it updates DuckDNS
+   automatically, so no rentals need re-pointing.
+
+Your DuckDNS token is encrypted at rest and never leaves your server. If verification fails
+(wrong token, or DNS hasn't propagated yet), Pickhash keeps your working raw-IP endpoint and
+tells you why — setup is never blocked. You can revert to the raw IP anytime from Settings.
 
 ## Notes
 

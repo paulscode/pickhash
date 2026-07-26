@@ -1061,6 +1061,9 @@ document.addEventListener('alpine:init', () => {
       this.duckdnsBusy = false;
       if (r.ok && r.json && r.json.ok) {
         this.duckdnsEnabled = true; this.duckdnsName = r.json.name; this.duckdnsToken = ''; this.seHost = r.json.name;
+        // The endpoint is a NAME now, not a bare IP — clear the "MRR won't refund IP pools" warning and
+        // the raw-IP gates so the setup/settings panels reflect the fix.
+        this.poolWarning = ''; this.seWarning = ''; this.bareIp = false; this.seIsIp = false;
         this.duckdnsReport = `Using ${r.json.name} — new rentals point here.`; this.duckdnsReportClass = 'text-neon-green';
       } else {
         this.duckdnsReport = this.duckdnsErr(r.json && r.json.error); this.duckdnsReportClass = 'text-neon-pink';
