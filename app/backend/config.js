@@ -23,8 +23,8 @@ const DEFAULTS = {
     max_overshoot_pct: 50,          // forced-close ceiling: beyond this % overshoot, leave a bounded shortfall and retry next tick rather than over-provision uncancellable capacity
     replace_lead_minutes: 5,        // start renting a rig's replacement this long before it ends (it cliffs at end_ts) to overlap the ~2.5min ramp dead-time; 0 disables the lookahead
     fallback_pool_enabled: true,    // Ocean safety-net at rental priority 1 (same BTC address); engages only if your endpoint drops
+    dead_rig_reroute_enabled: true, // reroute a rig that's offline-on-your-pool (while healthy peers mine fine) to Ocean + message its owner; depends on fallback_pool_enabled
     owner_nudge_enabled: false,     // opt-in: message a rig owner when their rig sustains under-delivery (default OFF)
-    dead_rig_reroute_enabled: false, // opt-in: reroute a rig that's offline-on-your-pool (but pool is healthy) to Ocean + message its owner (default OFF)
     region_include: [],
     region_exclude: [],
     blacklist_rig_ids: [],
@@ -104,8 +104,8 @@ const SETTINGS = {
     max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot, hold a shortfall and retry rather than over-provision.' },
     replace_lead_minutes: { type: 'int', min: 0, max: 60, unit: 'min', label: 'Replace lead', help: 'Rent a replacement this long before a rig ends (0 disables the lookahead).' },
     fallback_pool_enabled: { type: 'bool', label: 'Fallback pool (Ocean)', help: 'If your endpoint becomes unreachable, rented hashrate fails over to Ocean, mining to your same Bitcoin address instead of being wasted. Your node stays primary — Ocean only engages on failure.' },
+    dead_rig_reroute_enabled: { type: 'bool', label: 'Reroute dead rigs to Ocean', dependsOn: 'fallback_pool_enabled', help: 'When a rented rig connects but never mines on your pool (offline ~10 min while your OTHER rented rigs are mining fine on the same pool), switch just that rental to the Ocean fallback and message its owner. Targets only the stuck rig; the rest keep mining to your node. On by default. Extends the Fallback pool (Ocean) — turns off with it.' },
     owner_nudge_enabled: { type: 'bool', label: 'Nudge under-delivering owners', help: 'Automatically message a rig owner (once) when their rig sustains under-delivery. Off by default.' },
-    dead_rig_reroute_enabled: { type: 'bool', label: 'Reroute dead rigs to Ocean', help: 'When a rented rig connects but never mines on your pool (offline ~10 min while your other rigs mine fine), switch just that rental to the Ocean fallback pool and message its owner. Targets only the stuck rig; the rest keep mining to your node. Off by default. Requires the Fallback pool (Ocean).' },
     region_include: { type: 'strlist', label: 'Region include', help: 'Comma-separated regions to restrict to (empty = any).' },
     region_exclude: { type: 'strlist', label: 'Region exclude', help: 'Comma-separated regions to avoid.' },
   },

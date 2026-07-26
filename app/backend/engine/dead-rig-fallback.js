@@ -18,9 +18,22 @@ const config = require('../config');
 const alerts = require('../alerts');
 const session = require('../session');   // OCEAN_FALLBACK + oceanFallbackWorker (shared with rent-time setup)
 
-/** The owner notice (plain text; MRR renders it, the rig owner is the recipient). */
-function ownerMessage(rental) {
-  return `Hi — automated note from a renter. Your rig "${rental.rig_name}" connected to my pool on rental #${rental.mrr_id} but isn't submitting shares — it takes the initial difficulty, then no jobs register and it shows offline — while my other rented rigs are mining normally on the same pool at the same time. To keep it earning rather than sitting idle, I've switched this rental to a backup public pool (Ocean). If it starts hashing there, the cause is almost certainly a setting on the rig itself — often a "minimum/starting difficulty" set higher than the pool's initial difficulty, or a non-standard version-rolling/AsicBoost mode. Happy to help however I can — thanks!`;
+/**
+ * The owner notice (plain text; MRR renders it, the rig owner is the recipient). Every factual claim
+ * here must be provable from what we observe, so it holds up if the owner or MRR checks:
+ *  - "returning 0% of its advertised hashrate" / "no shares registering": from the rental's offline
+ *    health + ~0% avg_percent (a pool measures rented hashrate BY accepted shares, so 0% delivered is
+ *    exactly "no shares accepted"). We deliberately do NOT claim anything about jobs the pool sends —
+ *    the pool sends jobs fine (the peers below are receiving them), so that would be false.
+ *  - "for a sustained stretch (10+ minutes)": rental_offline only fires past health's 10-min debounce.
+ *  - "N other rig(s) ... mining normally on the same pool right now": the caller only sends this when
+ *    it has verified >= 1 peer rental currently health='healthy' on the same endpoint (healthyPeers).
+ * The firmware cause is framed as a possibility ("in similar cases"), not asserted — we can't see it.
+ */
+function ownerMessage(rental, { healthyPeers } = {}) {
+  const n = healthyPeers || 0;
+  const peers = n === 1 ? 'another rig I\'m currently renting is mining normally' : `${n} other rigs I'm currently renting are mining normally`;
+  return `Hi — automated note from a renter. Your rig "${rental.rig_name}" (rental #${rental.mrr_id}) has been showing offline — returning 0% of its advertised hashrate, i.e. no shares registering on the pool — for a sustained stretch (10+ minutes), while ${peers} on the same pool right now. Since the pool is clearly serving those, I've switched this rental to a backup public pool (Ocean) so your rig's time isn't wasted while it's stuck. If it starts hashing there, the cause is likely something on the rig's side — in similar cases it's been a "minimum/starting difficulty" set higher than the pool's, or a non-standard version-rolling/AsicBoost mode — but you'll know your setup best. Happy to help — thanks!`;
 }
 
 /**
@@ -46,9 +59,17 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
   const mark = (rental, note) => conn.prepare('INSERT INTO decisions (ts, session_id, dry_run, note) VALUES (?, ?, ?, ?)')
     .run(nowSec, rental.session_id, dryRun ? 1 : 0, `reroute_ocean:${rental.mrr_id}:${note}`);
 
+  let sawNoPeer = false;
   for (const mrrId of offline) {
     const rental = conn.prepare('SELECT * FROM rentals WHERE mrr_id = ? AND ended = 0 AND rerouted_ocean = 0').get(mrrId);
     if (!rental) continue;
+    // Reroute ONLY with positive proof the pool is fine and it's this rig: at least one OTHER rig on
+    // the same pool is mining normally (health='healthy') right now. A rented peer delivering is far
+    // stronger evidence than our own endpoint probe, and it's exactly the claim the owner message
+    // makes — so if we can't substantiate it, we neither reroute nor message (MRR's normal offline
+    // handling still applies). This also means an all-rigs-offline endpoint problem never trips it.
+    const healthyPeers = conn.prepare("SELECT COUNT(*) AS n FROM rentals WHERE session_id = ? AND ended = 0 AND mrr_id != ? AND health = 'healthy'").get(rental.session_id, mrrId).n;
+    if (!healthyPeers) { sawNoPeer = true; continue; }
     if (dryRun) { mark(rental, 'dry_run'); return { ran: true, decided: 'dry_run', mrr_id: Number(mrrId) }; }
     if (!client) return { ran: false, reason: 'no_client' };
     const worker = session.oceanFallbackWorker(endpoint.worker_base);
@@ -59,16 +80,17 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
     // Mark rerouted BEFORE the (best-effort) owner message: a message failure must never re-reroute.
     conn.prepare('UPDATE rentals SET rerouted_ocean = 1 WHERE mrr_id = ?').run(mrrId);
     let messaged = false;
-    try { await client.put(`/rental/${mrrId}/message`, { message: ownerMessage(rental) }); messaged = true; }
+    try { await client.put(`/rental/${mrrId}/message`, { message: ownerMessage(rental, { healthyPeers }) }); messaged = true; }
     catch { /* the reroute itself stands; the message just didn't send */ }
     mark(rental, 'done');
     alerts.fireOnce(conn, {
       kind: 'rig_rerouted', key: String(mrrId), now: nowMs,
-      context: { mrr_id: Number(mrrId), rig: rental.rig_id, name: rental.rig_name, to: 'ocean', messaged },
+      context: { mrr_id: Number(mrrId), rig: rental.rig_id, name: rental.rig_name, to: 'ocean', messaged, healthy_peers: healthyPeers },
     });
     return { ran: true, decided: 'rerouted', mrr_id: Number(mrrId), messaged };
   }
-  return { ran: false, reason: 'no_candidate' };
+  // An offline rig with no known-good peer isn't reroutable — we can't prove it's the rig vs the pool.
+  return { ran: false, reason: sawNoPeer ? 'no_healthy_peer' : 'no_candidate' };
 }
 
 module.exports = { maybeReroute, ownerMessage };

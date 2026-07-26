@@ -128,6 +128,7 @@ document.addEventListener('alpine:init', () => {
     showHistory: false, historySessions: [], historyEmpty: false, appReady: false,
     showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
     fallbackOcean: true,
+    rerouteDeadRigs: true,   // sub-option of the Ocean fallback (surfaced beside it, not in the generic list)
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
     impactHasData: false, impactTotal: '0 PH·days', impactLine: '', impactArea: '', impactGridPath: '', impactXLabels: [], impactYMaxLabel: '', impactPoints: [],
     impCrossShow: false, impCrossX: 0, impTipX: 0, impTipTextX: 0, impTipText: '',
@@ -935,6 +936,7 @@ document.addEventListener('alpine:init', () => {
       this.skUser = m.configured ? `Connected as ${m.username || m.userid}` : 'Not connected';
       this.seHashggAvail = !!d.hashgg_host_set;
       this.fallbackOcean = !!(d.fallback && d.fallback.enabled);   // reflect the saved setting on the endpoint card
+      this.rerouteDeadRigs = !!(d.fallback && d.fallback.reroute_dead_rigs);
       const ep = d.endpoint;
       if (ep) {
         this.seCurrent = `${ep.host}:${ep.port} · ${ep.worker}`;
@@ -995,8 +997,9 @@ document.addEventListener('alpine:init', () => {
       const titles = { strategy: 'Strategy', guardrails: 'Guardrails', notifications: 'Notifications', ui: 'Display' };
       this.settingsGroups = Object.keys(schema).map((ns) => ({
         ns, title: titles[ns] || ns, saved: false, error: '',
-        // fallback_pool_enabled is surfaced on the Stratum endpoint card instead of here.
-        fields: Object.keys(schema[ns]).filter((key) => !(ns === 'strategy' && key === 'fallback_pool_enabled')).map((key) => {
+        // fallback_pool_enabled + its dead_rig_reroute_enabled sub-option are surfaced together on
+        // the Stratum endpoint card instead of here.
+        fields: Object.keys(schema[ns]).filter((key) => !(ns === 'strategy' && (key === 'fallback_pool_enabled' || key === 'dead_rig_reroute_enabled'))).map((key) => {
           const spec = schema[ns][key];
           const val = values[ns] ? values[ns][key] : undefined;
           const isBool = spec.type === 'bool';
@@ -1020,7 +1023,14 @@ document.addEventListener('alpine:init', () => {
     },
     // Persist the setup-wizard Ocean-fallback toggle (default on server-side, so only a change needs saving).
     async saveFallbackOcean() {
-      await this.send('POST', '/api/config', { ns: 'strategy', patch: { fallback_pool_enabled: this.fallbackOcean } });
+      // The reroute sub-option only makes sense with the Ocean fallback on. Turning Ocean off turns it
+      // off too (and hides it); the backend also no-ops it without the fallback, so the two stay in sync.
+      const patch = { fallback_pool_enabled: this.fallbackOcean };
+      if (!this.fallbackOcean && this.rerouteDeadRigs) { this.rerouteDeadRigs = false; patch.dead_rig_reroute_enabled = false; }
+      await this.send('POST', '/api/config', { ns: 'strategy', patch });
+    },
+    async saveRerouteDeadRigs() {
+      await this.send('POST', '/api/config', { ns: 'strategy', patch: { dead_rig_reroute_enabled: this.rerouteDeadRigs } });
     },
     async loadDiag() {
       const d = (await this.getJson('/api/diag')) || {};

@@ -19,9 +19,11 @@ beforeEach(() => {
   config.set(c, 'strategy', { dead_rig_reroute_enabled: true, fallback_pool_enabled: true });
   c.prepare("INSERT INTO pool_endpoints (name,host,port,worker_base,mrr_profile_id,active) VALUES ('ep','node.example',3333,'bc1qaddr.wk',7,1)").run();
   sid = Number(c.prepare("INSERT INTO sessions (mode,state,created_at,started_at) VALUES ('autopilot','active',1,1)").run().lastInsertRowid);
-  // A rig that's confirmed OFFLINE (dead on our pool) with a fired rental_offline alert.
+  // A rig that's confirmed OFFLINE (dead on our pool) with a fired rental_offline alert...
   c.prepare("INSERT INTO rentals (session_id,mrr_id,rig_id,rig_name,advertised_th,length_hours,paid_sats,fee_sats,end_ts,ended,health,avg_percent,worker_name) VALUES (?,700,42,'DeadRig',205,8,3500,105,9999,0,'offline',0,'w')").run(sid);
   c.prepare("INSERT INTO alerts (kind,key,severity,state,armed_at,fired_at) VALUES ('rental_offline','700','warning','fired',1,1)").run();
+  // ...alongside a healthy PEER on the same pool (proof the pool is fine and it's this rig).
+  c.prepare("INSERT INTO rentals (session_id,mrr_id,rig_id,rig_name,advertised_th,length_hours,paid_sats,fee_sats,end_ts,ended,health,avg_percent,worker_name) VALUES (?,701,43,'GoodPeer',100,8,3500,105,9999,0,'healthy',99,'w')").run(sid);
 });
 
 function mockClient() { const puts = []; return { puts, async put(p, params) { puts.push([p, params]); return {}; } }; }
@@ -41,6 +43,26 @@ test('skips when the endpoint itself is down (that is an endpoint problem, not a
   const client = mockClient();
   assert.equal((await fallback.maybeReroute(db.get(), client, {}, { now: 1000 })).reason, 'endpoint_down');
   assert.equal(client.puts.length, 0, 'no reroute while the endpoint is down');
+});
+
+test('does NOT reroute when there is no healthy peer (can\'t prove it\'s the rig vs the pool)', async () => {
+  const c = db.get();
+  c.prepare('DELETE FROM rentals WHERE mrr_id = 701').run();   // remove the healthy peer
+  config.set(c, 'run', { mode: 'live' });
+  const client = mockClient();
+  const r = await fallback.maybeReroute(c, client, {}, { now: 1000 });
+  assert.equal(r.reason, 'no_healthy_peer');
+  assert.equal(client.puts.length, 0, 'no reroute, no owner message without a proven-good peer');
+  assert.equal(c.prepare('SELECT rerouted_ocean FROM rentals WHERE mrr_id = 700').get().rerouted_ocean, 0);
+});
+
+test('a degraded (not healthy) peer does NOT count as proof — still no reroute', async () => {
+  const c = db.get();
+  c.prepare("UPDATE rentals SET health = 'degraded' WHERE mrr_id = 701").run();
+  config.set(c, 'run', { mode: 'live' });
+  const client = mockClient();
+  assert.equal((await fallback.maybeReroute(c, client, {}, { now: 1000 })).reason, 'no_healthy_peer');
+  assert.equal(client.puts.length, 0);
 });
 
 test('DRY-RUN records a would-reroute and mutates nothing', async () => {
@@ -64,9 +86,12 @@ test('LIVE reroutes the rental to Ocean (per-rental), messages the owner, flags 
   assert.equal(pool[1].host, 'mine.ocean.xyz');
   assert.equal(pool[1].port, 3334);
   assert.equal(pool[1].user, 'bc1qaddr.fallback', 'Ocean worker is the BTC address + .fallback');
-  // owner message captured on the rental thread.
+  // owner message captured on the rental thread — and only provable claims.
   const msg = client.puts.find((p) => /\/rental\/700\/message$/.test(p[0]));
   assert.ok(msg && /DeadRig/.test(msg[1].message), 'owner message names the rig');
+  assert.match(msg[1].message, /mining normally/, 'asserts the verified healthy peer(s)');
+  assert.match(msg[1].message, /0% of its advertised hashrate/, 'states the observed 0% delivery');
+  assert.doesNotMatch(msg[1].message, /no jobs/, 'never claims the pool sent no jobs (it did — peers got them)');
   // marked + alerted.
   assert.equal(db.get().prepare('SELECT rerouted_ocean FROM rentals WHERE mrr_id = 700').get().rerouted_ocean, 1);
   assert.ok(db.get().prepare("SELECT 1 FROM alerts WHERE kind = 'rig_rerouted' AND key = '700' AND state = 'fired'").get());

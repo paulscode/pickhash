@@ -556,6 +556,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
       endpoint: ep ? { host: ep.host, port: ep.port, worker: ep.worker_base, source: ep.source } : null,
       fallback: {
         enabled: !!config.get(conn, 'strategy').fallback_pool_enabled,
+        reroute_dead_rigs: !!config.get(conn, 'strategy').dead_rig_reroute_enabled,
         pool: 'Ocean',
         host: OCEAN_FALLBACK.host, port: OCEAN_FALLBACK.port,
         worker: ep ? oceanFallbackWorker(ep.worker_base) : null,

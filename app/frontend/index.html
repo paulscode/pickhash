@@ -147,6 +147,17 @@
           anytime in Settings.
         </span>
       </label>
+      <!-- Dead-rig reroute: a sub-option of the Ocean fallback. Shown only while Ocean is on, so the
+           two settings read as connected; turning Ocean off hides and disables it. -->
+      <label x-show="fallbackOcean" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
+        <input type="checkbox" x-model="rerouteDeadRigs" @change="saveRerouteDeadRigs()" class="mt-0.5" style="accent-color:#ff7847">
+        <span class="text-xs font-mono text-gray-300 leading-relaxed">
+          <span class="text-neon-flame">Also reroute a stuck rig to Ocean</span> (recommended).
+          If a rented rig connects but never mines here — offline ~10 min while your other rented rigs
+          are mining fine — switch just that one rig to <span class="text-white">Ocean</span> and message
+          its owner. Targets only the stuck rig; the rest keep mining to your node.
+        </span>
+      </label>
       <button type="button" x-show="poolOk" x-cloak @click="toFund()" :disabled="busy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Continue</button>
     </div>
 
@@ -889,6 +900,16 @@
           Rented hashrate normally mines your own templates here; if this endpoint becomes unreachable it
           fails over to <span class="text-white">Ocean</span>, mining to your <span class="text-white">same
           Bitcoin address</span> — so no rented time is wasted. Only engages on failure.
+        </span>
+      </label>
+      <!-- Dead-rig reroute: sub-option of the Ocean fallback; shown only while Ocean is on. -->
+      <label x-show="fallbackOcean" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
+        <input type="checkbox" x-model="rerouteDeadRigs" @change="saveRerouteDeadRigs()" class="mt-0.5" style="accent-color:#ff7847">
+        <span class="text-xs font-mono text-gray-300 leading-relaxed">
+          <span class="text-neon-flame">Also reroute a stuck rig to Ocean</span> (recommended).
+          If a rented rig connects but never mines here — offline ~10 min while your other rented rigs
+          are mining fine — switch just that one rig to <span class="text-white">Ocean</span> and message
+          its owner. Targets only the stuck rig; the rest keep mining to your node.
         </span>
       </label>
     </div>
