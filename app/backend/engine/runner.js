@@ -17,6 +17,7 @@ const autopilot = require('./autopilot');
 const endpointRepair = require('./endpoint-repair');
 const extend = require('./extend');
 const adopt = require('./adopt');
+const scoring = require('./scoring');
 const ownerNudge = require('./owner-nudge');
 const ledgerFetch = require('./ledger');
 const config = require('../config');
@@ -111,6 +112,9 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
   alerts.evaluate(conn, snapshot, prev, now);
   await runLifecycle(conn, snapshot, now, { client });
   alerts.resolveEndedRentalAlerts(conn, now);   // backstop: clear orphaned rental alerts
+  // Reconcile any ended rental the live score-fold missed (process died right after the ended=1
+  // write), so a rig that delivered 0% can never stay unscored -> re-rentable. Cheap; usually 0 rows.
+  try { scoring.backfillScores(conn, Math.floor(now / 1000)); } catch { /* scoring must never break a tick */ }
 
   // Reconciliation: adopt our own ambiguous-create orphans (so decide counts them, no double-rent);
   // genuinely-unknown rentals -> a manual-review alert.
@@ -194,6 +198,9 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
 
 function startEngine(conn, dataDir, opts = {}) {
   let prev = { balance: null };
+  // Fold-on-load: reconcile any ended-but-unscored rental at boot (e.g. one whose fold didn't commit
+  // before a restart) before the first decide, so scoring is authoritative from the first tick.
+  try { scoring.backfillScores(conn, Math.floor(Date.now() / 1000)); } catch { /* best-effort */ }
   const loop = createLoop({
     conn,
     client: null,

@@ -69,6 +69,46 @@ test('loadRigScores maps mean_percent to a clamped 0..1 factor; unscored rigs ar
   assert.equal(s['3'], undefined, 'null mean -> absent (defaults to 1.0 in the rank key)');
 });
 
+// ---- backfill (self-healing sweep for missed end-edges) ----
+
+test('backfillScores folds an ended-but-unscored rental once, marks it scored, and is idempotent', () => {
+  const c = db.get();
+  c.prepare('INSERT INTO rentals (mrr_id, rig_id, advertised_th, avg_percent, ended, end_ts, scored) VALUES (9101, 555, 205, 0, 1, 1000, 0)').run();
+  assert.equal(scoring.backfillScores(c, 2000), 1, 'one unscored ended rental folded');
+  const row = c.prepare('SELECT * FROM rig_scores WHERE rig_id = 555').get();
+  assert.equal(row.rentals, 1);
+  assert.equal(row.mean_percent, 0, '0% delivery recorded');
+  assert.equal(c.prepare('SELECT scored FROM rentals WHERE mrr_id = 9101').get().scored, 1, 'rental marked scored');
+  assert.equal(scoring.backfillScores(c, 3000), 0, 'second sweep folds nothing');
+  assert.equal(c.prepare('SELECT rentals FROM rig_scores WHERE rig_id = 555').get().rentals, 1, 'not double-counted');
+  c.prepare('DELETE FROM rentals WHERE mrr_id = 9101').run();
+});
+
+test('backfillScores skips still-active rentals and only folds ended ones', () => {
+  const c = db.get();
+  c.prepare('INSERT INTO rentals (mrr_id, rig_id, advertised_th, avg_percent, ended, end_ts, scored) VALUES (9110, 601, 100, 98, 1, 1000, 0), (9111, 602, 100, 50, 0, NULL, 0)').run();
+  assert.equal(scoring.backfillScores(c, 2000), 1, 'only the ended rental (601) folds; the active one (602) is left alone');
+  assert.ok(c.prepare('SELECT 1 FROM rig_scores WHERE rig_id = 601').get(), 'ended rig scored');
+  assert.equal(c.prepare('SELECT 1 FROM rig_scores WHERE rig_id = 602').get(), undefined, 'active rig not scored yet');
+  c.prepare('DELETE FROM rentals WHERE mrr_id IN (9110, 9111)').run();
+});
+
+test('a backfilled 0%-delivery rig loads as expectedDelivery 0 and sorts last (never re-rented)', () => {
+  const c = db.get();
+  c.prepare('INSERT INTO rentals (mrr_id, rig_id, advertised_th, avg_percent, ended, end_ts, scored) VALUES (9102, 556, 205, 0, 1, 1000, 0)').run();
+  scoring.backfillScores(c, 2000);
+  assert.equal(scoring.loadRigScores(c)['556'], 0, 'dead rig -> 0 delivery factor');
+  const mk = (id, hourBtc) => ({
+    id: String(id), name: `rig-${id}`, region: 'eu', advertisedTh: 205, hourBtc, priceBtcThDay: (hourBtc * 24) / 205,
+    measuredTh: { m5: 205, m15: 205, m30: 205 }, minHours: 3, maxHours: 96, minRentalLength: 3, rpi: 95,
+    priceEnabled: true, available: true, online: true, poolstatus: 'online', rented: false, status: 'available', optimalDiff: null,
+  });
+  const ranked = quote.candidates([mk(557, 0.0002), mk(556, 0.0001)], { mode: 'autopilot', minRpi: 90, rigScores: scoring.loadRigScores(c) });
+  assert.equal(ranked[ranked.length - 1].id, '556', 'the 0%-delivery rig ranks last (rankKey Infinity) despite being cheapest');
+  assert.equal(ranked[ranked.length - 1].rankKey, Infinity);
+  c.prepare('DELETE FROM rentals WHERE mrr_id = 9102').run();
+});
+
 // ---- the ranking effect ----
 
 test('a 70%-delivery rig ranks BELOW a slightly-pricier 100% rig', () => {

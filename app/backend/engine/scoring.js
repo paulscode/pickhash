@@ -40,7 +40,23 @@ function recordRentalScore(conn, rental, finalPercent, nowSec) {
        ON CONFLICT(rig_id) DO UPDATE SET rentals = excluded.rentals, mean_percent = excluded.mean_percent,
          offline_incidents = excluded.offline_incidents, last_price = excluded.last_price, last_seen = excluded.last_seen`,
   ).run(rental.rig_id, next.rentals, next.mean_percent, next.offline_incidents, next.last_price, next.last_seen);
+  // Mark the rental folded so the backfill sweep never double-counts it (and never re-folds it).
+  if (rental.mrr_id != null) conn.prepare('UPDATE rentals SET scored = 1 WHERE mrr_id = ?').run(rental.mrr_id);
   return next;
+}
+
+/**
+ * Impure: fold any ended rental not yet reflected in rig_scores (scored = 0). The live fold in
+ * observe only catches the active->ended edge; this reconciles the ones it missed — a rental that
+ * ended before the scoring feature, or one whose fold didn't commit because the process died right
+ * after the ended=1 write. Idempotent: recordRentalScore marks each scored=1, so a second sweep is
+ * a no-op. Run on engine load and once per tick so a missed edge can never leave a dead rig
+ * unscored (and therefore re-rentable). Best-effort. Returns the number folded.
+ */
+function backfillScores(conn, nowSec) {
+  const pending = conn.prepare('SELECT * FROM rentals WHERE ended = 1 AND scored = 0 AND rig_id IS NOT NULL ORDER BY end_ts, id').all();
+  for (const r of pending) recordRentalScore(conn, r, r.avg_percent, nowSec);
+  return pending.length;
 }
 
 /**
@@ -56,4 +72,4 @@ function loadRigScores(conn) {
   return out;
 }
 
-module.exports = { foldScore, recordRentalScore, loadRigScores, OFFLINE_PCT };
+module.exports = { foldScore, recordRentalScore, backfillScores, loadRigScores, OFFLINE_PCT };
