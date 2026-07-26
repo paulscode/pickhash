@@ -18,6 +18,7 @@ const endpointRepair = require('./endpoint-repair');
 const extend = require('./extend');
 const adopt = require('./adopt');
 const scoring = require('./scoring');
+const deadRigFallback = require('./dead-rig-fallback');
 const ownerNudge = require('./owner-nudge');
 const ledgerFetch = require('./ledger');
 const config = require('../config');
@@ -186,6 +187,13 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       if (r) log({ event: 'auto_extend', ran: !!r.ran, decided: r.decided || null, reason: r.reason || null, sim: r.sim || null });
     }
   } catch (e) { log({ event: 'auto_extend_error', message: String(e && e.message) }); }
+
+  // Opt-in: reroute a rig that's dead on our pool (offline while the endpoint is healthy) to Ocean
+  // and notify its owner. Runs BEFORE the nudge so a rerouted rig isn't also nudged. Not a spend.
+  try {
+    const r = await deadRigFallback.maybeReroute(conn, client, snapshot, { now });
+    if (r && r.ran) log({ event: 'dead_rig_reroute', decided: r.decided, mrr_id: r.mrr_id, messaged: r.messaged });
+  } catch (e) { log({ event: 'dead_rig_reroute_error', message: String(e && e.message) }); }
 
   // Opt-in courtesy nudge to a rig owner whose rig is sustaining under-delivery (not a spend).
   try {

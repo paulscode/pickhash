@@ -76,6 +76,18 @@ test('repair updates the saved endpoint and re-points every active rental in LIV
   assert.ok(db.get().prepare("SELECT 1 FROM alerts WHERE kind = 'endpoint_repaired' AND state = 'fired'").get());
 });
 
+test('repair skips a rig parked on Ocean by dead-rig fallback (never yanks it back to the endpoint)', async () => {
+  seedRental(501, 'bc1qx.phash-r501');
+  seedRental(502, 'bc1qx.phash-r502');
+  db.get().prepare('UPDATE rentals SET rerouted_ocean = 1 WHERE mrr_id = 502').run();   // 502 deliberately on Ocean
+  const client = mockClient();
+  const r = await er.repair(db.get(), client, { plan: PLAN, runMode: 'live', now: 1000 });
+  assert.equal(r.rentals, 1, 'only the un-parked rental is re-pointed');
+  const pools = client.state.puts.filter((p) => /\/pool\/0$/.test(p[0]));
+  assert.equal(pools.length, 1);
+  assert.match(pools[0][0], /\/rental\/501\/pool\/0$/, '502 (parked on Ocean) is left alone');
+});
+
 test('repair updates the saved endpoint but issues NO MRR mutation in DRY-RUN', async () => {
   seedRental(503, 'bc1qx.phash-r503');
   const client = mockClient();

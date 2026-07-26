@@ -42,8 +42,10 @@ async function repair(conn, client, { plan, runMode, now }) {
   // endpoint stays flagged and the operator is alerted through the existing endpoint-health path.
   const pinned = await endpointUtil.resolvePinnedIp(plan.to.host);
   if (!pinned) return { from: plan.from, to: plan.to, rentals: 0, active: 0, failed: 0, blocked: true };
+  // rerouted_ocean rentals were deliberately parked on Ocean by dead-rig fallback (dead on our pool);
+  // don't yank them back to the endpoint — they'd just go offline again and flap.
   const active = conn.prepare(
-    "SELECT r.mrr_id, r.worker_name FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active', 'winding_down') AND r.ended = 0",
+    "SELECT r.mrr_id, r.worker_name FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active', 'winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0",
   ).all();
   let repaired = 0;
   let failed = 0;

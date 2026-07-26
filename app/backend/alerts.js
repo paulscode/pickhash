@@ -41,6 +41,7 @@ const SEVERITY = {
   rental_extended: 'info',
   rental_adopted: 'warning',
   rate_ceiling_hold: 'warning',
+  rig_rerouted: 'warning',
 };
 
 function currentActive(conn, kind, key) {

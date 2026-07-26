@@ -489,6 +489,7 @@ document.addEventListener('alpine:init', () => {
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
         rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
+        rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the Ocean fallback${c.messaged ? ' and messaged the owner' : ''}`,
       };
       return map[a.kind] || a.kind;
     },

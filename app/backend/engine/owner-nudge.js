@@ -40,7 +40,9 @@ async function maybeNudge(conn, client, opts = {}) {
 
   for (const mrrId of fired) {
     if (attempted(conn, mrrId, dryRun)) continue;
-    const rental = conn.prepare('SELECT * FROM rentals WHERE mrr_id = ? AND ended = 0').get(mrrId);
+    // A rerouted rig already got a (more specific) owner message from dead-rig fallback — don't
+    // double-message it.
+    const rental = conn.prepare('SELECT * FROM rentals WHERE mrr_id = ? AND ended = 0 AND rerouted_ocean = 0').get(mrrId);
     if (!rental) continue;
     if (dryRun) { mark(mrrId, 'dry_run'); return { ran: true, decided: 'dry_run', mrr_id: Number(mrrId) }; }
     if (!client) return { ran: false, reason: 'no_client' };
