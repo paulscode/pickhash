@@ -49,7 +49,7 @@ function nowSec() { return Math.floor(Date.now() / 1000); }
 // the bare estimate leaves ~0 headroom: the first rentals set a running blend right at the estimate,
 // so any rig priced a hair above stalls the fill — autopilot sat at 8% of target for ~2h in a soak.
 // The margin is baked into the number the user SEES (and can edit down), not added silently at enforce.
-const CEILING_HEADROOM = 1.15;
+const CEILING_HEADROOM = 1.10;
 
 /** Per-rig protective price cap (BTC per PH per day, +1% headroom), rounded like the API. */
 function rateCapPhDay(rateBtcThDay) {
