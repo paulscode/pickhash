@@ -34,14 +34,23 @@ function recordRentalScore(conn, rental, finalPercent, nowSec) {
   if (!rental || rental.rig_id == null) return null;
   const prev = conn.prepare('SELECT rentals, mean_percent, offline_incidents, last_price FROM rig_scores WHERE rig_id = ?').get(rental.rig_id) || null;
   const next = foldScore(prev, { percent: finalPercent, price: rental.rate_btc_th_day != null ? rental.rate_btc_th_day : null, nowSec });
-  conn.prepare(
-    `INSERT INTO rig_scores (rig_id, rentals, mean_percent, offline_incidents, last_price, last_seen)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(rig_id) DO UPDATE SET rentals = excluded.rentals, mean_percent = excluded.mean_percent,
-         offline_incidents = excluded.offline_incidents, last_price = excluded.last_price, last_seen = excluded.last_seen`,
-  ).run(rental.rig_id, next.rentals, next.mean_percent, next.offline_incidents, next.last_price, next.last_seen);
-  // Mark the rental folded so the backfill sweep never double-counts it (and never re-folds it).
-  if (rental.mrr_id != null) conn.prepare('UPDATE rentals SET scored = 1 WHERE mrr_id = ?').run(rental.mrr_id);
+  // Fold the aggregate AND mark the rental folded in ONE transaction. Otherwise a crash between the
+  // two commits leaves the rental ended-but-scored=0, and the backfill sweep re-folds it (double-count)
+  // — the exact "process death between the ended=1 commit and the fold" case this feature guards.
+  conn.exec('BEGIN');
+  try {
+    conn.prepare(
+      `INSERT INTO rig_scores (rig_id, rentals, mean_percent, offline_incidents, last_price, last_seen)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(rig_id) DO UPDATE SET rentals = excluded.rentals, mean_percent = excluded.mean_percent,
+           offline_incidents = excluded.offline_incidents, last_price = excluded.last_price, last_seen = excluded.last_seen`,
+    ).run(rental.rig_id, next.rentals, next.mean_percent, next.offline_incidents, next.last_price, next.last_seen);
+    if (rental.mrr_id != null) conn.prepare('UPDATE rentals SET scored = 1 WHERE mrr_id = ?').run(rental.mrr_id);
+    conn.exec('COMMIT');
+  } catch (e) {
+    try { conn.exec('ROLLBACK'); } catch { /* no active txn */ }
+    throw e;
+  }
   return next;
 }
 
@@ -54,7 +63,9 @@ function recordRentalScore(conn, rental, finalPercent, nowSec) {
  * unscored (and therefore re-rentable). Best-effort. Returns the number folded.
  */
 function backfillScores(conn, nowSec) {
-  const pending = conn.prepare('SELECT * FROM rentals WHERE ended = 1 AND scored = 0 AND rig_id IS NOT NULL ORDER BY end_ts, id').all();
+  // mrr_id IS NOT NULL matches the marker recordRentalScore sets (scored=1 keyed by mrr_id): without
+  // it, a row with rig_id but no mrr_id would fold every tick forever, never getting marked.
+  const pending = conn.prepare('SELECT * FROM rentals WHERE ended = 1 AND scored = 0 AND rig_id IS NOT NULL AND mrr_id IS NOT NULL ORDER BY end_ts, id').all();
   for (const r of pending) recordRentalScore(conn, r, r.avg_percent, nowSec);
   return pending.length;
 }

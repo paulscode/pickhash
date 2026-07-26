@@ -65,6 +65,24 @@ test('a degraded (not healthy) peer does NOT count as proof — still no reroute
   assert.equal(client.puts.length, 0);
 });
 
+test('a healthy peer already parked on Ocean does NOT count — it isn\'t proof YOUR pool serves jobs', async () => {
+  const c = db.get();
+  c.prepare('UPDATE rentals SET rerouted_ocean = 1 WHERE mrr_id = 701').run();   // the only healthy peer is on Ocean
+  config.set(c, 'run', { mode: 'live' });
+  const client = mockClient();
+  assert.equal((await fallback.maybeReroute(c, client, {}, { now: 1000 })).reason, 'no_healthy_peer');
+  assert.equal(client.puts.length, 0, 'no reroute + no false "same pool" message');
+});
+
+test('DRY-RUN reroute is deduped — no duplicate decision row on a repeat tick', async () => {
+  const c = db.get();
+  const r1 = await fallback.maybeReroute(c, mockClient(), {}, { now: 1000 });   // dry-run by default
+  assert.equal(r1.decided, 'dry_run');
+  const r2 = await fallback.maybeReroute(c, mockClient(), {}, { now: 1060 });
+  assert.equal(r2.reason, 'no_candidate', 'already rehearsed -> nothing new');
+  assert.equal(c.prepare("SELECT COUNT(*) n FROM decisions WHERE note = 'reroute_ocean:700:dry_run'").get().n, 1, 'exactly one dry-run row, not one per tick');
+});
+
 test('DRY-RUN records a would-reroute and mutates nothing', async () => {
   const client = mockClient();
   const r = await fallback.maybeReroute(db.get(), client, {}, { now: 1000 });   // run mode defaults to dry-run

@@ -78,6 +78,16 @@ test('a preview blended ceiling (sats/PH·day) is persisted as the guardrail', a
   assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_ph_day'), 60000);
 });
 
+test('blended_ceiling_auto records whether the ceiling was a deliberate edit vs an accepted suggestion', async () => {
+  // Accepted suggestion -> auto=true, so a later preview re-suggests (fresh headroom) instead of masking.
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: 57500, blendedCeilingAuto: true });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), true, 'accepted suggestion -> auto');
+  await session.stopSession(db.get());
+  // Deliberate edit -> auto=false, so it stays sticky in future previews.
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: 62000, blendedCeilingAuto: false });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), false, 'deliberate edit -> not auto');
+});
+
 test('a blank/zero preview ceiling clears the cap (no ceiling)', async () => {
   config.set(db.get(), 'guardrails', { blended_ceiling_sats_ph_day: 65000 });   // a prior cap
   await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: null });

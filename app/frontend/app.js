@@ -82,7 +82,7 @@ document.addEventListener('alpine:init', () => {
     mqClass: 'text-gray-500 hover:text-white', maClass: 'bg-neon-ember/15 text-neon-ember',
     apTarget: '3', apDays: '7', apBudget: '1000000',
     apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false,
-    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '', apRateCeilTouched: false,
+    apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '', apRateCeilTouched: false, apRateCeilAuto: true,
     apStarted: false, apStartedText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
     skKey: '', skSecret: '', skBusy: false, skReport: '', skReportClass: '', skUser: '',
@@ -565,7 +565,7 @@ document.addEventListener('alpine:init', () => {
       else { this.apHasEstimate = false; this.apStarted = false; this.scheduleQuote(0); }
     },
     apPreset(sats) { this.apBudget = String(sats); this.apHasEstimate = false; },
-    apCeilTouched() { this.apRateCeilTouched = true; },
+    apCeilTouched() { this.apRateCeilTouched = true; this.apRateCeilAuto = false; },   // an edited ceiling is deliberate -> sticky
     async apMax() {
       this.apMaxBusy = true;
       try {
@@ -599,13 +599,19 @@ document.addEventListener('alpine:init', () => {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
-      // Pre-fill the blended rate ceiling: a standing setting wins; otherwise the suggested cap (the
-      // estimated blend + headroom, so the fill isn't strangled hugging the estimate). Falls back to
-      // the bare blend. Don't clobber a value the user has already typed this session.
+      // Pre-fill the blended rate ceiling. A deliberate standing setting wins (the API returns it only
+      // when it was NOT an auto-suggestion); otherwise the suggested cap (estimated blend + headroom,
+      // so the fill isn't strangled hugging the estimate), falling back to the bare blend. apRateCeilAuto
+      // tracks whether the pre-filled value is an auto-suggestion — sent on start so an accepted
+      // suggestion doesn't get persisted as a sticky ceiling that masks future suggestions. Don't
+      // clobber a value the user has already typed this session.
       if (!this.apRateCeilTouched) {
-        this.apRateCeil = currentCeiling != null ? String(currentCeiling)
-          : (est.suggestedCeilingSatsPhDay != null ? String(est.suggestedCeilingSatsPhDay)
-            : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : ''));
+        if (currentCeiling != null) { this.apRateCeil = String(currentCeiling); this.apRateCeilAuto = false; }
+        else {
+          this.apRateCeil = est.suggestedCeilingSatsPhDay != null ? String(est.suggestedCeilingSatsPhDay)
+            : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '');
+          this.apRateCeilAuto = true;
+        }
       }
       this.apBurnText = `${this.fmtSats(est.burnSatsHr)} sats/hr`;
       // Estimated spend through the run: burn × time cap, but never more than the budget cap
@@ -632,7 +638,9 @@ document.addEventListener('alpine:init', () => {
       if (!this.apValid(p)) { this.apError = 'Enter a target, time cap, and budget.'; return; }
       this.apBusy = true; this.apBusyText = 'Starting autopilot…'; this.apError = '';
       const ceil = this.apRateCeil !== '' && Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : null;
-      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, blended_ceiling_sats_ph_day: ceil });
+      // blended_ceiling_auto: true when the ceiling is an accepted auto-suggestion (not user-typed), so
+      // the backend won't persist it as a sticky value that masks the next preview's fresh suggestion.
+      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, blended_ceiling_sats_ph_day: ceil, blended_ceiling_auto: this.apRateCeilAuto });
       this.apBusy = false;
       if (!r.ok) {
         const e = r.json.error;

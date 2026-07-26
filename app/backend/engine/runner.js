@@ -29,7 +29,11 @@ async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
   const s = snapshot.session;
   if (!s) return;
   const rentals = conn.prepare('SELECT * FROM rentals WHERE session_id = ?').all(s.id);
-  if (!rentals.length) return;
+  // Do NOT early-return on an empty rentals set. A session the ceiling/budget blocked from renting
+  // anything has zero rows, yet it still must close at its time cap / on budget-exhaustion — otherwise
+  // it zombies 'active' forever (blocking new sessions) and its rate_ceiling_hold never resolves. The
+  // dispute loop is a no-op on empty and rentals.every(ended) is vacuously true, so the close checks
+  // below run correctly with no rentals.
 
   for (const r of rentals) {
     // A rental that ended below 95% OR never produced a reading (offline its whole run ->
@@ -172,7 +176,11 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       // sat at ~8% of target for 2h with no on-screen reason).
       if (snapshot.session) {
         const plan = r && r.plan;
-        const heldByCeiling = !!(plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
+        // If this tick already closed the session (budget-exhausted / cap, above), don't re-arm a hold
+        // on it — snapshot.session is stale-but-truthy; only a STILL-active session can be genuinely
+        // held. A closed session sends bad=false, which resolves (idempotently) rather than re-arms.
+        const stillActive = conn.prepare("SELECT 1 FROM sessions WHERE id = ? AND state = 'active'").get(snapshot.session.id);
+        const heldByCeiling = !!(stillActive && plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
         alerts.runTransition(conn, {
           kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
           thresholdMs: 10 * 60 * 1000,

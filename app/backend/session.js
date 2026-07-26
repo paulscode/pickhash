@@ -468,7 +468,10 @@ async function startAutopilotSession(conn, client, params = {}) {
     if (params.blendedCeilingSatsPhDay !== undefined) {
       const phDay = Number(params.blendedCeilingSatsPhDay);
       const ceil = Number.isFinite(phDay) && phDay > 0 ? Math.round(phDay) : null;
-      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: ceil });
+      // blended_ceiling_auto records whether this ceiling was an ACCEPTED auto-suggestion (vs a value
+      // the user deliberately typed). It's not a user-facing knob — it lets the next preview ignore a
+      // stale auto value and re-suggest with fresh headroom, while a deliberate ceiling stays sticky.
+      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: ceil, blended_ceiling_auto: !!params.blendedCeilingAuto });
     }
 
     return {
@@ -506,6 +509,10 @@ async function stopSession(conn, client = null) {
   const summary = accounting.buildSummary({ session: s, rentals, ledger });
   conn.prepare("UPDATE sessions SET state = 'ended', ended_at = ?, summary_json = ?, spent_sats = ?, fee_sats = ? WHERE id = ?")
     .run(nowSec(), JSON.stringify(summary), summary.spent_sats, summary.fee_sats, s.id);
+  // This immediate-end path bypasses runLifecycle, and observe never revisits an ended session — so a
+  // fired rate_ceiling_hold (plausible when the stop happens with zero live rentals) would linger in
+  // the UI. Resolve it directly here (avoids importing the alerts module into session.js).
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'rate_ceiling_hold' AND key = ? AND state IN ('armed','fired')").run(nowSec(), String(s.id));
   return { stopped: true, state: 'ended' };
 }
 

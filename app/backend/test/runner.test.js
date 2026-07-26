@@ -217,6 +217,23 @@ test('runLifecycle closes an autopilot session once past its time cap', async ()
   assert.equal(stateOf(sid), 'ended', 'past the cap -> closes');
 });
 
+test('runLifecycle closes a ZERO-rental autopilot session past its cap (ceiling blocked all rentals -> no zombie)', async () => {
+  const c = db.get();
+  // No rentals row at all — the blended ceiling blocked every top-up from the first tick.
+  const sid = Number(c.prepare("INSERT INTO sessions (mode,state,target_th,budget_sats,spent_sats,fee_sats,time_cap_hours,created_at,started_at) VALUES ('autopilot','active',400,50000,0,0,24,1,?)")
+    .run(NOW_SEC_LC - 25 * 3600).lastInsertRowid);
+  await runLifecycle(c, { session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid) }, NOW_MS_LC);
+  assert.equal(stateOf(sid), 'ended', 'a zero-rental session past its cap must still close, not zombie');
+});
+
+test('runLifecycle KEEPS a ZERO-rental autopilot session active before its cap (fresh session, top-up still to come)', async () => {
+  const c = db.get();
+  const sid = Number(c.prepare("INSERT INTO sessions (mode,state,target_th,budget_sats,spent_sats,fee_sats,time_cap_hours,created_at,started_at) VALUES ('autopilot','active',400,50000,0,0,24,1,?)")
+    .run(NOW_SEC_LC - 3600).lastInsertRowid);
+  await runLifecycle(c, { session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid) }, NOW_MS_LC);
+  assert.equal(stateOf(sid), 'active', 'a fresh zero-rental session (budget + cap remain) stays active for the top-up');
+});
+
 test('runLifecycle closes an autopilot session once its budget is spent', async () => {
   const c = db.get();
   const sid = seedAutopilotSession({ budget_sats: 5_000, spent_sats: 5_000 });

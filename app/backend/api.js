@@ -625,9 +625,13 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (!endpoint || !endpoint.mrr_profile_id) return sendJson(res, 400, { error: 'no_endpoint' });
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });
-      // Surface any standing blended ceiling so the preview pre-fills it (a deliberate setting wins over
-      // the estimate); null for a first-time user, who then defaults to the estimated blend.
-      const currentCeiling = config.getKey(conn, 'guardrails', 'blended_ceiling_sats_ph_day');
+      // Surface a standing blended ceiling so the preview pre-fills it — but ONLY when the user set it
+      // deliberately (blended_ceiling_auto === false). An accepted auto-suggestion, OR a ceiling saved
+      // before this flag existed (undefined -> treated as auto, since the UI always pre-filled a
+      // suggestion), returns null so the preview re-suggests with fresh headroom instead of masking it
+      // with a stale (possibly too-tight) number. A deliberate ceiling stays sticky.
+      const deliberate = config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
+      const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_ph_day') : null;
       return sendJson(res, 200, { estimate, current_blended_ceiling_sats_ph_day: currentCeiling });
     } catch {
       return sendJson(res, 502, { error: 'estimate_failed' });
@@ -642,7 +646,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     try {
       const r = await session.startAutopilotSession(conn, client, {
         targetTh: body.target_th, timeCapHours: body.time_cap_hours, budgetSats: body.budget_sats,
-        blendedCeilingSatsPhDay: body.blended_ceiling_sats_ph_day,
+        blendedCeilingSatsPhDay: body.blended_ceiling_sats_ph_day, blendedCeilingAuto: body.blended_ceiling_auto,
       });
       return sendJson(res, 200, r);
     } catch (e) {
