@@ -103,8 +103,8 @@ test('rentOne attaches the Ocean fallback at pool/1 when enabled (same address, 
   assert.equal(res.fallback, 'ocean');
   const fb = client.state.puts.find((c) => /\/pool\/1$/.test(c[0]));
   assert.ok(fb, 'a pool/1 override was issued');
-  assert.equal(fb[1].host, 'mine.ocean.xyz');
-  assert.equal(fb[1].port, 3334);
+  assert.equal(fb[1].host, 'bip110.mine.ocean.xyz');
+  assert.equal(fb[1].port, 3110);
   assert.equal(fb[1].user, 'bc1qabc.fallback', 'same BTC address, .fallback worker tag');
 });
 

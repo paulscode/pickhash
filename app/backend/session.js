@@ -96,7 +96,7 @@ function insertDecision(conn, sessionId, dryRun, fields) {
 // Ocean runs real vardiff (so a rig starved by an endpoint difficulty mismatch actually hashes) and
 // pays out to the SAME Bitcoin address, so a fallback still earns for the user — and MRR can't deny a
 // refund for "no backup pool". The '.fallback' worker tag makes fallback hashrate obvious on Ocean.
-const OCEAN_FALLBACK = { host: 'mine.ocean.xyz', port: 3334 };
+const OCEAN_FALLBACK = { host: 'bip110.mine.ocean.xyz', port: 3110 };
 function oceanFallbackWorker(workerBase) {
   const address = String(workerBase || '').split('.')[0];   // strip any '.worker' suffix -> the BTC address
   return address ? `${address}.fallback` : null;

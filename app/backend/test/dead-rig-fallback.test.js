@@ -101,8 +101,8 @@ test('LIVE reroutes the rental to Ocean (per-rental), messages the owner, flags 
   // pool/0 promoted to Ocean for THIS rental, with the .fallback-tagged Ocean worker.
   const pool = client.puts.find((p) => /\/rental\/700\/pool\/0$/.test(p[0]));
   assert.ok(pool, 'pool/0 override issued');
-  assert.equal(pool[1].host, 'mine.ocean.xyz');
-  assert.equal(pool[1].port, 3334);
+  assert.equal(pool[1].host, 'bip110.mine.ocean.xyz');
+  assert.equal(pool[1].port, 3110);
   assert.equal(pool[1].user, 'bc1qaddr.fallback', 'Ocean worker is the BTC address + .fallback');
   // owner message captured on the rental thread — and only provable claims.
   const msg = client.puts.find((p) => /\/rental\/700\/message$/.test(p[0]));

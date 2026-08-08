@@ -88,8 +88,8 @@ test('autopilot honors the Ocean fallback: attaches pool/1 (same address, .fallb
   await execute(db.get(), client, { sessionId, endpoint, gateResult: { authorized: [action(1)], wouldDo: [] } });
   const poolOne = client.state.puts.filter((p) => /\/pool\/1$/.test(p[0]));
   assert.equal(poolOne.length, 1, 'Ocean attached at priority 1');
-  assert.equal(poolOne[0][1].host, 'mine.ocean.xyz');
-  assert.equal(poolOne[0][1].port, 3334);
+  assert.equal(poolOne[0][1].host, 'bip110.mine.ocean.xyz');
+  assert.equal(poolOne[0][1].port, 3110);
   assert.equal(poolOne[0][1].priority, 1);
   assert.equal(poolOne[0][1].user, 'bc1qx.fallback', 'same BTC address with the .fallback worker tag');
   assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback ocean/);
