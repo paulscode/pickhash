@@ -18,6 +18,53 @@
     .card-hover { transition: all .3s ease; box-shadow: 0 4px 6px -1px rgba(0,0,0,.3); }
     .card-hover:hover { box-shadow: 0 0 20px rgba(255,122,26,.2); }  /* ember glow */
     .tab-active { border-bottom: 2px solid #ffbe0b; color: #ffbe0b; }
+    /* Primary / settings nav: explicit gaps (don't rely on purged Tailwind gap-* utilities).
+       Mobile/tablet: icons only. Desktop (lg+): icon + label. */
+    .pk-primary-nav { display: flex; align-items: center; gap: 1.1rem; }
+    .pk-nav-item { display: inline-flex; align-items: center; justify-content: center;
+      gap: 0.4rem; padding: 0.3rem 0.1rem; border-bottom: 2px solid transparent;
+      color: inherit; line-height: 1; }
+    .pk-nav-item.tab-active { border-bottom-color: #ffbe0b; color: #ffbe0b; }
+    .pk-nav-label { display: none; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.875rem; }
+    @media (min-width: 1024px) {
+      .pk-primary-nav { gap: 1.5rem; }
+      .pk-nav-label { display: inline; }
+    }
+    .pk-subnav { display: flex; align-items: center; overflow-x: auto; }
+    .pk-subnav-item { display: flex; align-items: center; flex-shrink: 0; }
+    .pk-subnav-item + .pk-subnav-item::before {
+      content: '◇'; color: #3d4f7c; font-size: 0.65rem; line-height: 1;
+      margin: 0 0.7rem; user-select: none;
+    }
+    /* Settings section nav: dropdown on small screens, ◇ tabs from md up. */
+    .pk-subnav-tabs { display: none; }
+    .pk-subnav-select { display: block; padding: 0.55rem 0; }
+    .pk-subnav-dd { position: relative; }
+    .pk-subnav-dd-btn {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+      width: 100%; padding: 0.55rem 0.75rem; cursor: pointer;
+      background: #141b34; border: 1px solid #283764; border-radius: 0.5rem; color: inherit;
+    }
+    .pk-subnav-dd-btn:hover { border-color: #3d4f7c; }
+    .pk-subnav-dd-menu {
+      position: absolute; left: 0; right: 0; top: calc(100% + 0.35rem); z-index: 40;
+      padding: 0.35rem; max-height: 70vh; overflow-y: auto;
+      background: #141b34; border: 1px solid #283764; border-radius: 0.5rem;
+      box-shadow: 0 12px 28px -8px rgba(0,0,0,.7);
+    }
+    .pk-subnav-dd-opt {
+      display: block; width: 100%; text-align: left; cursor: pointer;
+      padding: 0.55rem 0.65rem; border: none; border-radius: 0.35rem; background: transparent;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8125rem; color: #9ca3af;
+    }
+    .pk-subnav-dd-opt:hover { color: #fff; background: rgba(255,122,26,.08); }
+    .pk-subnav-dd-opt.is-active { color: #ffbe0b; background: rgba(255,190,11,.1); }
+    @media (min-width: 768px) {
+      .pk-subnav-select { display: none; }
+      .pk-subnav-tabs { display: flex; }
+    }
     [x-cloak] { display: none !important; }
     /* Info affordance (agent-wallet pattern): a subtle inline icon that toggles an
        inline tip right beneath the item — not a badge, not a modal. */
@@ -54,18 +101,45 @@
 <body class="bg-navy-950 text-gray-100 min-h-screen antialiased" x-data="app">
 
   <!-- Header -->
-  <header class="bg-navy-900 border-b border-navy-700 px-4 py-3">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <i data-lucide="pickaxe" class="w-5 h-5 text-neon-ember"></i>
-        <span class="font-mono text-lg text-neon-ember">Pickhash</span>
-      </div>
-      <nav class="flex items-center gap-6 text-sm font-mono text-gray-400">
-        <a href="#" @click.prevent="goDashboard()" :class="navDashClass">Dashboard</a>
-        <a href="#" @click.prevent="goMarket()" :class="navMktClass">Market</a>
-        <a href="#" @click.prevent="goHistory()" :class="navHistClass">History</a>
-        <a href="#" @click.prevent="goSettings()" :class="navSetClass">Settings</a>
+  <header class="bg-navy-900 border-b border-navy-700">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <a href="#" @click.prevent="goDashboard()" class="inline-flex items-center text-neon-ember shrink-0" aria-label="Pickhash" title="Pickhash">
+        <i data-lucide="pickaxe" class="w-5 h-5"></i>
+      </a>
+      <nav class="pk-primary-nav text-gray-400">
+        <a href="#" @click.prevent="goDashboard()" :class="navDashClass" class="pk-nav-item" aria-label="Dashboard" title="Dashboard"><i data-lucide="layout-dashboard" class="w-5 h-5"></i><span class="pk-nav-label">Dashboard</span></a>
+        <a href="#" @click.prevent="goMarket()" :class="navMktClass" class="pk-nav-item" aria-label="Market" title="Market"><i data-lucide="chart-line" class="w-5 h-5"></i><span class="pk-nav-label">Market</span></a>
+        <a href="#" @click.prevent="goHistory()" :class="navHistClass" class="pk-nav-item" aria-label="History" title="History"><i data-lucide="history" class="w-5 h-5"></i><span class="pk-nav-label">History</span></a>
+        <a href="#" @click.prevent="goSettings()" :class="navSetClass" class="pk-nav-item" aria-label="Settings" title="Settings"><i data-lucide="settings" class="w-5 h-5"></i><span class="pk-nav-label">Settings</span></a>
       </nav>
+    </div>
+    <!-- Settings section nav: dropdown (<md) / ◇ tabs (md+) -->
+    <div x-show="showSettings" x-cloak class="border-t border-navy-800">
+      <div class="max-w-7xl mx-auto px-4">
+        <div class="pk-subnav-select">
+          <div class="pk-subnav-dd" @click.outside="closeSettingsTabMenu()">
+            <button type="button" class="pk-subnav-dd-btn" @click="toggleSettingsTabMenu()"
+                    :aria-expanded="settingsTabMenuOpen" aria-haspopup="listbox" aria-label="Settings section">
+              <span class="font-mono text-sm text-neon-ember" x-text="settingsTabLabel"></span>
+              <i data-lucide="chevron-down" class="w-4 h-4 text-gray-500 shrink-0"></i>
+            </button>
+            <div x-show="settingsTabMenuOpen" x-cloak class="pk-subnav-dd-menu" role="listbox">
+              <template x-for="t in settingsTabs" :key="t.id">
+                <button type="button" role="option" class="pk-subnav-dd-opt"
+                        :class="t.id === settingsTab ? 'is-active' : ''"
+                        @click="pickSettingsTab(t.id)" x-text="t.label"></button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <nav class="pk-subnav pk-subnav-tabs text-sm font-mono text-gray-500" aria-label="Settings sections">
+          <template x-for="t in settingsTabs" :key="t.id">
+            <span class="pk-subnav-item">
+              <a href="#" @click.prevent="setSettingsTab(t.id)" :class="t.navClass" class="whitespace-nowrap pt-2.5 pb-2.5 transition-colors" x-text="t.label"></a>
+            </span>
+          </template>
+        </nav>
+      </div>
     </div>
   </header>
 
@@ -860,7 +934,7 @@
   <!-- ============ SETTINGS ============ -->
   <main class="max-w-3xl mx-auto px-4 py-6 space-y-6" x-show="showSettings" x-cloak>
     <template x-for="group in settingsGroups" :key="group.ns">
-      <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+      <div x-show="group.showTab" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
         <h2 class="font-mono text-neon-ember text-lg" x-text="group.title"></h2>
         <template x-for="f in group.fields" :key="f.key">
           <div class="space-y-1 border-t border-navy-800 pt-3">
@@ -888,7 +962,7 @@
     </template>
 
     <!-- Connection: MiningRigRentals API credentials -->
-    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+    <div x-show="settingsShowMrr" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
       <h2 class="font-mono text-neon-ember text-lg">MiningRigRentals API</h2>
       <p class="font-mono text-xs text-gray-400" x-text="skUser"></p>
       <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Replace the API key and secret. Requires Rental: Write and Balance: Read (no withdraw). Changing keys resets the run mode to DRY-RUN.</p>
@@ -901,7 +975,7 @@
     </div>
 
     <!-- Connection: stratum endpoint + worker -->
-    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+    <div x-show="settingsShowEndpoint" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
       <h2 class="font-mono text-neon-ember text-lg">Stratum endpoint</h2>
       <p class="font-mono text-xs text-gray-400">Current: <span class="text-white" x-text="seCurrent"></span></p>
       <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the worker username (btcaddress.worker). Each rig reports as your-worker-r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving; new rentals use the saved endpoint.</p>
@@ -960,7 +1034,7 @@
     </div>
 
     <!-- Diagnostics (read-only) -->
-    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-3">
+    <div x-show="settingsShowDiag" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-3">
       <h2 class="font-mono text-neon-ember text-lg">Diagnostics</h2>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
         <div><div class="text-gray-500 uppercase tracking-wide">MRR</div><div class="text-white" x-text="diagText.mrr"></div></div>
@@ -1067,6 +1141,19 @@
       </div>
     </section>
   </main>
+
+  <!-- Unsaved Settings changes (leave guard) -->
+  <div x-show="showSettingsLeave" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click="closeSettingsLeave()">
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 max-w-md w-full space-y-4" @click.stop>
+      <h2 class="font-mono text-lg text-neon-ember">You have unsaved changes.</h2>
+      <p class="text-gray-400 text-sm font-mono leading-relaxed">Save them before leaving Settings, or discard to keep what’s already stored.</p>
+      <div x-show="settingsLeaveError" x-cloak class="text-neon-pink text-xs font-mono" x-text="settingsLeaveError"></div>
+      <div class="flex justify-end gap-2">
+        <button type="button" @click="discardSettingsLeave()" :disabled="settingsLeaveBusy" class="font-mono text-sm text-gray-400 border border-navy-600 rounded-lg px-4 py-2.5 hover:text-white transition-colors disabled:opacity-50">Discard</button>
+        <button type="button" @click="saveSettingsLeave()" :disabled="settingsLeaveBusy" class="font-mono text-sm text-neon-ember border border-neon-ember/40 rounded-lg px-4 py-2.5 hover:bg-neon-ember/10 transition-colors disabled:opacity-50"><span x-show="settingsLeaveBusy" x-cloak class="animate-pulse-neon">● </span>Save</button>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>

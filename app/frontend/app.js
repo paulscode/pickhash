@@ -133,14 +133,19 @@ document.addEventListener('alpine:init', () => {
     alertsList: [], hasAlerts: false,
     // history view
     showHistory: false, historySessions: [], historyEmpty: false, appReady: false,
-    showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
+    showSettings: false, settingsGroups: [], settingsTabs: [],
+    settingsTab: 'strategy', settingsTabLabel: 'Strategy', settingsTabMenuOpen: false,
+    settingsShowMrr: false, settingsShowEndpoint: false, settingsShowDiag: false,
+    diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
+    showSettingsLeave: false, settingsLeaveBusy: false, settingsLeaveError: '', settingsLeaveTarget: '',
+    settingsBaseline: '',
     fallbackOcean: true,
     rerouteDeadRigs: true,   // sub-option of the Ocean fallback (surfaced beside it, not in the generic list)
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
     impactHasData: false, impactTotal: '0 PH·days', impactLine: '', impactArea: '', impactGridPath: '', impactXLabels: [], impactYMaxLabel: '', impactPoints: [],
     impCrossShow: false, impCrossX: 0, impTipX: 0, impTipTextX: 0, impTipText: '',
     phLowest: '', phLast10: '', phGridPath: '', phYMaxLabel: '', phXLabels: [], phHasData: false,
-    navDashClass: 'tab-active pb-1', navHistClass: 'hover:text-white pb-1', navSetClass: 'hover:text-white pb-1', navMktClass: 'hover:text-white pb-1',
+    navDashClass: 'pk-nav-item tab-active', navHistClass: 'pk-nav-item hover:text-white', navSetClass: 'pk-nav-item hover:text-white', navMktClass: 'pk-nav-item hover:text-white',
 
     // Balance + deposit + info popovers.
     balanceBig: '—', hasUnconfirmed: false, balanceUnconfText: '',
@@ -848,28 +853,174 @@ document.addEventListener('alpine:init', () => {
       this.showHistory = view === 'history';
       this.showSettings = view === 'settings';
       this.showMarket = view === 'market';
-      const on = 'tab-active pb-1';
-      const off = 'hover:text-white pb-1';
+      if (view !== 'settings') this.settingsTabMenuOpen = false;
+      const on = 'pk-nav-item tab-active';
+      const off = 'pk-nav-item hover:text-white';
       this.navDashClass = view === 'dashboard' ? on : off;
       this.navHistClass = view === 'history' ? on : off;
       this.navSetClass = view === 'settings' ? on : off;
       this.navMktClass = view === 'market' ? on : off;
     },
-    goDashboard() {
-      if (!this.appReady) return;   // nav is inert until authed + setup complete
-      this.setNav('dashboard');
+    // Intercept leaving Settings when Strategy/Guardrails/Display edits aren't saved yet.
+    async requestNav(view) {
+      if (!this.appReady) return;
+      if (this.showSettings && view !== 'settings' && this.settingsDirty()) {
+        this.settingsLeaveTarget = view;
+        this.settingsLeaveError = '';
+        this.settingsLeaveBusy = false;
+        this.showSettingsLeave = true;
+        this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+        return;
+      }
+      await this.performNav(view);
+    },
+    async performNav(view) {
+      if (view === 'dashboard') {
+        this.setNav('dashboard');
+        this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+        return;
+      }
+      if (view === 'history') {
+        this.setNav('history');
+        this.loadHistory();
+        return;
+      }
+      if (view === 'market') {
+        this.setNav('market');
+        await this.loadMarket();
+        this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+        return;
+      }
+      if (view === 'settings') {
+        this.setNav('settings');
+        await this.loadSettings();
+        await this.loadDiag();
+        await this.loadConnection();
+        this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+      }
+    },
+    goDashboard() { return this.requestNav('dashboard'); },
+    goHistory() { return this.requestNav('history'); },
+    goMarket() { return this.requestNav('market'); },
+    goSettings() { return this.requestNav('settings'); },
+    setSettingsTab(id) {
+      const tab = id || 'strategy';
+      this.settingsTab = tab;
+      this.settingsTabMenuOpen = false;
+      const cur = (this.settingsTabs || []).find((t) => t.id === tab);
+      this.settingsTabLabel = (cur && cur.label) ? cur.label : 'Settings';
+      const on = 'tab-active';
+      const off = 'hover:text-white';
+      this.settingsTabs = (this.settingsTabs || []).map((t) => ({
+        id: t.id, label: t.label, kind: t.kind,
+        navClass: t.id === tab ? on : off,
+      }));
+      for (const g of this.settingsGroups || []) g.showTab = g.ns === tab;
+      this.settingsShowMrr = tab === 'mrr';
+      this.settingsShowEndpoint = tab === 'endpoint';
+      this.settingsShowDiag = tab === 'diag';
+      if (tab === 'diag') this.loadDiag();
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
-    goHistory() {
-      if (!this.appReady) return;
-      this.setNav('history');
-      this.loadHistory();
-    },
-    async goMarket() {
-      if (!this.appReady) return;
-      this.setNav('market');
-      await this.loadMarket();
+    toggleSettingsTabMenu() {
+      this.settingsTabMenuOpen = !this.settingsTabMenuOpen;
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+    },
+    closeSettingsTabMenu() { this.settingsTabMenuOpen = false; },
+    pickSettingsTab(id) {
+      this.setSettingsTab(id);
+    },
+    rebuildSettingsTabs() {
+      const tabs = [];
+      for (const g of this.settingsGroups || []) {
+        tabs.push({ id: g.ns, label: g.title, kind: 'group' });
+      }
+      tabs.push({ id: 'mrr', label: 'MiningRigRentals API', kind: 'mrr' });
+      tabs.push({ id: 'endpoint', label: 'Stratum endpoint', kind: 'endpoint' });
+      tabs.push({ id: 'diag', label: 'Diagnostics', kind: 'diag' });
+      this.settingsTabs = tabs;
+      // Keep the current tab if it still exists; otherwise land on Strategy.
+      const keep = tabs.some((t) => t.id === this.settingsTab) ? this.settingsTab : 'strategy';
+      this.setSettingsTab(keep);
+    },
+    settingsFieldWire(f) {
+      if (!f) return '';
+      if (f.isBool) return f.value ? '1' : '0';
+      return String(f.value == null ? '' : f.value);
+    },
+    settingsSnapshot() {
+      return JSON.stringify((this.settingsGroups || []).map((g) => ({
+        ns: g.ns,
+        fields: (g.fields || []).map((f) => ({ key: f.key, value: this.settingsFieldWire(f) })),
+      })));
+    },
+    captureSettingsBaseline() {
+      this.settingsBaseline = this.settingsSnapshot();
+    },
+    settingsDirty() {
+      if (!this.settingsBaseline) return false;
+      return this.settingsSnapshot() !== this.settingsBaseline;
+    },
+    groupDirty(group) {
+      if (!this.settingsBaseline || !group) return false;
+      try {
+        const base = JSON.parse(this.settingsBaseline).find((g) => g.ns === group.ns);
+        if (!base) return true;
+        const now = (group.fields || []).map((f) => ({ key: f.key, value: this.settingsFieldWire(f) }));
+        return JSON.stringify(now) !== JSON.stringify(base.fields);
+      } catch { return true; }
+    },
+    restoreSettingsBaseline() {
+      if (!this.settingsBaseline) return;
+      try {
+        const base = JSON.parse(this.settingsBaseline);
+        for (const g of this.settingsGroups || []) {
+          const bg = base.find((x) => x.ns === g.ns);
+          if (!bg) continue;
+          for (const f of g.fields || []) {
+            const bf = bg.fields.find((x) => x.key === f.key);
+            if (!bf) continue;
+            if (f.isBool) f.value = bf.value === '1';
+            else f.value = bf.value;
+          }
+          g.error = '';
+        }
+      } catch { /* keep current */ }
+    },
+    closeSettingsLeave() {
+      if (this.settingsLeaveBusy) return;
+      this.showSettingsLeave = false;
+      this.settingsLeaveTarget = '';
+      this.settingsLeaveError = '';
+    },
+    async discardSettingsLeave() {
+      if (this.settingsLeaveBusy) return;
+      const target = this.settingsLeaveTarget;
+      this.restoreSettingsBaseline();
+      this.showSettingsLeave = false;
+      this.settingsLeaveTarget = '';
+      this.settingsLeaveError = '';
+      if (target) await this.performNav(target);
+    },
+    async saveSettingsLeave() {
+      if (this.settingsLeaveBusy) return;
+      this.settingsLeaveBusy = true;
+      this.settingsLeaveError = '';
+      for (const group of this.settingsGroups || []) {
+        if (!this.groupDirty(group)) continue;
+        const ok = await this.saveGroup(group);
+        if (!ok) {
+          this.settingsLeaveBusy = false;
+          this.settingsLeaveError = group.error || 'Could not save — fix the error and try again.';
+          return;
+        }
+      }
+      this.captureSettingsBaseline();
+      this.settingsLeaveBusy = false;
+      const target = this.settingsLeaveTarget;
+      this.showSettingsLeave = false;
+      this.settingsLeaveTarget = '';
+      if (target) await this.performNav(target);
     },
     // Populate the Hash Value readout (your pay-rate vs market rate) from an /api/{status,market} block.
     fmtHashValue(hv) {
@@ -937,14 +1088,6 @@ document.addEventListener('alpine:init', () => {
       const maxTh = regs.reduce((mx, r) => Math.max(mx, r.th), 0) || 1;
       this.regionsEmpty = regs.length === 0;
       this.marketRegions = regs.map((r) => ({ region: r.region, thText: this.fmtHashTh(r.th), rigs: r.rigs, style: `width:${Math.round((r.th / maxTh) * 100)}%` }));
-    },
-    async goSettings() {
-      if (!this.appReady) return;
-      this.setNav('settings');
-      await this.loadSettings();
-      await this.loadDiag();
-      await this.loadConnection();
-      this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
 
     // --- Settings > Connection (API credentials + stratum endpoint) ---
@@ -1023,7 +1166,7 @@ document.addEventListener('alpine:init', () => {
       const values = (r && r.values) || {};
       const titles = { strategy: 'Strategy', guardrails: 'Guardrails', notifications: 'Notifications', ui: 'Display' };
       this.settingsGroups = Object.keys(schema).map((ns) => ({
-        ns, title: titles[ns] || ns, saved: false, error: '',
+        ns, title: titles[ns] || ns, saved: false, error: '', showTab: false,
         // fallback_pool_enabled + its dead_rig_reroute_enabled sub-option are surfaced together on
         // the Stratum endpoint card instead of here.
         fields: Object.keys(schema[ns]).filter((key) => !(ns === 'strategy' && (key === 'fallback_pool_enabled' || key === 'dead_rig_reroute_enabled'))).map((key) => {
@@ -1040,13 +1183,21 @@ document.addEventListener('alpine:init', () => {
           return { key, label: spec.label || key, help: spec.help || '', unit: spec.unit || '', isBool, isEnum, isText, isNum, values: spec.values || [], value };
         }),
       }));
+      this.captureSettingsBaseline();
+      this.rebuildSettingsTabs();
     },
     async saveGroup(group) {
       const patch = {};
       for (const f of group.fields) patch[f.key] = f.value;
       const r = await this.send('POST', '/api/config', { ns: group.ns, patch });
-      if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
-      else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
+      if (r.ok) {
+        group.saved = true; group.error = '';
+        this.captureSettingsBaseline();
+        setTimeout(() => { group.saved = false; }, 1500);
+        return true;
+      }
+      group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.';
+      return false;
     },
     // Persist the setup-wizard Ocean-fallback toggle (default on server-side, so only a change needs saving).
     async saveFallbackOcean() {
