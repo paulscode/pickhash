@@ -104,6 +104,8 @@ document.addEventListener('alpine:init', () => {
     showRehearsal: false, rehearsalBanner: '', rehearsalRows: [],
     hasSession: false, sessionSummary: '', rentals: [], hasRentals: false, emptyRentalsNote: '', stopNote: '',
     sessionState: '', sessionWinding: false, stopConfirm: false, stopBusy: false, stopBtnShow: true,
+    // Browser tab: Idle / Autopilot / Quick Rent + live hashrate text.
+    sessionRunLabel: 'Idle', tabHashText: '0.00 PH/s',
     // Run-mode switch (DRY-RUN <-> LIVE).
     modeIsLive: false, showModeModal: false, modeBusy: false, modeError: '', modeTyped: '', modeNeedsTyped: false,
 
@@ -166,7 +168,28 @@ document.addEventListener('alpine:init', () => {
     async init() {
       this.onStyleguide = window.location.pathname === '/styleguide';
       if (!this.onStyleguide) await this.refresh();
+      this.updateDocTitle();
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+    },
+
+    // Browser tab title + meta description: page · mode · hashrate.
+    updateDocTitle() {
+      let page = 'Pickhash';
+      if (this.showLogin) page = 'Login';
+      else if (this.showWizard) page = 'Setup';
+      else if (this.showMarket) page = 'Market';
+      else if (this.showHistory) page = 'History';
+      else if (this.showSettings) page = 'Settings';
+      else if (this.showApp || this.appReady) page = 'Dashboard';
+      const mode = this.sessionRunLabel || 'Idle';
+      const hash = this.tabHashText || this.fmtHashTh(0);
+      const title = `${page} · ${mode} · ${hash} · Pickhash`;
+      if (document.title !== title) document.title = title;
+      const meta = document.querySelector('meta[name="description"]');
+      if (meta) {
+        const desc = `Pickhash ${page}: ${mode}, ${hash}.`;
+        if (meta.getAttribute('content') !== desc) meta.setAttribute('content', desc);
+      }
     },
 
     async refresh() {
@@ -179,14 +202,15 @@ document.addEventListener('alpine:init', () => {
         : 'Your dashboard password is managed by your platform configuration.';
       this.csrf = auth.csrf || null;
       // Password set but no valid session -> show the login screen.
-      if (this.passwordEnabled && !auth.authed) { this.showLogin = true; return; }
+      if (this.passwordEnabled && !auth.authed) { this.showLogin = true; this.updateDocTitle(); return; }
       const setup = await this.getJson('/api/setup/state');
-      if (setup.completed) { this.appReady = true; this.showApp = true; this.initApp(); return; }
+      if (setup.completed) { this.appReady = true; this.showApp = true; this.initApp(); this.updateDocTitle(); return; }
       this.showWizard = true;
       // Resume at the first incomplete step: if the MRR key is already stored, skip
       // the password/keys steps and land on the pool step.
       if (setup.configured) this.goStep(2);
       else this.goStep(this.passwordEnabled ? 1 : 0);
+      this.updateDocTitle();
     },
 
     async login() {
@@ -212,6 +236,7 @@ document.addEventListener('alpine:init', () => {
       if (this.showLogin) return;   // already there (e.g. a wrong-password login attempt)
       this.showApp = false; this.showHistory = false; this.showSettings = false; this.showMarket = false; this.appReady = false;
       this.passwordEnabled = true; this.showLogin = true;
+      this.updateDocTitle();
     },
 
     // --- API helpers ---
@@ -426,12 +451,14 @@ document.addEventListener('alpine:init', () => {
         const dp = heroSeries.unit === 'PH/s' ? 2 : 0;
         this.heroActive = true;
         this.heroUnit = heroSeries.unit;
+        this.tabHashText = `${(last / div).toFixed(dp)} ${heroSeries.unit}`;
         this.countUp('heroDeliveredNum', last / div, (v) => { this.heroDelivered = v.toFixed(dp); }, dp);
         this.heroTarget = `of ${(target / div).toFixed(dp)} ${heroSeries.unit} target`;
         const pct = target > 0 ? Math.round((last / target) * 100) : 0;
         this.heroPct = pct + '%';
         this.heroPctClass = pct >= 95 ? 'text-neon-green' : pct >= 90 ? 'text-neon-yellow' : 'text-neon-flame';
       }
+      this.updateDocTitle();
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
     // Lightweight count-up tween for the hero numeral (the "count rather than snap" feel).
@@ -552,6 +579,10 @@ document.addEventListener('alpine:init', () => {
       this.unit = u;
       this.unitLabelText = u === 'ph' ? 'PH/s' : 'TH/s';
       this.setUnitClasses();
+      if (!this.hasSession) {
+        this.tabHashText = this.fmtHashTh(0);
+        this.updateDocTitle();
+      }
       this.scheduleQuote(0);
     },
     preset(sats) { this.inSpend = String(sats); this.scheduleQuote(0); },
@@ -854,6 +885,7 @@ document.addEventListener('alpine:init', () => {
       this.navHistClass = view === 'history' ? on : off;
       this.navSetClass = view === 'settings' ? on : off;
       this.navMktClass = view === 'market' ? on : off;
+      this.updateDocTitle();
     },
     goDashboard() {
       if (!this.appReady) return;   // nav is inert until authed + setup complete
@@ -1269,11 +1301,15 @@ document.addEventListener('alpine:init', () => {
         this.sessionWinding = ss.state === 'winding_down';
         const n = this.rentals.length;
         const label = ss.mode === 'autopilot' ? 'Autopilot' : 'Quick session';
+        this.sessionRunLabel = ss.mode === 'autopilot' ? 'Autopilot' : 'Quick Rent';
         this.sessionSummary = `${label} · ${n} rental${n === 1 ? '' : 's'}`;
         this.heroSpent = `${this.fmtSats(ss.spent_sats)} spent`;
         this.heroBudget = ss.budget_sats ? `of ${this.fmtSats(ss.budget_sats)} budget` : '';
       } else {
         this.sessionState = ''; this.sessionWinding = false; this.stopConfirm = false;
+        this.sessionRunLabel = 'Idle';
+        this.heroActive = false;
+        this.tabHashText = this.fmtHashTh(0);
       }
       this.updateStopBtn();
       this.alertsList = ((s && s.alerts) || []).map((a) => ({
@@ -1281,6 +1317,7 @@ document.addEventListener('alpine:init', () => {
         text: this.alertText(a), chipClass: this.alertChipClass(a.severity),
       }));
       this.hasAlerts = this.alertsList.length > 0;
+      this.updateDocTitle();
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
     openModeModal() { this.modeError = ''; this.modeNeedsTyped = false; this.modeTyped = ''; this.showModeModal = true; },
