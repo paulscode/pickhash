@@ -867,7 +867,14 @@ document.addEventListener('alpine:init', () => {
     },
     fmtHashTh(th) {
       if (th == null || !(th >= 0)) return '—';
-      return this.unit === 'ph' ? `${(th / 1000).toFixed(2)} PH/s` : `${Math.round(th).toLocaleString('en-US')} TH/s`;
+      if (this.unit === 'ph') return `${(th / 1000).toFixed(2)} PH/s`;
+      // Whole TH is fine for a market measured in thousands of them and far too coarse
+      // for one measured in tens: on BLAKE2b a rig is 0.5 to 7 TH, so rounding showed
+      // 0.5 TH as "1 TH/s", and 4.9 of a 5 TH target as "5 TH/s" — the second reading
+      // as though the target had been met. Keep a decimal while it still means
+      // something, which is the rule the per-rig formatter already follows.
+      if (th > 0 && th < 100) return `${th.toFixed(th < 10 ? 2 : 1)} TH/s`;
+      return `${Math.round(th).toLocaleString('en-US')} TH/s`;
     },
     // Per-rig hashrate, auto-scaled to the rig's own magnitude and INDEPENDENT of the quote
     // card's aggregate PH/TH toggle. A single MRR rig is tens of TH/s, so the aggregate PH/s
@@ -1029,6 +1036,17 @@ document.addEventListener('alpine:init', () => {
           blacklisted: 'blacklisted by you',
           diff_mismatch: 'outside your pool difficulty',
         };
+        /*
+         * Rigs were eligible but none was taken, so the binding constraint is size, not
+         * supply: the packer will not buy a rig far bigger than the hole it fills,
+         * because that capacity cannot be cancelled. Saying "the market can only cover
+         * 0" here is actively wrong, and the fix is one the user can act on.
+         */
+        if (est.coveredTh === 0 && est.eligibleRigs > 0 && est.smallestEligibleTh) {
+          const cap = (est.maxOvershootPct != null ? est.maxOvershootPct : 50) / 100;
+          const clears = est.smallestEligibleTh / (1 + cap);
+          return `Autopilot covered none of your target: the smallest rig it will take is ${this.fmtHashTh(est.smallestEligibleTh)}, and buying that to fill ${this.fmtHashTh(est.targetTh || 0)} is past your ${est.maxOvershootPct}% overshoot limit. Raise the target to about ${this.fmtHashTh(clears)}, or raise Max overshoot in Settings.`;
+        }
         const ranked = Object.entries(over).sort((a, b) => b[1] - a[1]);
         if (!ranked.length) {
           return `The market can only cover ${covered} of your target right now — autopilot will hold what it can and keep watching for more.`;

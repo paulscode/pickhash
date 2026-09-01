@@ -480,10 +480,17 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   return {
     eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     listedRigs: listed,
+    // The other way a target goes uncovered: rigs are eligible but too big to buy for
+    // a hole this size. The packer refuses to overshoot beyond max_overshoot_pct, which
+    // is right (uncancellable capacity costs money) but says nothing on its own. These
+    // two let the caller name the constraint and suggest a target that clears it.
+    smallestEligibleTh: cands.length ? Math.min(...cands.map((r) => r.advertisedTh)) : null,
+    maxOvershootPct: strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50,
     passedOver,
     rigCount: selection.length,
     coveredTh,
     shortfallTh: Math.max(0, targetTh - coveredTh),
+    targetTh,   // echoed so a caller can explain a shortfall without re-deriving it
     burnSatsHr,
     priceUnit,
     blendedSatsUnitDay,
