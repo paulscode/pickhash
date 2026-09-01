@@ -1,0 +1,58 @@
+{
+  "name": "blake2b",
+  "display": "Blake2B Siacoin",
+  "suggested_price": {
+    "amount": "0.00128100",
+    "currency": "BTC",
+    "unit": "th*day"
+  },
+  "stats": {
+    "available": {
+      "rigs": "41",
+      "hash": {
+        "hash": "136.1173",
+        "unit": "th",
+        "nice": "136.12T"
+      }
+    },
+    "rented": {
+      "rigs": "144",
+      "hash": {
+        "hash": "913.4",
+        "unit": "th",
+        "nice": "913.40T"
+      }
+    },
+    "prices": {
+      "lowest": {
+        "amount": "0.00100000",
+        "currency": "BTC",
+        "unit": "th*day"
+      },
+      "last_10": {
+        "amount": "0.00104368",
+        "currency": "BTC",
+        "unit": "th*day"
+      },
+      "last_20": {
+        "amount": "0.00110821",
+        "currency": "BTC",
+        "unit": "th*day"
+      },
+      "last_30": {
+        "amount": "0.00112650",
+        "currency": "BTC",
+        "unit": "th*day"
+      },
+      "last": {
+        "amount": "0.00118492",
+        "currency": "BTC",
+        "unit": "th*day"
+      }
+    }
+  },
+  "new": false,
+  "hot": true,
+  "hashtype": "th",
+  "pool_option1": null
+}
