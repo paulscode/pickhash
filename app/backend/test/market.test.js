@@ -207,16 +207,16 @@ test('cheapNow places the current price in the recent distribution', () => {
 test('hashValue: blended pay vs market rate (advertised + delivered) with a signed over-market %', () => {
   const latest = { last10: 5e-7, lowest: 4e-7 };
   const rentals = [{ rate_btc_th_day: 5.2e-7, advertised_th: 100, avg_percent: 90 }];
-  const hv = market.hashValue(latest, rentals);
+  const hv = market.hashValue(latest, rentals, 'ph');
   assert.equal(hv.available, true);
-  assert.equal(hv.market_sats_ph_day, 50000, '5e-7 BTC/TH·day -> 50k sats/PH·day');
-  assert.equal(hv.lowest_sats_ph_day, 40000);
-  assert.equal(hv.your_pay_sats_ph_day, 52000, 'TH-weighted advertised pay-rate');
-  assert.equal(hv.effective_sats_ph_day, 57778, '52k / 90% delivered');
+  assert.equal(hv.market_sats_unit_day, 50000, '5e-7 BTC/TH·day -> 50k sats/PH·day');
+  assert.equal(hv.lowest_sats_unit_day, 40000);
+  assert.equal(hv.your_pay_sats_unit_day, 52000, 'TH-weighted advertised pay-rate');
+  assert.equal(hv.effective_sats_unit_day, 57778, '52k / 90% delivered');
   assert.equal(hv.over_market_pct, 4, '(52k-50k)/50k = +4%');
-  assert.equal(market.hashValue(latest, []).available, false, 'no held rentals -> no pay -> unavailable');
-  assert.equal(market.hashValue(null, rentals).available, false, 'no snapshot -> unavailable');
-  assert.equal(market.hashValue({ last10: null, lowest: 4e-7 }, rentals).market_sats_ph_day, 40000, 'last10 missing -> lowest is the market ref');
+  assert.equal(market.hashValue(latest, [], 'ph').available, false, 'no held rentals -> no pay -> unavailable');
+  assert.equal(market.hashValue(null, rentals, 'ph').available, false, 'no snapshot -> unavailable');
+  assert.equal(market.hashValue({ last10: null, lowest: 4e-7 }, rentals, 'ph').market_sats_unit_day, 40000, 'last10 missing -> lowest is the market ref');
 });
 
 test('hashValue: multi-rental TH-weighted blend, null-rate rental excluded, null avg_percent counts as full delivery', () => {
@@ -226,17 +226,17 @@ test('hashValue: multi-rental TH-weighted blend, null-rate rental excluded, null
     { rate_btc_th_day: 6e-7, advertised_th: 50, avg_percent: null },   // null avg -> full delivery
     { rate_btc_th_day: null, advertised_th: 200, avg_percent: 80 },    // null rate -> excluded from blend
   ];
-  const hv = market.hashValue(latest, rentals);
+  const hv = market.hashValue(latest, rentals, 'ph');
   // costRate = 5e-7*100 + 6e-7*50 = 8e-5 BTC/day over adv=150 -> 8e-5/150*1e11 = 53333 sats/PH·day
-  assert.equal(hv.your_pay_sats_ph_day, 53333, 'TH-weighted over the two priced rentals only');
-  assert.equal(hv.effective_sats_ph_day, 53333, 'both deliver full (100% / null) -> effective == pay');
+  assert.equal(hv.your_pay_sats_unit_day, 53333, 'TH-weighted over the two priced rentals only');
+  assert.equal(hv.effective_sats_unit_day, 53333, 'both deliver full (100% / null) -> effective == pay');
   assert.equal(hv.over_market_pct, 6.7, '(53333-50000)/50000 = +6.7%');
 });
 
 test('hashValue: paying under market yields a negative over_market_pct', () => {
   const latest = { last10: 5e-7, lowest: 4e-7 };
   const rentals = [{ rate_btc_th_day: 4.5e-7, advertised_th: 100, avg_percent: 100 }];
-  const hv = market.hashValue(latest, rentals);
-  assert.equal(hv.your_pay_sats_ph_day, 45000);
+  const hv = market.hashValue(latest, rentals, 'ph');
+  assert.equal(hv.your_pay_sats_unit_day, 45000);
   assert.equal(hv.over_market_pct, -10, 'under market is a negative %');
 });

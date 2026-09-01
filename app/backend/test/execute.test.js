@@ -37,7 +37,7 @@ function mockClient(opts = {}) {
 function action(id, over = {}) {
   return {
     type: 'TOPUP_RENT', rigId: String(id), rigName: `rig-${id}`, region: 'us', advertisedTh: 100,
-    lengthHours: 3, rateCapPhDay: 0.000505, paidSats: 60_000, feeSats: 1_800,
+    lengthHours: 3, rateCapUnitDay: 0.000505, paidSats: 60_000, feeSats: 1_800,
     rateBtcThDay: 0.0000005, endpointDiff: 131072, optimalDiffMin: 1000, optimalDiffMax: 2_000_000, diffInRange: 1, ...over,
   };
 }

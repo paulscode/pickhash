@@ -21,7 +21,7 @@ const algos = require('./algos');
  * away. Splitting `duckdns` would lose a user their DNS setup on a switch, for no
  * gain, since a hostname has nothing to do with which algorithm is being rented.
  */
-const SCOPED_NS = new Set(['strategy', 'guardrails']);
+const SCOPED_NS = new Set(['strategy', 'guardrails', 'ui']);
 
 // Stored in the algo column for a global namespace. Not a valid slug, so a global
 // row can never be read as one algorithm's settings.
@@ -57,7 +57,7 @@ const DEFAULTS = {
     // the common ~1M-sat range but well below a full balance, as defense in depth.
     max_session_budget_sats: 5000000,
     max_daily_spend_sats: 10000000,
-    blended_ceiling_sats_ph_day: null, // primary price cap: max BLENDED pay-rate (sats/PH·day); null = off
+    blended_ceiling_sats_unit_day: null, // primary price cap: max BLENDED pay-rate, sats per <priceUnit>·day; null = off
     rate_ceiling_sats_th_hour: null, // optional per-rig backstop (sats/TH/hr); null = off (auto 2× blend when a blended cap is set)
     deposit_leadtime_hours: 2,      // low-balance early warning vs the 3-conf delay
     refund_watch_days: 14,          // how long an ended rental is watched for refunds
@@ -188,8 +188,22 @@ const SETTINGS = {
   guardrails: {
     max_session_budget_sats: { type: 'int', min: 0, max: 1e12, unit: 'sats', label: 'Max session budget', help: 'Hard ceiling on any one session’s spend.' },
     max_daily_spend_sats: { type: 'int', min: 0, max: 1e12, unit: 'sats', label: 'Max daily spend', help: 'Rolling 24h spend ceiling across all sessions.' },
-    blended_ceiling_sats_ph_day: { type: 'floatOrNull', min: 0, unit: 'sats/PH·day', label: 'Blended rate ceiling', help: 'Cap on your overall blended pay-rate — the "you" line on the market chart (blank = off). Autopilot fills the target with the cheapest rigs while keeping the average under this; it leaves a shortfall rather than overpaying. Set it in the Autopilot preview per session, or here as a standing default.' },
-    rate_ceiling_sats_th_hour: { type: 'floatOrNull', min: 0, unit: 'sats/TH/hr', label: 'Per-rig backstop', help: 'Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies. A recent SHA256 rig runs ~2 sats/TH/hr.' },
+    blended_ceiling_sats_unit_day: {
+      type: 'floatOrNull', min: 0, unit: 'sats/PH·day', label: 'Blended rate ceiling',
+      help: 'Cap on your overall blended pay-rate — the "you" line on the market chart (blank = off). Autopilot fills the target with the cheapest rigs while keeping the average under this; it leaves a shortfall rather than overpaying. Set it in the Autopilot preview per session, or here as a standing default.',
+      // The unit is the algorithm's, not a fixed PH. Showing "sats/PH·day" beside a
+      // blake2b field would invite a number a thousand times too small.
+      forAlgo: (a) => ({ unit: `sats/${a.priceUnit.toUpperCase()}·day` }),
+    },
+    rate_ceiling_sats_th_hour: {
+      type: 'floatOrNull', min: 0, unit: 'sats/TH/hr', label: 'Per-rig backstop',
+      help: 'Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies.',
+      // Always per TH/hr, so the unit does not move — but the number a user should
+      // have in mind moves by a factor of 2,425, which is the whole point of saying it.
+      forAlgo: (a) => ({
+        help: `Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies. A recent ${a.short} rig runs ~${a.typicalSatsThHour} sats/TH/hr.`,
+      }),
+    },
     deposit_leadtime_hours: { type: 'number', min: 0, max: 168, unit: 'h', label: 'Low-balance lead time', help: 'Warn when runway drops under this.' },
     refund_watch_days: { type: 'int', min: 0, max: 90, unit: 'days', label: 'Refund watch', help: 'How long an ended rental is watched for refunds.' },
   },
@@ -199,6 +213,27 @@ const SETTINGS = {
     hashrate_unit: { type: 'enum', values: ['ph', 'th'], label: 'Hashrate unit', help: 'Primary display unit.' },
   },
 };
+
+/**
+ * The settings schema as the active algorithm sees it.
+ *
+ * Same keys and same bounds as SETTINGS — only the human-facing unit and help move,
+ * because a price knob labelled in the wrong unit is worse than one with no label.
+ * Validation stays on the static schema, since nothing about the bounds is
+ * algorithm-specific.
+ */
+function settings(conn) {
+  const entry = algos.get(activeAlgo(conn));
+  const out = {};
+  for (const [ns, specs] of Object.entries(SETTINGS)) {
+    out[ns] = {};
+    for (const [key, spec] of Object.entries(specs)) {
+      const { forAlgo, ...rest } = spec;
+      out[ns][key] = forAlgo ? { ...rest, ...forAlgo(entry) } : rest;
+    }
+  }
+  return out;
+}
 
 /** Coerce + bounds-check one raw value against its spec. Returns {ok, value} or {ok:false, reason}. */
 function coerce(spec, raw) {
@@ -241,6 +276,6 @@ function validatePatch(ns, patch) {
 }
 
 module.exports = {
-  DEFAULTS, get, getKey, set, all, SETTINGS, validatePatch,
+  DEFAULTS, get, getKey, set, all, SETTINGS, settings, validatePatch,
   activeAlgo, SCOPED_NS, GLOBAL,
 };

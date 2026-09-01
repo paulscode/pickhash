@@ -17,6 +17,7 @@
  * orchestrates the I/O around them.
  */
 const market = require('../market');
+const units = require('../units');
 const deposit = require('../deposit');
 const stratum = require('../stratum');
 const endpointUtil = require('../endpoint');
@@ -269,9 +270,16 @@ async function observe(conn, client, ctx = {}) {
       try {
         const algo = await client.get('/info/algos/' + market.activeAlgo(conn));
         const prices = (algo && algo.stats && algo.stats.prices) || (algo && algo.prices) || {};
-        // info/algos amounts are per-PH·day (sha256ab unit "ph*day"); market_snapshots
-        // stores per-TH·day (like `lowest`), so divide by 1000 to keep units consistent.
-        const perTh = (o) => (o && o.amount != null && o.amount !== '' ? Number(o.amount) / 1000 : null);
+        // market_snapshots stores per-TH/day (like `lowest`), so normalize. The unit comes
+        // from the response ("ph*day" for sha256ab, "th*day" for blake2b) rather than a fixed
+        // divide by 1000, which would store blake2b prices a thousandfold low and quietly
+        // poison every price chart and market comparison built on them.
+        const perTh = (o) => {
+          if (!o || o.amount == null || o.amount === '') return null;
+          const n = Number(o.amount);
+          if (!Number.isFinite(n)) return null;
+          try { return n / units.perThFactor(String(o.unit || '').split('*')[0]); } catch { return null; }
+        };
         snap.last10 = perTh(prices.last_10);
         snap.last = perTh(prices.last);
       } catch { /* prices are a nice-to-have */ }

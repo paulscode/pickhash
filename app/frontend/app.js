@@ -137,7 +137,14 @@ document.addEventListener('alpine:init', () => {
     fallbackOcean: true,
     rerouteDeadRigs: true,   // sub-option of the Ocean fallback (surfaced beside it, not in the generic list)
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
-    impactHasData: false, impactTotal: '0 PH·days', impactLine: '', impactArea: '', impactGridPath: '', impactXLabels: [], impactYMaxLabel: '', impactPoints: [],
+    // The active algorithm's price unit, from the API. Every "sats/<unit>·day" label
+    // reads from this rather than hardcoding PH, which is only right for sha256ab.
+    priceUnit: 'ph',
+    impactUnit: 'TH·days',
+    get rateUnit() { return `sats/${this.priceUnit.toUpperCase()}·day`; },
+    // TH in one price unit: 1000 for an algorithm quoted per PH, 1 for one quoted per TH.
+    get thPerPriceUnit() { return this.priceUnit === 'ph' ? 1000 : 1; },
+    impactHasData: false, impactTotal: '0 TH·days', impactLine: '', impactArea: '', impactGridPath: '', impactXLabels: [], impactYMaxLabel: '', impactPoints: [],
     impCrossShow: false, impCrossX: 0, impTipX: 0, impTipTextX: 0, impTipText: '',
     phLowest: '', phLast10: '', phGridPath: '', phYMaxLabel: '', phXLabels: [], phHasData: false,
     navDashClass: 'tab-active pb-1', navHistClass: 'hover:text-white pb-1', navSetClass: 'hover:text-white pb-1', navMktClass: 'hover:text-white pb-1',
@@ -470,7 +477,7 @@ document.addEventListener('alpine:init', () => {
       for (const p of this.impactPoints) { if (Math.abs(p.x - vx) < Math.abs(nearest.x - vx)) nearest = p; }
       this.impCrossShow = true; this.impCrossX = nearest.x;
       this.impTipX = Math.min(716, Math.max(4, nearest.x - 42)); this.impTipTextX = this.impTipX + 42;
-      this.impTipText = `${nearest.vy.toFixed(nearest.vy < 10 ? 2 : 1)} PH·days`;
+      this.impTipText = `${nearest.vy.toFixed(nearest.vy < 10 ? 2 : 1)} ${this.impactUnit}`;
     },
     hideImpactCrosshair() { this.impCrossShow = false; },
     async ackAlert(id) {
@@ -604,12 +611,12 @@ document.addEventListener('alpine:init', () => {
       const r = await this.getJson(`/api/autopilot/estimate?target_th=${p.targetTh}&budget_sats=${p.budgetSats}`);
       this.apBusy = false;
       if (!r || !r.estimate) { this.apHasEstimate = false; this.apError = 'Could not estimate — check your MRR connection and try again.'; return; }
-      this.applyEstimate(r.estimate, p, r.current_blended_ceiling_sats_ph_day);
+      this.applyEstimate(r.estimate, p, r.current_blended_ceiling_sats_unit_day);
     },
     applyEstimate(est, p, currentCeiling) {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
-      this.apRateText = est.blendedSatsPhDay != null ? `${this.fmtSats(est.blendedSatsPhDay)} sats/PH·day` : '—';
+      this.apRateText = est.blendedSatsUnitDay != null ? `${this.fmtSats(est.blendedSatsUnitDay)} ${this.rateUnit}` : '—';
       // Pre-fill the blended rate ceiling. A deliberate standing setting wins (the API returns it only
       // when it was NOT an auto-suggestion); otherwise the suggested cap (estimated blend + headroom,
       // so the fill isn't strangled hugging the estimate), falling back to the bare blend. apRateCeilAuto
@@ -619,8 +626,8 @@ document.addEventListener('alpine:init', () => {
       if (!this.apRateCeilTouched) {
         if (currentCeiling != null) { this.apRateCeil = String(currentCeiling); this.apRateCeilAuto = false; }
         else {
-          this.apRateCeil = est.suggestedCeilingSatsPhDay != null ? String(est.suggestedCeilingSatsPhDay)
-            : (est.blendedSatsPhDay != null ? String(est.blendedSatsPhDay) : '');
+          this.apRateCeil = est.suggestedCeilingSatsUnitDay != null ? String(est.suggestedCeilingSatsUnitDay)
+            : (est.blendedSatsUnitDay != null ? String(est.blendedSatsUnitDay) : '');
           this.apRateCeilAuto = true;
         }
       }
@@ -651,7 +658,7 @@ document.addEventListener('alpine:init', () => {
       const ceil = this.apRateCeil !== '' && Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : null;
       // blended_ceiling_auto: true when the ceiling is an accepted auto-suggestion (not user-typed), so
       // the backend won't persist it as a sticky value that masks the next preview's fresh suggestion.
-      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, blended_ceiling_sats_ph_day: ceil, blended_ceiling_auto: this.apRateCeilAuto });
+      const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, blended_ceiling_sats_unit_day: ceil, blended_ceiling_auto: this.apRateCeilAuto });
       this.apBusy = false;
       if (!r.ok) {
         const e = r.json.error;
@@ -722,7 +729,7 @@ document.addEventListener('alpine:init', () => {
       if (!q) { this.qCanRent = false; this.qCannotRent = true; this.qMaxCapped = false; this.qMarketCapped = false; this.syncComputedCue(); return; }
       const mc = q.market_context;
       const badge = mc && mc.label ? ` · ${mc.label}` : '';
-      this.qHeadline = `${q.rig_count} rigs · ${this.fmtHashTh(q.target_th)} · ${this.fmtSats(Number(q.blended_btc_ph_day) * 1e8)} sats/PH/day blended`;
+      this.qHeadline = `${q.rig_count} rigs · ${this.fmtHashTh(q.target_th)} · ${this.fmtSats(Number(q.blended_btc_unit_day) * 1e8)} ${this.rateUnit} blended`;
       this.qFeeLine = `3% MRR fee included${badge}`;
       this.qPoolLine = `Pool: ${q.endpoint.stratum}`;
       this.qBalance = `Balance: ${this.fmtSats(q.balance_sats)} sats confirmed`;
@@ -874,15 +881,16 @@ document.addEventListener('alpine:init', () => {
     // Populate the Hash Value readout (your pay-rate vs market rate) from an /api/{status,market} block.
     fmtHashValue(hv) {
       hv = hv || {};
-      this.hvMarket = hv.market_sats_ph_day != null ? this.fmtSats(hv.market_sats_ph_day) : '—';
+      if (hv.price_unit) this.priceUnit = hv.price_unit;
+        this.hvMarket = hv.market_sats_unit_day != null ? this.fmtSats(hv.market_sats_unit_day) : '—';
       if (!hv.available) {
         this.hvAvail = false; this.hvBadge = ''; this.hvBadgeClass = 'text-gray-500 border-navy-600';
         this.hvPay = '—'; this.hvEff = '—';
         return;
       }
       this.hvAvail = true;
-      this.hvPay = this.fmtSats(hv.your_pay_sats_ph_day);
-      this.hvEff = hv.effective_sats_ph_day != null ? this.fmtSats(hv.effective_sats_ph_day) : '—';
+      this.hvPay = this.fmtSats(hv.your_pay_sats_unit_day);
+      this.hvEff = hv.effective_sats_unit_day != null ? this.fmtSats(hv.effective_sats_unit_day) : '—';
       const over = hv.over_market_pct;
       if (over == null) { this.hvBadge = ''; this.hvBadgeClass = 'text-gray-500 border-navy-600'; return; }
       const sign = over > 0 ? `+${over}%` : `${over}%`;
@@ -911,7 +919,7 @@ document.addEventListener('alpine:init', () => {
       this.marketEmpty = !s;
       this.hasMarket = !!s;
       this.hvShowHint = this.hasMarket && !this.hvAvail;   // market data but no active session to compare
-      this.mktSummary = s ? `${this.fmtSats(s.lowest_sats_ph_day)} sats/PH·day cheapest · ${this.fmtHashTh(s.available_th)} available · ${s.available_rigs} rigs` : '';
+      this.mktSummary = s ? `${this.fmtSats(s.lowest_sats_unit_day)} ${this.rateUnit} cheapest · ${this.fmtHashTh(s.available_th)} available · ${s.available_rigs} rigs` : '';
       const cn = d.cheap_now || {};
       if (cn.available) {
         this.cheapText = cn.label.toUpperCase();
@@ -921,7 +929,8 @@ document.addEventListener('alpine:init', () => {
       } else { this.cheapText = '—'; this.cheapSub = 'not enough market history yet'; this.cheapClass = 'text-gray-500 border-navy-600'; }
       const im = d.impact || {};
       this.impactHasData = !im.empty;
-      this.impactTotal = im.total_label || '0 PH·days';
+      this.impactUnit = im.unit || 'TH·days';
+        this.impactTotal = im.total_label || `0 ${this.impactUnit}`;
       this.impactLine = im.line || ''; this.impactArea = im.area || ''; this.impactGridPath = im.gridPath || '';
       this.impactPoints = im.points || [];
       this.impactXLabels = (im.x || []).map((t) => t.label);
@@ -1118,7 +1127,7 @@ document.addEventListener('alpine:init', () => {
         id: s.id,
         dateText: this.fmtDate(s.ended_at || s.started_at),
         spentText: `${this.fmtSats(s.spent_sats)} sats`,
-        effectiveText: s.effective_sats_per_th_day != null ? `${this.fmtSats(Math.round(s.effective_sats_per_th_day * 1000))} sats/PH·day delivered` : '—',
+        effectiveText: s.effective_sats_per_th_day != null ? `${this.fmtSats(Math.round(s.effective_sats_per_th_day * this.thPerPriceUnit))} ${this.rateUnit} delivered` : '—',
         durationText: this.fmtDurationHours(s.duration_hours),
         hasRefund: s.refund_sats > 0,
         refundText: s.refund_sats > 0 ? `${this.fmtSats(s.refund_sats)} sats refunded` : '',

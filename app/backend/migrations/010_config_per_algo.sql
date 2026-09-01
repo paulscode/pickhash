@@ -8,8 +8,12 @@
 -- exactly like a ceiling that is working.
 --
 -- Not every namespace is per-algorithm. `strategy` and `guardrails` are, because
--- they describe how to spend money in a particular market. `ui`, `notifications`
--- and `duckdns` are not: a display unit or a DNS name has nothing to do with which
+-- they describe how to spend money in a particular market. `ui` is too, because its
+-- one knob is the primary hashrate unit and the two markets differ in scale by five
+-- orders of magnitude: PH is the natural unit for sha256ab and absurd for blake2b,
+-- whose entire available supply is around 136 TH.
+--
+-- `notifications` and `duckdns` are not: a DNS name has nothing to do with which
 -- algorithm is being rented, and splitting them would mean a user who switches
 -- algorithms loses their DuckDNS setup. Global rows carry algo = '', which is not a
 -- valid slug and so can never be confused for one.
@@ -41,7 +45,7 @@ CREATE TABLE config (
 
 INSERT INTO config (ns, algo, json, updated_at)
   SELECT ns,
-         CASE WHEN ns IN ('strategy', 'guardrails') THEN 'sha256ab' ELSE '' END,
+         CASE WHEN ns IN ('strategy', 'guardrails', 'ui') THEN 'sha256ab' ELSE '' END,
          json,
          updated_at
   FROM config_pre010;

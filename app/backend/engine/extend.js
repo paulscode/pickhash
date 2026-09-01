@@ -12,6 +12,8 @@ const market = require('../market');
 const gate = require('./gate');
 const alerts = require('../alerts');
 const { MrrAmbiguousError } = require('../mrr-client');
+const algos = require('../algos');
+const units = require('../units');
 
 const EXTEND_WINDOW_SEC = 30 * 60;   // consider extending within 30 min of a rental's end
 const EXTEND_RETRY_SEC = 10 * 60;    // re-evaluate a given rental at most this often (bounds getcost calls)
@@ -171,7 +173,9 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   const guard = config.get(conn, 'guardrails');
   // Blended ceiling: don't renew a dear rig once the portfolio blend is already over the cap — skip it
   // (marked, so it's not re-simulated for the retry window) and let decide replace it cheaper.
-  const capBtcThDay = guard.blended_ceiling_sats_ph_day != null ? guard.blended_ceiling_sats_ph_day / 1e11 : Infinity;
+  const capBtcThDay = guard.blended_ceiling_sats_unit_day != null
+    ? units.btcThDayFromSatsPerUnitDay(guard.blended_ceiling_sats_unit_day, algos.priceUnit(market.activeAlgo(conn)))
+    : Infinity;
   const blendNow = sessionBlend(conn, session.id);
 
   for (const rental of candidates) {

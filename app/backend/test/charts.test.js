@@ -245,7 +245,7 @@ test('buildImpact accumulates delivered TH·hours into a PH·days curve (empty w
     { start: 500, end: 600, thHours: 48000 },
   ]);
   assert.equal(m.empty, false);
-  assert.ok(Math.abs(m.total_ph_days - 3) < 1e-9, 'cumulative PH·days');
+  assert.ok(Math.abs(m.total_unit_days - 3) < 1e-9, 'cumulative PH·days');
   assert.equal(m.total_label, '3.00 PH·days');
   // Curve rises during each session, flat between: (s1,0)(e1,1)(s2,1)(e2,3).
   assert.equal(m.points[0].vy, 0);

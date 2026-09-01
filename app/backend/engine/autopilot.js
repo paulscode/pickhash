@@ -14,6 +14,7 @@ const market = require('../market');
 const config = require('../config');
 const alerts = require('../alerts');
 const scoring = require('./scoring');
+const algos = require('../algos');
 
 const DAY = 86400;
 
@@ -25,7 +26,10 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     rentals: snapshot.rentals || [],
     now: nowSec,
     fetchOk: !!(snapshot.fetch_ok && snapshot.fetch_ok.rentals),
-    blendedCeilingSatsPhDay: guard.blended_ceiling_sats_ph_day,
+    blendedCeilingSatsUnitDay: guard.blended_ceiling_sats_unit_day,
+    // The unit that ceiling is expressed in, carried beside it so the two cannot be
+    // separated. A ceiling without its unit is off by a thousand half the time.
+    priceUnit: algos.priceUnit(market.activeAlgo(conn)),
     hashrateTolerancePct: strat.hashrate_tolerance_pct,
     minRpi: strat.min_rpi,
     stabilityTolerancePct: strat.stability_tolerance_pct,

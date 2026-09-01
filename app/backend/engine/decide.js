@@ -27,6 +27,7 @@
  *  - At/after the time cap: propose nothing (stop opening; never cancel paid-for time).
  */
 const quote = require('../quote');
+const units = require('../units');
 
 const FEE_RATE = quote.FEE_RATE;
 // Per-rig sanity backstop when a blended cap is set: never rent a single rig priced above this
@@ -125,11 +126,12 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
 }
 
 /**
- * Protective +1% rate cap for a rig, expressed per PH/day (what MRR's create expects).
- * Mirrors session.rateCapPhDay: priceBtcThDay is per TH/day, ×1000 to PH/day, +1% headroom.
+ * Protective +1% rate cap for a rig, expressed per <priceUnit>/day (what MRR's create
+ * expects). Mirrors session.rateCapUnitDay: priceBtcThDay is per TH/day, scaled by the
+ * TH-per-unit factor of whichever unit the algorithm is quoted in, +1% headroom.
  */
-function rateCapPhDay(rig) {
-  return Number(((rig.priceBtcThDay || 0) * 1000 * 1.01).toFixed(8));
+function rateCapUnitDay(rig, priceUnit) {
+  return Number(((rig.priceBtcThDay || 0) * units.perThFactor(priceUnit) * 1.01).toFixed(8));
 }
 
 /**
@@ -230,7 +232,8 @@ function decide(ctx = {}) {
   const pricedActive = active.filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
   const heldCostRateBtcDay = pricedActive.reduce((s, r) => s + r.rate_btc_th_day * r.advertised_th, 0);
   const heldAdvTh = pricedActive.reduce((s, r) => s + r.advertised_th, 0);
-  const blendCapBtcThDay = ctx.blendedCeilingSatsPhDay != null ? ctx.blendedCeilingSatsPhDay / 1e11 : Infinity;
+  const blendCapBtcThDay = ctx.blendedCeilingSatsUnitDay != null
+    ? units.btcThDayFromSatsPerUnitDay(ctx.blendedCeilingSatsUnitDay, ctx.priceUnit) : Infinity;
   const rigBackstopBtcThDay = Number.isFinite(blendCapBtcThDay) ? blendCapBtcThDay * BLEND_BACKSTOP_MULT : Infinity;
 
   const { selection: picked, coveredTh, blendBlocked } = packToTarget(feasible, neededTh, {
@@ -257,7 +260,7 @@ function decide(ctx = {}) {
       type: 'TOPUP_RENT',
       rigId: x.rig.id, rigName: x.rig.name, region: x.rig.region,
       advertisedTh: x.rig.advertisedTh, lengthHours: x.hours,
-      rateCapPhDay: rateCapPhDay(x.rig), paidSats, feeSats,
+      rateCapUnitDay: rateCapUnitDay(x.rig, ctx.priceUnit), priceUnit: ctx.priceUnit, paidSats, feeSats,
       // Telemetry persistRental records (same shape as a quick-session intent).
       rateBtcThDay: x.rig.priceBtcThDay != null ? x.rig.priceBtcThDay : null,
       endpointDiff: ctx.endpointDiff != null ? ctx.endpointDiff : null,
@@ -273,4 +276,4 @@ function decide(ctx = {}) {
   };
 }
 
-module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapPhDay, FEE_RATE };
+module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, FEE_RATE };

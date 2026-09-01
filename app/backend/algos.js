@@ -69,6 +69,12 @@ const ALGOS = {
         max_session_budget_sats: 2000000,
         max_daily_spend_sats: 4000000,
       },
+      /* PH is the wrong primary unit for a market whose entire available supply is
+       * around 136 TH: every reading would be a small fraction with the interesting
+       * digits pushed off the end. */
+      ui: {
+        hashrate_unit: 'th',
+      },
     },
   },
 };

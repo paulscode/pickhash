@@ -9,6 +9,7 @@ const qs = require('../quote-service');
 
 const fx = (f) => JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/mrr', f), 'utf8'));
 const algo = fx('algo-sha256ab.json');
+const blake2bAlgo = fx('algo-blake2b.json');
 const search = fx('rig-search.json');
 const balance = fx('balance.json');
 
@@ -29,17 +30,34 @@ test('toPackerParams rejects missing/non-positive inputs', () => {
   assert.throws(() => qs.toPackerParams({ compute: 'nonsense', spendSats: 1, hashrateTh: 1 }), /bad_compute/);
 });
 
-test('parseAlgo pulls suggested + last-10 out of the real info/algos shape (per PH·day)', () => {
+test('parseAlgo normalizes to per-TH·day using the unit the response declares', () => {
   const a = qs.parseAlgo(algo);
-  assert.equal(a.suggestedPhDay, 0.00052820);
-  assert.equal(a.last10PhDay, 0.00068910);
+  // The fixture quotes "ph*day", so the per-TH figure is a thousandth of the amount.
+  assert.equal(a.suggestedBtcThDay, 0.00052820 / 1000);
+  assert.equal(a.last10BtcThDay, 0.00068910 / 1000);
   // Tolerates a {result:...} envelope too.
-  assert.equal(qs.parseAlgo({ result: algo }).last10PhDay, 0.00068910);
+  assert.equal(qs.parseAlgo({ result: algo }).last10BtcThDay, 0.00068910 / 1000);
+});
+
+test('parseAlgo reads a per-TH-quoted algorithm at face value, not divided by a thousand', () => {
+  // blake2b is quoted "th*day". Taking the amount as per-PH, which is what the fixed
+  // divide by 1000 did, would report a price a thousandfold low — and it is the number
+  // the UI uses to tell the user whether they are getting a good deal.
+  const b = qs.parseAlgo(blake2bAlgo);
+  assert.equal(b.suggestedBtcThDay, 0.00128100);
+  assert.equal(b.last10BtcThDay, 0.00104368);
+});
+
+test('parseAlgo refuses to guess when the unit is missing or unknown', () => {
+  const noUnit = { suggested_price: { amount: '0.001' }, stats: { prices: { last_10: { amount: '0.002', unit: 'furlong*day' } } } };
+  const a = qs.parseAlgo(noUnit);
+  assert.equal(a.suggestedBtcThDay, null);
+  assert.equal(a.last10BtcThDay, null);
 });
 
 test('marketContext labels a below-average quote as a good deal', () => {
-  const a = qs.parseAlgo(algo);   // last_10 = 0.0006891 BTC/PH/day
-  const ctx = qs.marketContext(0.00050000, a);   // ~27% below
+  const a = qs.parseAlgo(algo);   // last_10 = 0.0006891 BTC/PH/day = 6.891e-7 per TH
+  const ctx = qs.marketContext(0.00050000 / 1000, a, 'ph');   // ~27% below
   assert.ok(ctx.delta_pct < 0);
   assert.match(ctx.label, /below the last-10 rental average/);
   assert.equal(ctx.tight, false);
@@ -47,14 +65,32 @@ test('marketContext labels a below-average quote as a good deal', () => {
 
 test('marketContext flags a tight market when the quote is above average', () => {
   const a = qs.parseAlgo(algo);
-  const ctx = qs.marketContext(0.00080000, a);   // ~16% above
+  const ctx = qs.marketContext(0.00080000 / 1000, a, 'ph');   // ~16% above
   assert.ok(ctx.delta_pct > 5);
   assert.equal(ctx.tight, true);
   assert.match(ctx.label, /market is tight/);
 });
 
+test('marketContext compares like with like across algorithms', () => {
+  // The same per-TH price is a bargain against blake2b's market and absurd against
+  // sha256ab's. The comparison is per-TH on both sides, so the unit each is quoted in
+  // changes only the two numbers handed to the UI, never the verdict.
+  const b = qs.parseAlgo(blake2bAlgo);
+  const cheap = qs.marketContext(0.00090000, b, 'th');
+  assert.ok(cheap.delta_pct < 0, 'below blake2b last-10 of 0.00104368');
+  assert.equal(cheap.price_unit, 'th');
+  // Reported back in the algorithm's own unit: BTC/TH·day -> sats/TH·day is x1e8.
+  assert.equal(cheap.last10_sats_unit_day, Math.round(0.00104368 * 1e8));
+
+  const shaCtx = qs.marketContext(0.00090000, qs.parseAlgo(algo), 'ph');
+  assert.ok(shaCtx.delta_pct > 0, 'wildly above sha256ab last-10 of 6.891e-7');
+  // Round-trips back to the per-PH sats the API quoted: parse divides by 1000, the
+  // report multiplies by 1000, so what the UI shows is what the marketplace said.
+  assert.equal(shaCtx.last10_sats_unit_day, Math.round(0.00068910 * 1e8));
+});
+
 test('marketContext returns null without algo stats', () => {
-  assert.equal(qs.marketContext(0.0005, null), null);
+  assert.equal(qs.marketContext(0.0005, null, 'ph'), null);
 });
 
 // ---- buildQuote end-to-end with a mocked client ----

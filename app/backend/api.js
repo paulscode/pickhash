@@ -24,6 +24,8 @@ const quoteService = require('./quote-service');
 const session = require('./session');
 // Aliased at module scope: the /api/diag handler shadows `session` with a local DB row.
 const { OCEAN_FALLBACK, oceanFallbackWorker } = session;
+const algos = require('./algos');
+const units = require('./units');
 const charts = require('./charts');
 const market = require('./market');
 const messaging = require('./messaging');
@@ -45,7 +47,7 @@ function hashValueFor(conn) {
   const latest = conn.prepare('SELECT lowest, last10 FROM market_snapshots WHERE algo = ? ORDER BY ts DESC LIMIT 1').get(market.activeAlgo(conn)) || null;
   const sess = conn.prepare("SELECT id FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get();
   const rentals = sess ? conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ? AND ended = 0').all(sess.id) : [];
-  return market.hashValue(latest, rentals);
+  return market.hashValue(latest, rentals, algos.priceUnit(market.activeAlgo(conn)));
 }
 
 /**
@@ -53,11 +55,12 @@ function hashValueFor(conn) {
  * session's LIVE rentals; when none are live (session ended, or between top-ups) it falls back to the
  * most recent session that actually rented — so the line persists after a session ends, whether the
  * last run was Autopilot or a Quick Rent. A spend-free DRY-RUN leaves no priced rentals, so it's
- * naturally skipped. Returns { rate: sats/PH·day|null, live } — live=false means the rate is from a
+ * naturally skipped. Returns { rate: sats per <unit>·day|null, live } — live=false means the rate is from a
  * finished session, so the UI can label it "you (last)".
  */
-function payRateSatsPhDay(conn) {
-  const rateFrom = (rows) => market.hashValue(null, rows).your_pay_sats_ph_day;
+function payRateSatsUnitDay(conn) {
+  const priceUnit = algos.priceUnit(market.activeAlgo(conn));
+  const rateFrom = (rows) => market.hashValue(null, rows, priceUnit).your_pay_sats_unit_day;
   const active = conn.prepare("SELECT id FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get();
   if (active) {
     const live = rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ? AND ended = 0').all(active.id));
@@ -331,7 +334,15 @@ async function handleApi(req, res, url, body, ctx = {}) {
       'SELECT balance_confirmed_sats AS c, balance_unconfirmed_sats AS u FROM tick_metrics WHERE algo = ? AND balance_confirmed_sats IS NOT NULL ORDER BY ts DESC LIMIT 1',
     ).get(market.activeAlgo(conn));
     const balance = bal ? { confirmed_sats: bal.c, unconfirmed_sats: bal.u } : null;
-    return sendJson(res, 200, { ok: true, mode, session: sessionOut, rentals, balance, hash_value: hashValueFor(conn), alerts: alerts.listActive(conn) });
+    return sendJson(res, 200, {
+      ok: true, mode, session: sessionOut, rentals, balance,
+      // The UI labels money in the active algorithm's unit, so it needs both on the
+      // one call it already polls. Sending the label with the numbers means they
+      // cannot drift apart in the browser.
+      algo: market.activeAlgo(conn),
+      price_unit: algos.priceUnit(market.activeAlgo(conn)),
+      hash_value: hashValueFor(conn), alerts: alerts.listActive(conn),
+    });
   }
 
   // Chart models for the dashboard (built server-side, pure). ?range=6h|24h|7d|all.
@@ -353,14 +364,14 @@ async function handleApi(req, res, url, body, ctx = {}) {
         WHERE r.session_id = ? AND rs.ts >= ? ORDER BY rs.ts`,
     ).all(sid, sinceTs);
     const targetTh = latest ? latest.target_th : null;
-    const pr = payRateSatsPhDay(conn);
+    const pr = payRateSatsUnitDay(conn);
     return sendJson(res, 200, {
       range,
       delivered: charts.buildDelivered(ticks, { targetTh }),
       delivered_stacked: charts.buildDeliveredStacked(samples, ticks, { targetTh }),
       spend: charts.buildSpend(ticks, { budgetSats: latest ? latest.budget_sats : null }),
       // Overlay the pay-rate on the market chart; the dashboard's hash-value readout comes from /api/status.
-      market: charts.buildMarket(snaps, { payRate: pr.rate, payLive: pr.live }),
+      market: charts.buildMarket(snaps, { payRate: pr.rate, payLive: pr.live, priceUnit: algos.priceUnit(market.activeAlgo(conn)) }),
     });
   }
 
@@ -373,7 +384,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     let depth = [];
     if (latest && latest.depth_json) { try { depth = JSON.parse(latest.depth_json); } catch { depth = []; } }
     const hv = hashValueFor(conn);
-    const pr = payRateSatsPhDay(conn);
+    const pr = payRateSatsUnitDay(conn);
     // Cumulative hashrate directed at the user's own node (PH·days) — the durable per-session record.
     const impactEvents = conn.prepare(
       "SELECT started_at, ended_at, summary_json FROM sessions WHERE algo = ? AND state = 'ended' AND summary_json IS NOT NULL AND ended_at IS NOT NULL ORDER BY started_at",
@@ -385,11 +396,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
       summary: latest ? {
         ts: latest.ts, lowest: latest.lowest, last10: latest.last10, last: latest.last,
         available_rigs: latest.available_rigs, available_th: latest.available_th,
-        lowest_sats_ph_day: latest.lowest != null ? Math.round(latest.lowest * 1e11) : null,
+        lowest_sats_unit_day: latest.lowest != null
+          ? Math.round(units.satsPerUnitDay(latest.lowest, algos.priceUnit(market.activeAlgo(conn)))) : null,
       } : null,
-      depth_chart: charts.buildDepth(depth),
+      depth_chart: charts.buildDepth(depth, { priceUnit: algos.priceUnit(market.activeAlgo(conn)) }),
       impact: charts.buildImpact(impactEvents),
-      price_history: charts.buildMarket(history, { payRate: pr.rate, payLive: pr.live }),
+      price_history: charts.buildMarket(history, { payRate: pr.rate, payLive: pr.live, priceUnit: algos.priceUnit(market.activeAlgo(conn)) }),
       regions: market.depthByRegion(depth),
       cheap_now: market.cheapNow(latest ? latest.lowest : null, history),
       hash_value: hv,
@@ -551,11 +563,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
   // no credential ever appears here; the schema drives the UI and enforces types/bounds server-side.
   if (p === '/api/config' && method === 'GET') {
     const values = {};
-    for (const ns of Object.keys(config.SETTINGS)) {
+    const schema = config.settings(conn);
+    for (const ns of Object.keys(schema)) {
       values[ns] = {};
-      for (const key of Object.keys(config.SETTINGS[ns])) values[ns][key] = config.getKey(conn, ns, key);
+      for (const key of Object.keys(schema[ns])) values[ns][key] = config.getKey(conn, ns, key);
     }
-    return sendJson(res, 200, { schema: config.SETTINGS, values });
+    return sendJson(res, 200, { schema, values, algo: market.activeAlgo(conn) });
   }
   if (p === '/api/config' && method === 'POST') {
     const ns = String(body.ns || '');
@@ -564,7 +577,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (!v.ok) return sendJson(res, 400, { error: 'invalid_setting', field: v.field, reason: v.reason });
     config.set(conn, ns, v.patch);
     const values = {};
-    for (const key of Object.keys(config.SETTINGS[ns])) values[key] = config.getKey(conn, ns, key);
+    for (const key of Object.keys(config.settings(conn)[ns])) values[key] = config.getKey(conn, ns, key);
     return sendJson(res, 200, { ns, values });
   }
 
@@ -660,8 +673,8 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // suggestion), returns null so the preview re-suggests with fresh headroom instead of masking it
       // with a stale (possibly too-tight) number. A deliberate ceiling stays sticky.
       const deliberate = config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
-      const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_ph_day') : null;
-      return sendJson(res, 200, { estimate, current_blended_ceiling_sats_ph_day: currentCeiling });
+      const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null;
+      return sendJson(res, 200, { estimate, current_blended_ceiling_sats_unit_day: currentCeiling });
     } catch {
       return sendJson(res, 502, { error: 'estimate_failed' });
     }
@@ -675,7 +688,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     try {
       const r = await session.startAutopilotSession(conn, client, {
         targetTh: body.target_th, timeCapHours: body.time_cap_hours, budgetSats: body.budget_sats,
-        blendedCeilingSatsPhDay: body.blended_ceiling_sats_ph_day, blendedCeilingAuto: body.blended_ceiling_auto,
+        blendedCeilingSatsUnitDay: body.blended_ceiling_sats_unit_day, blendedCeilingAuto: body.blended_ceiling_auto,
       });
       return sendJson(res, 200, r);
     } catch (e) {
@@ -691,4 +704,4 @@ async function handleApi(req, res, url, body, ctx = {}) {
   return sendJson(res, 404, { error: 'not_found' });
 }
 
-module.exports = { handleApi, isConfigured, isSetupComplete, sendJson, payRateSatsPhDay };
+module.exports = { handleApi, isConfigured, isSetupComplete, sendJson, payRateSatsUnitDay };

@@ -17,6 +17,7 @@ const quote = require('./quote');
 const deposit = require('./deposit');
 const scoring = require('./engine/scoring');
 const algos = require('./algos');
+const units = require('./units');
 
 const MARKET_TTL_MS = 30_000;   // rigs get rented; a quote shouldn't be built on stale depth
 const QUOTE_TTL_MS = 60_000;    // a quote id is honored this long, then re-priced at confirm
@@ -90,27 +91,56 @@ function clampBudget(conn, params) {
   return { params, guardWarnings: [] };
 }
 
-/** Pull the sha256ab suggested/last prices out of a GET /info/algos/<algo> response. */
+/**
+ * Pull the suggested/last prices out of a GET /info/algos/<algo> response,
+ * normalized to BTC per TH per day like every other price in the app.
+ *
+ * The unit comes from the response ("ph*day" for sha256ab, "th*day" for blake2b)
+ * rather than being assumed. Taking the amounts at face value and treating them as
+ * per-PH, which is what this did, puts every blake2b market comparison out by a
+ * factor of a thousand — and it is the comparison the UI uses to tell the user
+ * whether they are getting a good price.
+ */
 function parseAlgo(a) {
   if (!a) return null;
   const r = a.result || a;   // tolerate a {result:...} envelope
   const sp = r.suggested_price || {};
   const prices = (r.stats && r.stats.prices) || r.prices || {};
-  const amt = (o) => (o && o.amount != null && o.amount !== '' ? Number(o.amount) : null);
+  const perTh = (o) => {
+    if (!o || o.amount == null || o.amount === '') return null;
+    const n = Number(o.amount);
+    if (!Number.isFinite(n)) return null;
+    // "ph*day" -> "ph". A missing or unrecognised unit yields null rather than a
+    // guess: the market badge is a nice-to-have, and a wrong guess here is a silent
+    // thousandfold error on the number the user is judging a price by.
+    try { return n / units.perThFactor(String(o.unit || '').split('*')[0]); } catch { return null; }
+  };
   return {
-    suggestedPhDay: sp.amount != null && sp.amount !== '' ? Number(sp.amount) : null,
-    last10PhDay: amt(prices.last_10),
-    lastPhDay: amt(prices.last),
+    suggestedBtcThDay: perTh(sp),
+    last10BtcThDay: perTh(prices.last_10),
+    lastBtcThDay: perTh(prices.last),
   };
 }
 
-/** Human market-context badge: blended quote price vs the last-10-rental average. Pure. */
-function marketContext(blendedBtcPhDay, algo) {
+/**
+ * Human market-context badge: blended quote price vs the last-10-rental average. Pure.
+ *
+ * Everything here is BTC per TH per day, so the comparison holds whichever unit the
+ * algorithm is quoted in. Only the two numbers handed to the UI are converted back
+ * to the quoted unit, and they carry that unit with them.
+ */
+function marketContext(blendedBtcThDay, algo, priceUnit) {
   if (!algo) return null;
-  const ref = algo.last10PhDay != null ? algo.last10PhDay : algo.suggestedPhDay;
-  const base = { suggested_ph_day: algo.suggestedPhDay, last10_ph_day: algo.last10PhDay, delta_pct: null, label: null, tight: false };
-  if (ref == null || !(ref > 0) || blendedBtcPhDay == null) return base;
-  const deltaPct = ((blendedBtcPhDay - ref) / ref) * 100;
+  const ref = algo.last10BtcThDay != null ? algo.last10BtcThDay : algo.suggestedBtcThDay;
+  const sats = (v) => (v != null ? Math.round(units.satsPerUnitDay(v, priceUnit)) : null);
+  const base = {
+    price_unit: priceUnit,
+    suggested_sats_unit_day: sats(algo.suggestedBtcThDay),
+    last10_sats_unit_day: sats(algo.last10BtcThDay),
+    delta_pct: null, label: null, tight: false,
+  };
+  if (ref == null || !(ref > 0) || blendedBtcThDay == null) return base;
+  const deltaPct = ((blendedBtcThDay - ref) / ref) * 100;
   let label;
   if (deltaPct <= -1) label = `${Math.abs(Math.round(deltaPct))}% below the last-10 rental average`;
   else if (deltaPct >= 1) label = `${Math.round(deltaPct)}% above the last-10 average — market is tight right now`;
@@ -137,7 +167,8 @@ function publicQuote(q) {
     duration_hours: r.durationHours,
     target_th: r.targetTh,
     rig_count: r.rigs.length,
-    blended_btc_ph_day: q.blendedBtcPhDay,
+    blended_btc_unit_day: q.blendedBtcUnitDay,
+    price_unit: q.priceUnit,
     shortfall_th: r.shortfallTh,
     balance_sats: q.balanceSats,
     insufficient_funds: insufficient,
@@ -187,10 +218,12 @@ async function buildQuote(conn, client, input, buildOpts = {}) {
   let algo = null;
   try { algo = parseAlgo(await client.get(`/info/algos/${activeSlug}`)); } catch { /* no market badge */ }
 
-  const blendedBtcPhDay = result.blendedBtcThDay * 1000;   // engine works per-TH; the API/UI speak per-PH
+  const priceUnit = algos.priceUnit(activeSlug);
+  const blendedBtcUnitDay = result.blendedBtcThDay * units.perThFactor(priceUnit);
   // Only compute a market badge for a real quote — a 0-rig quote has blended 0, which would
   // otherwise read as "100% below market" (a great deal) instead of "nothing available".
-  const marketCtx = result.rigs.length && blendedBtcPhDay > 0 ? marketContext(blendedBtcPhDay, algo) : null;
+  const marketCtx = result.rigs.length && result.blendedBtcThDay > 0
+    ? marketContext(result.blendedBtcThDay, algo, priceUnit) : null;
   const ep = opts.endpoint;
   const stored = {
     id: crypto.randomBytes(12).toString('hex'),
@@ -201,7 +234,9 @@ async function buildQuote(conn, client, input, buildOpts = {}) {
     result,
     candidates: cands,   // kept for clean-failure re-pack at execute time
     balanceSats,
-    blendedBtcPhDay,
+    blendedBtcUnitDay,
+    priceUnit,
+    algo: activeSlug,
     marketContext: marketCtx,
     endpointDiff: opts.endpointDiff,   // for per-rental diff telemetry
     endpoint: {

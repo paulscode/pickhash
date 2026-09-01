@@ -328,7 +328,7 @@
             <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#ffb347"></span>cheapest <span class="text-gray-300" x-text="mCheapVal"></span></span>
             <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#7aa2f7"></span>last-10 <span class="text-gray-300" x-text="mLast10Val"></span></span>
             <span x-show="mPayShow" x-cloak class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#ff006e"></span><span x-text="mPayLabel"></span> <span class="text-gray-300" x-text="mPayVal"></span></span>
-            <span class="text-gray-600">sats/PH·day</span>
+            <span class="text-gray-600" x-text="rateUnit"></span>
           </div>
           <span x-show="hvAvail" x-cloak :class="hvBadgeClass" class="border rounded px-2 py-0.5 text-[10px] font-mono flex-shrink-0" x-text="hvBadge"></span>
         </div>
@@ -597,7 +597,7 @@
           <div class="flex justify-between"><span class="text-gray-500">Rigs to hold target</span><span class="text-white tabular-nums" x-text="apRigsText"></span></div>
           <div class="flex justify-between"><span class="text-gray-500">Est. rate</span><span class="text-white tabular-nums" x-text="apRateText"></span></div>
           <div class="flex justify-between items-center gap-3">
-            <span class="text-gray-500">Rate ceiling <span class="text-gray-600 text-[10px]">blended · sats/PH·day</span></span>
+            <span class="text-gray-500">Rate ceiling <span class="text-gray-600 text-[10px]">blended · <span x-text="rateUnit"></span></span></span>
             <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" @input="apCeilTouched" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
           </div>
           <p class="text-gray-600 text-[10px] leading-relaxed">Caps your overall blended pay-rate — the “you” line on the market chart, not each rig. Autopilot fills the target with the cheapest rigs while holding the average under this; it leaves a shortfall rather than overpaying. Pre-filled with the estimate — raise to allow a higher average, lower to cap harder. Blank = no cap.</p>
@@ -775,9 +775,9 @@
         <span class="border rounded px-2 py-1 text-xs font-mono" :class="hvBadgeClass" x-text="hvBadge"></span>
       </div>
       <div class="grid grid-cols-3 gap-3 font-mono">
-        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">You pay</div><div class="text-white text-lg tabular-nums" x-text="hvPay"></div><div class="text-gray-600 text-[10px]">sats/PH·day (advertised)</div></div>
-        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Market (last-10 avg)</div><div class="text-white text-lg tabular-nums" x-text="hvMarket"></div><div class="text-gray-600 text-[10px]">sats/PH·day</div></div>
-        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Effective</div><div class="text-white text-lg tabular-nums" x-text="hvEff"></div><div class="text-gray-600 text-[10px]">sats/PH·day (delivered)</div></div>
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">You pay</div><div class="text-white text-lg tabular-nums" x-text="hvPay"></div><div class="text-gray-600 text-[10px]"><span x-text="rateUnit"></span> (advertised)</div></div>
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Market (last-10 avg)</div><div class="text-white text-lg tabular-nums" x-text="hvMarket"></div><div class="text-gray-600 text-[10px]" x-text="rateUnit"></div></div>
+        <div><div class="text-gray-500 text-[10px] uppercase tracking-wide">Effective</div><div class="text-white text-lg tabular-nums" x-text="hvEff"></div><div class="text-gray-600 text-[10px]"><span x-text="rateUnit"></span> (delivered)</div></div>
       </div>
     </div>
     <div x-show="hvShowHint" x-cloak class="bg-navy-900 border border-navy-600 rounded-lg p-4 font-mono text-xs text-gray-500">
@@ -839,7 +839,7 @@
           <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#ffb347"></span>cheapest <span class="text-gray-300" x-text="phCheapVal"></span></span>
           <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#7aa2f7"></span>last-10 <span class="text-gray-300" x-text="phLast10Val"></span></span>
           <span x-show="phPayShow" x-cloak class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-0.5" style="background:#ff006e"></span><span x-text="phPayLabel"></span> <span class="text-gray-300" x-text="phPayVal"></span></span>
-          <span class="text-gray-600">sats/PH·day</span>
+          <span class="text-gray-600" x-text="rateUnit"></span>
         </div>
       </div>
 

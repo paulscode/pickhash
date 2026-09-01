@@ -32,7 +32,7 @@ async function execute(conn, client, ctx) {
   // DRY-RUN rehearsal: record each would-do as a decision; mutate nothing.
   for (const a of gateResult.wouldDo || []) {
     insertDecision(conn, sessionId, true, {
-      proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_ph_day: a.rateCapPhDay },
+      proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_unit_day: a.rateCapUnitDay, price_unit: a.priceUnit },
       executed: { would_rent: true, rig: a.rigId, length: a.lengthHours, cost_sats: cost(a) },
       note: `AUTOPILOT DRY-RUN would rent rig #${a.rigId} (${a.rigName}) for ${a.lengthHours}h at ${cost(a)} sats`,
     });
@@ -46,7 +46,7 @@ async function execute(conn, client, ctx) {
   for (const a of gateResult.authorized || []) {
     // Intent-first audit row — the reconciliation anchor if we crash mid-create.
     insertDecision(conn, sessionId, false, {
-      proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_ph_day: a.rateCapPhDay, worker_base: endpoint.worker_base },
+      proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_unit_day: a.rateCapUnitDay, price_unit: a.priceUnit, worker_base: endpoint.worker_base },
       note: 'autopilot intent',
     });
     let res;

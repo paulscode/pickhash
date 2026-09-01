@@ -21,7 +21,7 @@ function sess(over = {}) {
   return { mode: 'autopilot', state: 'active', target_th: 300, budget_sats: 1_000_000, time_cap_hours: 168, spent_sats: 0, started_at: 1000, ...over };
 }
 
-const ctx = (over = {}) => ({ now: 1000, fetchOk: true, hashrateTolerancePct: 5, minRpi: 90, ...over });
+const ctx = (over = {}) => ({ now: 1000, fetchOk: true, hashrateTolerancePct: 5, minRpi: 90, priceUnit: 'ph', ...over });
 
 // ---- packToTarget: shared overshoot-bounded packer (decide + the Autopilot estimate) ----
 
@@ -153,7 +153,7 @@ test('decide honors the blended ceiling: fills with cheap rigs, leaves a shortfa
   const dear = crig('dear', 10, 200000);   // > 2× the 60k cap backstop, and would blow the average
   const r = decide.decide(ctx({
     session: sess({ target_th: 20 }), rentals: [], marketRigs: [cheap, dear],
-    blendedCeilingSatsPhDay: 60000,
+    blendedCeilingSatsUnitDay: 60000,
   }));
   assert.equal(r.actions.length, 1, 'only the cheap rig is rented');
   assert.equal(r.actions[0].rigId, 'cheap');
@@ -165,7 +165,7 @@ test('a budget-limited shortfall is NOT mislabeled as blend_ceiling', () => {
   const r = decide.decide(ctx({
     session: sess({ target_th: 20, budget_sats: 100 }),   // affords ~1 rig, not 2
     rentals: [], marketRigs: [crig('a', 10, 50000), crig('b', 10, 50000)],
-    blendedCeilingSatsPhDay: 100000,   // a high cap that never blocks these 50k rigs
+    blendedCeilingSatsUnitDay: 100000,   // a high cap that never blocks these 50k rigs
   }));
   assert.ok(r.shortfallTh > 0 && r.notes.includes('shortfall'), 'budget forces a shortfall');
   assert.ok(!r.notes.includes('blend_ceiling'), 'the cap blocked nothing, so no blend_ceiling note');
@@ -302,9 +302,10 @@ test('rentCostSats reproduces MRR per-rental fee rounding', () => {
   assert.equal(c.total, 61_800);
 });
 
-test('rateCapPhDay matches session.rateCapPhDay for the same per-TH price', () => {
+test('rateCapUnitDay matches session.rateCapUnitDay for the same per-TH price', () => {
   const r = rig('x', { th: 100, hourBtc: 0.0002 });   // priceBtcThDay = 0.0002*24/100 = 4.8e-5
-  assert.equal(decide.rateCapPhDay(r), session.rateCapPhDay(r.priceBtcThDay));
+  assert.equal(decide.rateCapUnitDay(r, 'ph'), session.rateCapUnitDay(r.priceBtcThDay, 'ph'));
+  assert.equal(decide.rateCapUnitDay(r, 'th'), session.rateCapUnitDay(r.priceBtcThDay, 'th'));
 });
 
 test('each proposed action carries a protective rate cap and its own length', () => {
@@ -312,7 +313,7 @@ test('each proposed action carries a protective rate cap and its own length', ()
   const r = decide.decide(ctx({ session: s, rentals: [], marketRigs: [rig('x', { minHours: 6 })] }));
   assert.equal(r.actions.length, 1);
   assert.equal(r.actions[0].lengthHours, 6);
-  assert.ok(r.actions[0].rateCapPhDay > 0);
+  assert.ok(r.actions[0].rateCapUnitDay > 0);
 });
 
 // ---- Tolerance-band boundary (the >= edge) ----

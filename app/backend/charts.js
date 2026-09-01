@@ -11,6 +11,8 @@
  * adapts to session length (hours for short rentals, days/weeks for the common case).
  */
 
+const units = require('./units');
+
 const VIEW = { w: 800, h: 240, padL: 8, padR: 8, padT: 12, padB: 20 };
 
 function scale(domainMin, domainMax, rangeMin, rangeMax) {
@@ -234,13 +236,21 @@ function buildSpend(ticks, opts = {}) {
   };
 }
 
-// Snapshots store BTC per-TH·day; the UI shows sats per-PH·day (readable at this scale,
-// consistent with the rest of the dashboard): ×1000 TH/PH ×1e8 sats/BTC = ×1e11.
-const SATS_PH_DAY = 1e11;
+/*
+ * Snapshots store BTC per TH·day; the UI shows sats per <priceUnit>·day, the unit
+ * being whichever one the algorithm is quoted in. This was a fixed 1e11 (×1000 TH/PH
+ * ×1e8 sats/BTC), which is right for an algorithm quoted per PH and a thousandfold
+ * out for one quoted per TH — on a chart whose whole job is judging a price.
+ */
+function satsPerUnitDayFactor(priceUnit) {
+  return units.perThFactor(priceUnit) * units.SATS_PER_BTC;
+}
 
-/** Market price trend: cheapest + last-10 average (sats per PH·day) over time. */
+/** Market price trend: cheapest + last-10 average (sats per <unit>·day) over time. */
 function buildMarket(snapshots, opts = {}) {
   const view = { ...VIEW, ...opts.view };
+  const priceUnit = opts.priceUnit || 'ph';
+  const SATS_PH_DAY = satsPerUnitDayFactor(priceUnit);
   const rows = (snapshots || []).filter((r) => r.ts != null).sort((a, b) => a.ts - b.ts);
   // Overlay YOUR pay-rate (sats/PH·day) as a flat reference line, so over/under-market reads visually.
   const payRate = opts.payRate != null && opts.payRate > 0 ? opts.payRate : null;
@@ -276,8 +286,11 @@ function buildMarket(snapshots, opts = {}) {
  */
 function buildDepth(depth, opts = {}) {
   const view = { ...VIEW, ...opts.view };
+  const priceUnit = opts.priceUnit || 'ph';
+  const SATS_PH_DAY = satsPerUnitDayFactor(priceUnit);
+  const priceLabel = `sats/${priceUnit.toUpperCase()}·day`;
   const rows = (depth || []).filter((d) => d && Number.isFinite(d.priceBtcThDay) && d.th > 0).sort((a, b) => a.priceBtcThDay - b.priceBtcThDay);
-  if (!rows.length) return { view, kind: 'depth', empty: true, line: '', points: [], gridPath: '', x: [], y: { max: 1, unit: 'TH/s', ticks: [] }, total_th: 0, price_unit: 'sats/PH·day', hash_unit: 'TH/s' };
+  if (!rows.length) return { view, kind: 'depth', empty: true, line: '', points: [], gridPath: '', x: [], y: { max: 1, unit: 'TH/s', ticks: [] }, total_th: 0, price_unit: priceLabel, hash_unit: 'TH/s' };
   let cum = 0;
   const cumPts = rows.map((d) => { cum += d.th; return { price: d.priceBtcThDay * SATS_PH_DAY, cumTh: cum }; });
   const totalTh = cum;
@@ -304,7 +317,7 @@ function buildDepth(depth, opts = {}) {
   for (let i = 0; i <= 4; i++) { const v = xMin + ((xMax - xMin) * i) / 4; xTk.push({ v, x: sx(v), label: Math.round(v).toLocaleString('en-US') }); }
   return {
     view, kind: 'depth', empty: false,
-    total_th: totalTh, price_unit: 'sats/PH·day', hash_unit: u.unit,
+    total_th: totalTh, price_unit: priceLabel, hash_unit: u.unit,
     x: xTk,
     y: { max: yMax, unit: u.unit, ticks: yTk.map((t) => ({ ...t, y: sy(t.v) })) },
     gridPath: gridPath(view, yTk.map((t) => ({ y: sy(t.v) }))),
@@ -319,13 +332,20 @@ function buildDepth(depth, opts = {}) {
  */
 function buildImpact(events, opts = {}) {
   const view = { ...VIEW, ...opts.view };
-  const PH_DAY = 1000 * 24;   // TH·hours in one PH·day (1000 TH = 1 PH, ×24h)
+  // The unit adapts to the total rather than being fixed at PH, the same way hashUnit
+  // adapts an axis. A blake2b market has about 136 TH available in total, so a real
+  // session's contribution rendered in PH·days reads as 0.01 and the chart says
+  // nothing. Chosen from the total so the label and the axis cannot disagree.
+  const totalThHours = (events || []).reduce((s, e) => s + ((e && e.thHours) || 0), 0);
+  const big = totalThHours / 24 >= 1000;
+  const label = big ? 'PH·days' : 'TH·days';
+  const PH_DAY = (big ? 1000 : 1) * 24;   // TH·hours in one <unit>·day
   const evs = (events || [])
     .filter((e) => e && e.thHours > 0 && e.start != null && e.end != null && e.end >= e.start)
     .sort((a, b) => a.start - b.start);
   if (!evs.length) {
     return { view, kind: 'impact', empty: true, line: '', area: '', points: [], gridPath: '',
-      x: [], y: { max: 1, unit: 'PH·days', ticks: [] }, total_ph_days: 0, total_label: '0 PH·days' };
+      x: [], y: { max: 1, unit: label, ticks: [] }, total_unit_days: 0, unit: label, total_label: `0 ${label}` };
   }
   let cum = 0;
   const raw = [];
@@ -344,9 +364,10 @@ function buildImpact(events, opts = {}) {
   const ydp = yMax < 1 ? 3 : yMax < 10 ? 2 : 1;
   return {
     view, kind: 'impact', empty: false,
-    total_ph_days: totalPhDays,
-    total_label: `${totalPhDays.toFixed(dp)} PH·days`,
-    y: { max: yMax, unit: 'PH·days', ticks: yTicks(yMax, 1, ydp).map((t) => ({ ...t, y: sy(t.v) })) },
+    total_unit_days: totalPhDays,
+    unit: label,
+    total_label: `${totalPhDays.toFixed(dp)} ${label}`,
+    y: { max: yMax, unit: label, ticks: yTicks(yMax, 1, ydp).map((t) => ({ ...t, y: sy(t.v) })) },
     x: timeAxis(minTs, maxTs).ticks.map((t) => ({ ...t, x: sx(t.ts) })),
     gridPath: gridPath(view, yTicks(yMax, 1, ydp).map((t) => ({ y: sy(t.v) }))),
     line, area, points,

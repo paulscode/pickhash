@@ -30,6 +30,8 @@ const accounting = require('./engine/accounting');
 const ledgerFetch = require('./engine/ledger');
 const decide = require('./engine/decide');
 const { MrrAmbiguousError } = require('./mrr-client');
+const algos = require('./algos');
+const units = require('./units');
 
 const REPRICE_TOLERANCE = 0.02;   // >2% move at confirm -> re-confirm instead of executing
 const RATE_CAP_HEADROOM = 1.01;   // protective rate.price cap: quoted price +1%
@@ -51,14 +53,25 @@ function nowSec() { return Math.floor(Date.now() / 1000); }
 // The margin is baked into the number the user SEES (and can edit down), not added silently at enforce.
 const CEILING_HEADROOM = 1.10;
 
-/** Per-rig protective price cap (BTC per PH per day, +1% headroom), rounded like the API. */
-function rateCapPhDay(rateBtcThDay) {
-  return Number((rateBtcThDay * 1000 * RATE_CAP_HEADROOM).toFixed(8));
+/**
+ * Per-rig protective price cap, in BTC per <unit> per day with +1% headroom, rounded
+ * like the API.
+ *
+ * The unit is the one the algorithm is quoted in, and it goes on the wire beside the
+ * number in rentOne. Hardcoding PH here, which is what this did, sends a blake2b
+ * rental a cap a thousand times higher than intended: the protective cap stops
+ * protecting anything, on the algorithm where a TH costs 2,425x more.
+ */
+function rateCapUnitDay(rateBtcThDay, priceUnit) {
+  return Number((rateBtcThDay * units.perThFactor(priceUnit) * RATE_CAP_HEADROOM).toFixed(8));
 }
 
 /** Pure: the ordered rental intents for a stored quote. */
 function planIntents(stored) {
   const D = stored.result.durationHours;
+  // Carried on the quote so the cap and the unit that describes it cannot disagree,
+  // and so a quote priced under one algorithm can never be executed under another.
+  const priceUnit = stored.priceUnit;
   const endpointDiff = stored.endpointDiff != null ? stored.endpointDiff : null;
   return stored.result.rigs.map((r) => ({
     rigId: Number(r.id),
@@ -69,7 +82,8 @@ function planIntents(stored) {
     paidSats: r.paidSats,
     feeSats: r.feeSats,
     rateBtcThDay: r.rateBtcThDay,
-    rateCapPhDay: rateCapPhDay(r.rateBtcThDay),
+    rateCapUnitDay: rateCapUnitDay(r.rateBtcThDay, priceUnit),
+    priceUnit,
     // Diff telemetry captured at rent time (correlated later with delivered %).
     endpointDiff,
     optimalDiffMin: r.optimalDiffMin != null ? r.optimalDiffMin : null,
@@ -109,7 +123,7 @@ async function rentOne(client, intent, endpoint, opts = {}) {
     length: intent.lengthHours,
     profile: endpoint.mrr_profile_id,
     currency: 'BTC',
-    rate: { type: 'ph', price: intent.rateCapPhDay },
+    rate: { type: intent.priceUnit, price: intent.rateCapUnitDay },
   });
   const mrrId = Number(created && created.id);
   // A create that resolves without a usable id is treated as AMBIGUOUS, not success — we
@@ -166,7 +180,16 @@ function persistRental(conn, sessionId, intent, res) {
 function repackShortfall(stored, attemptedIds, shortfallTh) {
   const cands = (stored.candidates || []).filter((r) => !attemptedIds.has(Number(r.id)));
   const res = quote.packBudget(cands, shortfallTh, stored.result.durationHours);
-  return planIntents({ result: res, endpoint: stored.endpoint });
+  // Carry the price unit: without it the re-packed intents would price their rate cap
+  // in no unit at all. endpointDiff comes along for the ride because planIntents reads
+  // it and this call was dropping it, so every rental created by the clean-failure path
+  // recorded null diff telemetry — the rentals most worth having telemetry for.
+  return planIntents({
+    result: res,
+    endpoint: stored.endpoint,
+    priceUnit: stored.priceUnit,
+    endpointDiff: stored.endpointDiff,
+  });
 }
 
 /**
@@ -198,13 +221,13 @@ async function startSession(conn, client, quoteId, opts = {}) {
     // would otherwise compare the quote to itself and never fire the guard.
     const fresh = await quoteService.buildQuote(conn, client, confirmed.input, { forceMarket: true });
     if (!fresh.rig_count) throw new SessionError('no_rigs_available');
-    const prevPrice = confirmed.blendedBtcPhDay;
-    const delta = prevPrice > 0 ? Math.abs(fresh.blended_btc_ph_day - prevPrice) / prevPrice : 1;
+    const prevPrice = confirmed.blendedBtcUnitDay;
+    const delta = prevPrice > 0 ? Math.abs(fresh.blended_btc_unit_day - prevPrice) / prevPrice : 1;
     if (delta > REPRICE_TOLERANCE) {
       return {
         needs_reconfirm: true,
         previous_total_sats: confirmed.result.totalSats,
-        previous_blended_btc_ph_day: prevPrice,
+        previous_blended_btc_unit_day: prevPrice,
         quote: fresh,
       };
     }
@@ -295,7 +318,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
 
       // Intent row FIRST — the reconciliation anchor if we crash mid-create.
       insertDecision(conn, sessionId, dryRun, {
-        proposed: { rig: intent.rigId, name: intent.rigName, length: intent.lengthHours, rate_cap_ph_day: intent.rateCapPhDay, worker_base: endpoint.worker_base },
+        proposed: { rig: intent.rigId, name: intent.rigName, length: intent.lengthHours, rate_cap_unit_day: intent.rateCapUnitDay, price_unit: intent.priceUnit, worker_base: endpoint.worker_base },
         note: 'intent',
       });
 
@@ -405,22 +428,25 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;
-  // Blended pay-rate (sats/PH·day), advertised-TH-weighted like the market chart's "you" line, so the
-  // preview is directly comparable to the cheapest / last-10 market rates. Raw rig rate (no fee), to
-  // match those market references. 1e11 = BTC/TH·day -> sats/PH·day.
+  // Blended pay-rate in sats per <unit> per day, advertised-TH-weighted like the market chart's
+  // "you" line, so the preview is directly comparable to the cheapest / last-10 market rates. Raw
+  // rig rate (no fee), to match those market references.
   const advTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
   const costRateBtcDay = selection.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0);
-  const blendedSatsPhDay = advTh > 0 ? Math.round((costRateBtcDay / advTh) * 1e11) : null;
+  const priceUnit = algos.priceUnit(market.activeAlgo(conn));
+  const blendedSatsUnitDay = advTh > 0
+    ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
     eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     rigCount: selection.length,
     coveredTh,
     shortfallTh: Math.max(0, targetTh - coveredTh),
     burnSatsHr,
-    blendedSatsPhDay,
+    priceUnit,
+    blendedSatsUnitDay,
     // Suggested cap = estimated blend + headroom, so the pre-filled ceiling gives the live fill room
     // instead of strangling it at the estimate. Shown to the user (editable), not enforced silently.
-    suggestedCeilingSatsPhDay: blendedSatsPhDay != null ? Math.round(blendedSatsPhDay * CEILING_HEADROOM) : null,
+    suggestedCeilingSatsUnitDay: blendedSatsUnitDay != null ? Math.round(blendedSatsUnitDay * CEILING_HEADROOM) : null,
     runwayHours: Number.isFinite(runwayHours) ? Math.round(runwayHours * 10) / 10 : null,
   };
 }
@@ -464,15 +490,16 @@ async function startAutopilotSession(conn, client, params = {}) {
 
     // Persist the blended ceiling from the preview only now that the session is committed — a start
     // that bailed earlier (no endpoint / no rigs) must not have changed the standing guardrail. The
-    // value is the max blended pay-rate ("you" line) in sats/PH·day; blank/0 clears it, an absent key
-    // leaves the setting untouched.
-    if (params.blendedCeilingSatsPhDay !== undefined) {
-      const phDay = Number(params.blendedCeilingSatsPhDay);
-      const ceil = Number.isFinite(phDay) && phDay > 0 ? Math.round(phDay) : null;
+    // value is the max blended pay-rate ("you" line) in sats per <unit> per day, the unit being the
+    // active algorithm's; blank/0 clears it, an absent key leaves the setting untouched. It is stored
+    // under the active algorithm, so it cannot govern the other one.
+    if (params.blendedCeilingSatsUnitDay !== undefined) {
+      const unitDay = Number(params.blendedCeilingSatsUnitDay);
+      const ceil = Number.isFinite(unitDay) && unitDay > 0 ? Math.round(unitDay) : null;
       // blended_ceiling_auto records whether this ceiling was an ACCEPTED auto-suggestion (vs a value
       // the user deliberately typed). It's not a user-facing knob — it lets the next preview ignore a
       // stale auto value and re-suggest with fresh headroom, while a deliberate ceiling stays sticky.
-      config.set(conn, 'guardrails', { blended_ceiling_sats_ph_day: ceil, blended_ceiling_auto: !!params.blendedCeilingAuto });
+      config.set(conn, 'guardrails', { blended_ceiling_sats_unit_day: ceil, blended_ceiling_auto: !!params.blendedCeilingAuto });
     }
 
     return {
@@ -517,4 +544,4 @@ async function stopSession(conn, client = null) {
   return { stopped: true, state: 'ended' };
 }
 
-module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapPhDay, SessionError, OCEAN_FALLBACK, oceanFallbackWorker };
+module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapUnitDay, SessionError, OCEAN_FALLBACK, oceanFallbackWorker };

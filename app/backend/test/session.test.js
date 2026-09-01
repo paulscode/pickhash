@@ -84,8 +84,12 @@ async function makeQuote(client, over = {}) {
 
 // ---- Pure ----
 
-test('rateCapPhDay converts per-TH price to a +1% per-PH cap, rounded like the API', () => {
-  assert.equal(session.rateCapPhDay(0.00000050), Number((0.0005 * 1.01).toFixed(8)));
+test('rateCapUnitDay converts a per-TH price to a +1% cap in the algorithm\'s own unit', () => {
+  assert.equal(session.rateCapUnitDay(0.00000050, 'ph'), Number((0.0005 * 1.01).toFixed(8)));
+  // The same price quoted per TH is a thousandth of the number. This is what goes on the
+  // wire as rate.price beside rate.type, so getting it wrong sends a blake2b rental a cap
+  // a thousand times higher than intended — on the algorithm where a TH costs 2,425x more.
+  assert.equal(session.rateCapUnitDay(0.00000050, 'th'), Number((0.0000005 * 1.01).toFixed(8)));
 });
 
 test('oceanFallbackWorker uses the BTC address with a .fallback tag', () => {
@@ -98,7 +102,7 @@ test('oceanFallbackWorker uses the BTC address with a .fallback tag', () => {
 test('rentOne attaches the Ocean fallback at pool/1 when enabled (same address, .fallback worker)', async () => {
   const client = mockClient();
   const endpoint = { host: 'ab.example.gg', port: 26596, worker_base: 'bc1qabc.phash', mrr_profile_id: 953073 };
-  const intent = { rigId: 42, lengthHours: 3, rateCapPhDay: 0.001, advertisedTh: 4 };
+  const intent = { rigId: 42, lengthHours: 3, rateCapUnitDay: 0.001, advertisedTh: 4 };
   const res = await session.rentOne(client, intent, endpoint, { fallbackOcean: true });
   assert.equal(res.fallback, 'ocean');
   const fb = client.state.puts.find((c) => /\/pool\/1$/.test(c[0]));
@@ -111,7 +115,7 @@ test('rentOne attaches the Ocean fallback at pool/1 when enabled (same address, 
 test('rentOne skips the fallback pool when disabled', async () => {
   const client = mockClient();
   const endpoint = { host: 'ab.example.gg', port: 26596, worker_base: 'bc1qabc.phash', mrr_profile_id: 953073 };
-  const intent = { rigId: 42, lengthHours: 3, rateCapPhDay: 0.001, advertisedTh: 4 };
+  const intent = { rigId: 42, lengthHours: 3, rateCapUnitDay: 0.001, advertisedTh: 4 };
   const res = await session.rentOne(client, intent, endpoint, { fallbackOcean: false });
   assert.equal(res.fallback, 'off');
   assert.ok(!client.state.puts.some((c) => /\/pool\/1$/.test(c[0])), 'no pool/1 override issued');
@@ -123,7 +127,7 @@ test('planIntents produces one intent per packed rig at the quote duration', asy
   const stored = qs.getStoredQuote(q.id);
   const intents = session.planIntents(stored);
   assert.equal(intents.length, stored.result.rigs.length);
-  assert.ok(intents.every((i) => i.lengthHours === stored.result.durationHours && i.rateCapPhDay > 0));
+  assert.ok(intents.every((i) => i.lengthHours === stored.result.durationHours && i.rateCapUnitDay > 0));
 });
 
 // ---- DRY-RUN ----

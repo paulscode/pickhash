@@ -47,6 +47,27 @@ function perThFactor(unit) {
   return factor / HS_PER_TH;
 }
 
+/*
+ * Prices cross the boundary in the unit the marketplace quotes that algorithm in,
+ * which is per PH for sha256ab and per TH for blake2b. Internally everything is per
+ * TH, so these two are the only places that factor of a thousand should appear.
+ *
+ * It used to be written as a literal 1e11 (1e8 sats per BTC times 1000 TH per PH)
+ * scattered across the pricing paths. That is correct only for an algorithm quoted
+ * per PH, and silently a thousandfold wrong for one quoted per TH — in the direction
+ * that pays a thousand times over the intended cap.
+ */
+
+/** BTC per TH·day -> sats per <unit>·day, for the unit the algorithm is quoted in. */
+function satsPerUnitDay(btcThDay, unit) {
+  return Number(btcThDay) * perThFactor(unit) * SATS_PER_BTC;
+}
+
+/** sats per <unit>·day -> BTC per TH·day. The inverse of satsPerUnitDay. */
+function btcThDayFromSatsPerUnitDay(satsUnitDay, unit) {
+  return Number(satsUnitDay) / (perThFactor(unit) * SATS_PER_BTC);
+}
+
 /** BTC (float) -> satoshis (integer), rounded to the nearest sat. */
 function btcToSats(btc) {
   return Math.round(Number(btc) * SATS_PER_BTC);
@@ -57,4 +78,7 @@ function satsToBtc(sats) {
   return Number(sats) / SATS_PER_BTC;
 }
 
-module.exports = { toTh, fromTh, perThFactor, btcToSats, satsToBtc, HASH_UNIT_TO_HS, HS_PER_TH, SATS_PER_BTC };
+module.exports = {
+  toTh, fromTh, perThFactor, satsPerUnitDay, btcThDayFromSatsPerUnitDay,
+  btcToSats, satsToBtc, HASH_UNIT_TO_HS, HS_PER_TH, SATS_PER_BTC,
+};

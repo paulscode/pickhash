@@ -66,38 +66,38 @@ test('opens an autopilot session (row + feasibility estimate) and creates NO ren
   assert.equal(r.estimate.coveredTh, 300);
   assert.ok(r.estimate.burnSatsHr > 0 && r.estimate.runwayHours > 0);
   // Blended rate (advertised-weighted, sats/PH·day): 0.0005 BTC/PH·day -> 5e-7 BTC/TH·day -> 50,000.
-  assert.equal(r.estimate.blendedSatsPhDay, 50000, 'preview blended rate matches the market-chart basis');
+  assert.equal(r.estimate.blendedSatsUnitDay, 50000, 'preview blended rate matches the market-chart basis');
   // Suggested ceiling carries headroom over the bare blend, so the pre-filled cap doesn't strangle
   // the live fill (Math.round(50000 * 1.10)).
-  assert.equal(r.estimate.suggestedCeilingSatsPhDay, 55000, 'suggested ceiling is the blend + 10% headroom');
-  assert.ok(r.estimate.suggestedCeilingSatsPhDay > r.estimate.blendedSatsPhDay, 'suggested cap leaves room above the estimated blend');
+  assert.equal(r.estimate.suggestedCeilingSatsUnitDay, 55000, 'suggested ceiling is the blend + 10% headroom');
+  assert.ok(r.estimate.suggestedCeilingSatsUnitDay > r.estimate.blendedSatsUnitDay, 'suggested cap leaves room above the estimated blend');
 });
 
 test('a preview blended ceiling (sats/PH·day) is persisted as the guardrail', async () => {
-  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: 60000 });
-  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_ph_day'), 60000);
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 60000 });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 60000);
 });
 
 test('blended_ceiling_auto records whether the ceiling was a deliberate edit vs an accepted suggestion', async () => {
   // Accepted suggestion -> auto=true, so a later preview re-suggests (fresh headroom) instead of masking.
-  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: 57500, blendedCeilingAuto: true });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 57500, blendedCeilingAuto: true });
   assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), true, 'accepted suggestion -> auto');
   await session.stopSession(db.get());
   // Deliberate edit -> auto=false, so it stays sticky in future previews.
-  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: 62000, blendedCeilingAuto: false });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 62000, blendedCeilingAuto: false });
   assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), false, 'deliberate edit -> not auto');
 });
 
 test('a blank/zero preview ceiling clears the cap (no ceiling)', async () => {
-  config.set(db.get(), 'guardrails', { blended_ceiling_sats_ph_day: 65000 });   // a prior cap
-  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsPhDay: null });
-  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_ph_day'), null, 'null/blank clears the ceiling');
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 65000 });   // a prior cap
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: null });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), null, 'null/blank clears the ceiling');
 });
 
 test('omitting the ceiling param leaves the existing guardrail untouched', async () => {
-  config.set(db.get(), 'guardrails', { blended_ceiling_sats_ph_day: 70000 });
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 70000 });
   await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
-  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_ph_day'), 70000, 'absent key = no change to the standing setting');
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 70000, 'absent key = no change to the standing setting');
 });
 
 test('estimate does not over-provision a small target when only oversized rigs exist (and still starts)', async () => {
@@ -121,7 +121,7 @@ test('estimate burn/coverage are budget-independent, so runway stays monotonic i
   const hi = await session.estimateAutopilot(db.get(), c, { targetTh: 300, budgetSats: 200000, endpoint: ep });
   assert.equal(lo.coveredTh, hi.coveredTh, 'coverage must not depend on budget');
   assert.equal(lo.burnSatsHr, hi.burnSatsHr, 'burn rate must not depend on budget');
-  assert.equal(lo.blendedSatsPhDay, hi.blendedSatsPhDay, 'blended rate must not depend on budget');
+  assert.equal(lo.blendedSatsUnitDay, hi.blendedSatsUnitDay, 'blended rate must not depend on budget');
   assert.ok(hi.runwayHours > lo.runwayHours, 'more budget -> longer runway (monotonic)');
   assert.ok(Math.abs(hi.runwayHours - 2 * lo.runwayHours) < 1e-6, 'runway scales linearly with budget');
 });

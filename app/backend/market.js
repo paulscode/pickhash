@@ -215,8 +215,10 @@ function cheapNow(current, history) {
  * ADVERTISED TH (apples-to-apples vs the market rate); effective is over DELIVERED TH (true cost;
  * an unmeasured/ramping rig counts as fully delivering so it isn't spuriously penalized).
  */
-function hashValue(latest, rentals) {
-  const SATS = 1e11;   // BTC/TH·day -> sats/PH·day
+function hashValue(latest, rentals, priceUnit) {
+  // BTC/TH·day -> sats per <unit>·day. Was a literal 1e11, which is 1e8 sats per BTC
+  // times the 1000 TH in a PH: correct only for an algorithm quoted per PH.
+  const SATS = units.perThFactor(priceUnit) * units.SATS_PER_BTC;
   const lowest = latest && latest.lowest != null ? latest.lowest * SATS : null;
   const market = latest && latest.last10 != null ? latest.last10 * SATS : lowest;
   const live = (rentals || []).filter((r) => r && Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
@@ -232,10 +234,11 @@ function hashValue(latest, rentals) {
   const overMarketPct = (pay != null && market != null && market > 0) ? Math.round(((pay - market) / market) * 1000) / 10 : null;
   return {
     available: market != null && pay != null,
-    market_sats_ph_day: market != null ? Math.round(market) : null,
-    lowest_sats_ph_day: lowest != null ? Math.round(lowest) : null,
-    your_pay_sats_ph_day: pay != null ? Math.round(pay) : null,
-    effective_sats_ph_day: effective != null ? Math.round(effective) : null,
+    price_unit: priceUnit,
+    market_sats_unit_day: market != null ? Math.round(market) : null,
+    lowest_sats_unit_day: lowest != null ? Math.round(lowest) : null,
+    your_pay_sats_unit_day: pay != null ? Math.round(pay) : null,
+    effective_sats_unit_day: effective != null ? Math.round(effective) : null,
     over_market_pct: overMarketPct,
   };
 }

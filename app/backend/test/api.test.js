@@ -340,9 +340,9 @@ test('GET /api/market returns depth, regions, price history, and a cheap-now rea
   const r = await call('GET', '/api/market');
   assert.equal(r.status, 200);
   assert.equal(r.json.summary.available_th, 300);
-  assert.equal(r.json.summary.lowest_sats_ph_day, 100000, 'lowest 1e-6 BTC/TH·day -> 100k sats/PH·day');
+  assert.equal(r.json.summary.lowest_sats_unit_day, 100000, 'lowest 1e-6 BTC/TH·day -> 100k sats/PH·day');
   assert.equal(r.json.depth_chart.total_th, 300);
-  assert.ok(r.json.impact && 'total_ph_days' in r.json.impact, 'impact chart (hashrate at your node) present');
+  assert.ok(r.json.impact && 'total_unit_days' in r.json.impact, 'impact chart (hashrate at your node) present');
   assert.deepEqual(r.json.regions.map((x) => x.region), ['eu', 'us'], 'eu 200 TH ranks above us 100 TH');
   assert.equal(r.json.cheap_now.available, true);
   assert.equal(r.json.cheap_now.label, 'cheap', 'current 1e-6 is below the prior 2e-6');
@@ -370,8 +370,8 @@ test('hash value: /api/status + /api/market compare your pay-rate to the market 
   insertRental({ session_id: s, mrr_id: 8001, advertised_th: 100, avg_percent: 90 });
   c.prepare('UPDATE rentals SET rate_btc_th_day = ?, ended = 0 WHERE mrr_id = 8001').run(5.2e-7);
   const st = await call('GET', '/api/status');
-  assert.equal(st.json.hash_value.market_sats_ph_day, 50000);
-  assert.equal(st.json.hash_value.your_pay_sats_ph_day, 52000);
+  assert.equal(st.json.hash_value.market_sats_unit_day, 50000);
+  assert.equal(st.json.hash_value.your_pay_sats_unit_day, 52000);
   assert.equal(st.json.hash_value.over_market_pct, 4);
   const mk = await call('GET', '/api/market');
   assert.equal(mk.json.hash_value.available, true);
@@ -402,7 +402,7 @@ test('hash value card is live-only, but the market "you" overlay persists after 
 
   const st = await call('GET', '/api/status');
   assert.equal(st.json.hash_value.available, false, 'the LIVE comparison card needs an active session');
-  assert.equal(st.json.hash_value.your_pay_sats_ph_day, null, 'card pay-rate is live-only');
+  assert.equal(st.json.hash_value.your_pay_sats_unit_day, null, 'card pay-rate is live-only');
   const mk = await call('GET', '/api/market');
   assert.equal(mk.json.price_history.pay_value, 55000, 'the "you" overlay persists from the last session that rented');
   assert.equal(mk.json.price_history.pay_live, false, 'flagged not-live so the legend reads "you (last)"');
@@ -477,7 +477,7 @@ test('every money route refuses cleanly when MRR is not configured (no client ->
   }
 });
 
-test('payRateSatsPhDay: the "you" line persists after a session ends (most recent priced session)', () => {
+test('payRateSatsUnitDay: the "you" line persists after a session ends (most recent priced session)', () => {
   const api = require('../api');
   // Older ended Autopilot session at 60,000 sats/PH·day (6e-7 BTC/TH·day x 1e11).
   const older = insertSession({ mode: 'live', state: 'ended' });
@@ -485,15 +485,15 @@ test('payRateSatsPhDay: the "you" line persists after a session ends (most recen
   // Newer ended Quick Rent at 50,000 — the most recent priced session, so the "you" line shows this.
   const quick = insertSession({ mode: 'quick', state: 'ended' });
   insertRental({ session_id: quick, mrr_id: 6002, rate_btc_th_day: 5e-7, advertised_th: 100, ended: 1 });
-  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 50000, live: false }, 'most recent (Quick Rent) rate, marked not-live (labels "you (last)")');
+  assert.deepEqual(api.payRateSatsUnitDay(db.get()), { rate: 50000, live: false }, 'most recent (Quick Rent) rate, marked not-live (labels "you (last)")');
 
   // A newest spend-free session (DRY-RUN: no priced rentals) must NOT blank the line.
   const dry = insertSession({ mode: 'live', state: 'ended' });
   insertRental({ session_id: dry, mrr_id: 6003, advertised_th: 100 });   // rate null -> unpriced, skipped
-  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 50000, live: false }, 'spend-free session skipped; last priced rate stays');
+  assert.deepEqual(api.payRateSatsUnitDay(db.get()), { rate: 50000, live: false }, 'spend-free session skipped; last priced rate stays');
 
   // An ACTIVE session with live rentals overrides the fallback with its current rate, marked live.
   const live = insertSession({ mode: 'live', state: 'active' });
   insertRental({ session_id: live, mrr_id: 6004, rate_btc_th_day: 4e-7, advertised_th: 100, ended: 0 });
-  assert.deepEqual(api.payRateSatsPhDay(db.get()), { rate: 40000, live: true }, 'active session live rate wins, marked live ("you")');
+  assert.deepEqual(api.payRateSatsUnitDay(db.get()), { rate: 40000, live: true }, 'active session live rate wins, marked live ("you")');
 });

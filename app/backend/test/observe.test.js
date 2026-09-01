@@ -7,6 +7,7 @@ const path = require('path');
 const db = require('../db');
 const observe = require('../engine/observe');
 const health = require('../engine/health');
+const config = require('../config');
 
 // ---- Pure reconcile ----
 
@@ -87,7 +88,7 @@ function mockClient(opts = {}) {
       if (p === '/rental/9000002') return { hashrate: { average: { percent: '96.5' } }, ended: false };
       if (p === '/account/balance') return { BTC: { confirmed: '0.00047000', unconfirmed: '0' } };
       if (p === '/rig') return { records: [], total: 0 };
-      if (p.startsWith('/info/algos')) return { stats: { prices: { last_10: { amount: '0.0006' } } } };
+      if (p.startsWith('/info/algos')) return { stats: { prices: { last_10: { amount: '0.0006', unit: 'ph*day' } } } };
       throw new Error('unexpected ' + p);
     },
   };
@@ -221,8 +222,31 @@ test('observe stores market last10/last in per-TH-day (info/algos is per-PH-day)
   // marketAt:0 forces the 5-min market fetch to run this tick.
   await observe.observe(db.get(), mockClient(), { now: NOW_MS, prevState: { rentals: {}, marketAt: 0 } });
   const snap = db.get().prepare('SELECT last10 FROM market_snapshots ORDER BY ts DESC LIMIT 1').get();
-  // The mock's info/algos last_10 amount is '0.0006' (per PH·day) -> stored /1000 per TH·day.
+  // The mock's info/algos last_10 amount is '0.0006' with unit "ph*day" -> stored per TH·day.
   assert.ok(Math.abs(snap.last10 - 0.0006 / 1000) < 1e-12, `last10 stored per-TH·day, got ${snap.last10}`);
+});
+
+test('a per-TH-quoted algorithm is stored at face value, not divided by a thousand', async () => {
+  // The divide used to be a fixed /1000 on the assumption every algorithm is quoted per
+  // PH. blake2b is quoted "th*day", so that stored its prices a thousandfold low — into
+  // the same column the price charts and the "are you overpaying" badge read from.
+  const conn = db.get();
+  conn.prepare('DELETE FROM market_snapshots').run();
+  config.set(conn, 'algorithm', { active: 'blake2b' });
+  try {
+    const client = mockClient();
+    const inner = client.get;
+    client.get = async (p, q) => (p.startsWith('/info/algos')
+      ? { stats: { prices: { last_10: { amount: '0.0006', unit: 'th*day' } } } }
+      : inner(p, q));
+    await observe.observe(conn, client, { now: NOW_MS, prevState: { rentals: {}, marketAt: 0 } });
+    const snap = conn.prepare('SELECT last10, algo FROM market_snapshots ORDER BY ts DESC LIMIT 1').get();
+    assert.equal(snap.algo, 'blake2b', 'and it is stamped as blake2b, not blended with sha256ab');
+    assert.ok(Math.abs(snap.last10 - 0.0006) < 1e-12, `last10 stored per-TH·day unchanged, got ${snap.last10}`);
+  } finally {
+    config.set(conn, 'algorithm', { active: 'sha256ab' });
+    conn.prepare('DELETE FROM market_snapshots').run();
+  }
 });
 
 test('a rentals-list blip sets fetch_ok:false and HOLDS the previous health', async () => {
