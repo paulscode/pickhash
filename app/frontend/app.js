@@ -374,10 +374,28 @@ document.addEventListener('alpine:init', () => {
       // rentals send reads as a working endpoint otherwise, and costs money later rather
       // than here.
       this.poolReportText = this.poolOk
-        ? `Endpoint serves work (subscribe ${pr.msToSubscribe}ms, first work ${pr.msToFirstWork}ms, difficulty ${pr.difficulty}).`
+        ? `Endpoint serves work (subscribe ${pr.msToSubscribe}ms, first work ${pr.msToFirstWork}ms, difficulty ${pr.difficulty}).${this.diffSupportNote(r.json.supports_password_diff)}`
         : (r.json.probe && r.json.probe.gotWork && r.json.rental_worker_ok === false)
           ? `The endpoint serves work for that username, but not for the one rentals send (${r.json.rental_worker}). Pickhash adds -r<rental-id> per rental, so with no dot the suffix runs into the address. Enter it as address.worker and the suffix lands on the worker name instead.`
           : `Endpoint reachable: ${pr.reachable}, but no work received (${pr.error || 'no work'}). Check that Datum is running.`;
+    },
+    /*
+     * What this endpoint does with a per-rental difficulty request, as a sentence to
+     * append to a successful test.
+     *
+     * Rentals ask for a difficulty suited to each rig, in the Stratum password, because
+     * that is the only field a marketplace rental passes through to the pool. A gateway
+     * that ignores the request runs every rig at one difficulty instead, and since MRR
+     * reads delivered hashrate from accepted shares, a rig far from its own difficulty
+     * reads noisily. So "not supported" is worth saying: it is not a failure, but it is
+     * the difference between an accurate delivery reading and a disputed refund.
+     *
+     * null means the test did not get far enough to establish it, and says nothing.
+     */
+    diffSupportNote(supports) {
+      if (supports === true) return ' Each rental will run at a difficulty suited to its own rig.';
+      if (supports === false) return ' This endpoint ignores per-rental difficulty requests, so every rental runs at that difficulty. A gateway that accepts them lets each rig run at one suited to its size, which gives MRR a more reliable delivery reading.';
+      return '';
     },
     poolTestErr(e) {
       return e === 'endpoint_not_allowed' ? 'That address can’t be used as a stratum endpoint (link-local/metadata ranges are blocked).'
@@ -1244,7 +1262,7 @@ document.addEventListener('alpine:init', () => {
       this.seBusy = false;
       if (!b.ok) { this.seReportClass = 'text-neon-pink'; this.seReport = 'Endpoint saved, but the MRR pool/profile update failed — try again.'; return; }
       this.seReportClass = 'text-neon-green';
-      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint.`;
+      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint.${this.diffSupportNote(r.json.supports_password_diff)}`;
       await this.loadConnection();
     },
     async loadSettings() {

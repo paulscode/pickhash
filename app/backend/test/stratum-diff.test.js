@@ -369,3 +369,54 @@ test('an embedded rig without a difficulty range is topped up by the lookup', as
     assert.equal(conn.prepare('SELECT rig_name FROM rentals WHERE mrr_id = 9001').get().rig_name, 'Orphan');
   });
 });
+
+// ---- what the endpoint test tells the user ----
+
+const vm = require('vm');
+
+/*
+ * Build the dashboard component for real, rather than regex-matching its source.
+ *
+ * app.js registers one Alpine component and is otherwise side-effect free, so stubbing
+ * the two globals it touches is enough to get the actual object and call its pure
+ * methods. The frontend's other tests read it as text, which cannot tell whether a
+ * branch returns the right string.
+ */
+function dashboard() {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'app.js'), 'utf8');
+  let component = null;
+  vm.runInNewContext(src, {
+    document: { addEventListener: (ev, fn) => { if (ev === 'alpine:init') fn(); } },
+    Alpine: { data: (_name, factory) => { component = factory(); } },
+    window: {}, console,
+  });
+  assert.ok(component, 'the component registered');
+  return component;
+}
+
+test('the endpoint test says whether per-rental difficulty will actually apply', () => {
+  const app = dashboard();
+
+  // Worth saying when it will not. It is not a failure, so it must not read as one,
+  // but it is the difference between an accurate delivery reading and a disputed
+  // refund, and the user can act on it by updating their gateway.
+  const no = app.diffSupportNote(false);
+  assert.match(no, /ignores per-rental difficulty requests/);
+  assert.doesNotMatch(no, /error|fail|invalid/i, 'informational, not an error');
+
+  assert.match(app.diffSupportNote(true), /suited to its own rig/);
+
+  // Not established is not the same as unsupported, and must not be reported as it.
+  // The probe is skipped whenever the endpoint failed earlier in the test.
+  assert.equal(app.diffSupportNote(null), '');
+  assert.equal(app.diffSupportNote(undefined), '');
+});
+
+test('both endpoint-test reports carry the note, so the two cannot drift apart', () => {
+  // The wizard and the settings screen build their own result strings from the same
+  // response. A note added to one and forgotten in the other is invisible until a user
+  // reaches the screen that lost it.
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'app.js'), 'utf8');
+  const calls = src.match(/diffSupportNote\(r\.json\.supports_password_diff\)/g) || [];
+  assert.equal(calls.length, 2, 'the wizard and the settings screen both report it');
+});
