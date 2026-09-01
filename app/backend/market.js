@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Marketplace access: fetch sha256ab rigs, normalize them to internal units, and
+ * Marketplace access: fetch the active algorithm's rigs, normalize them to internal units, and
  * record periodic snapshots.
  *
  * Units are the load-bearing part. The API quotes sha256ab in PH: advertised
@@ -10,8 +10,12 @@
  */
 const units = require('./units');
 
-// Single source of truth for the algorithm. A future opt-in flips this to allow
-// plain sha256; nothing else hard-codes the slug.
+// Single source of truth for the algorithm, and now actually the only place the
+// slug appears. It previously claimed that while api.js and bootstrap.js spelled
+// it out themselves, so flipping this would have left the app reading one
+// algorithm's marketplace while creating and testing another's pool and profile.
+// Keep it that way: the MRR account objects are per-algorithm, and a mismatch
+// between them surfaces far from its cause.
 const ALGO = 'sha256ab';
 
 function num(v) { return v === '' || v === null || v === undefined ? null : Number(v); }

@@ -1,10 +1,17 @@
 'use strict';
 /*
- * Idempotent MRR account plumbing: ensure a saved pool + a sha256ab profile exist for
- * the active endpoint, with the pool at priority 0 (and, when configured, a fallback
- * pool at priority 1). Safe to run repeatedly — a second run finds everything already
- * in place and makes no mutations. Every write is recorded in the decisions audit log.
+ * Idempotent MRR account plumbing: ensure a saved pool + a profile for the active
+ * algorithm exist for the active endpoint, with the pool at priority 0 (and, when
+ * configured, a fallback pool at priority 1). Safe to run repeatedly — a second run
+ * finds everything already in place and makes no mutations. Every write is recorded
+ * in the decisions audit log.
+ *
+ * The algorithm comes from market.ALGO rather than being spelled out here. A saved
+ * pool and a profile are per-algorithm objects in the MRR account, so provisioning
+ * them for one algorithm while the marketplace is being read for another leaves the
+ * two silently disagreeing.
  */
+const market = require('./market');
 
 function nowSec() { return Math.floor(Date.now() / 1000); }
 function asArray(v) { return Array.isArray(v) ? v : []; }
@@ -32,7 +39,7 @@ async function ensure(conn, client, ep) {
     poolId = pool.id;
   } else {
     const created = await client.put('/account/pool', {
-      type: 'sha256ab', name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',
+      type: market.ALGO, name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',
     });
     poolId = created.id;
     mutated = true;
@@ -40,7 +47,7 @@ async function ensure(conn, client, ep) {
   }
 
   // Profile (find by name, else create).
-  const profiles = asArray(await client.get('/account/profile', { algo: 'sha256ab' }));
+  const profiles = asArray(await client.get('/account/profile', { algo: market.ALGO }));
   let profile = profiles.find((p) => p.name === name);
   let profileId;
   let poolAtZero = false;
@@ -50,7 +57,7 @@ async function ensure(conn, client, ep) {
       (x) => String(x.priority) === '0' && String(x.poolid ?? x.id) === String(poolId),
     );
   } else {
-    const created = await client.put('/account/profile', { name, algo: 'sha256ab' });
+    const created = await client.put('/account/profile', { name, algo: market.ALGO });
     profileId = created.id || created.pid;
     mutated = true;
     decision(conn, `create profile ${name}`, created);

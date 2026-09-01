@@ -211,7 +211,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     let mrrAdvisory = null;
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     if (client) {
-      try { mrrAdvisory = await client.put('/account/pool/test', { method: 'full', type: 'sha256ab', host, port, user, pass }); }
+      try { mrrAdvisory = await client.put('/account/pool/test', { method: 'full', type: market.ALGO, host, port, user, pass }); }
       catch (e) { mrrAdvisory = { error: e.name }; }
     }
 
@@ -259,7 +259,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     }
   }
 
-  // Ensure the MRR saved pool + sha256ab profile exist for the active endpoint.
+  // Ensure the MRR saved pool + profile for the active algorithm exist for the endpoint.
   if (p === '/api/setup/bootstrap' && method === 'POST') {
     if (!isConfigured(conn)) return sendJson(res, 400, { error: 'mrr_not_configured' });
     const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
