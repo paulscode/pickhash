@@ -37,6 +37,7 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     allowUnproven: strat.allow_unproven_rigs === true,
     blacklist: strat.blacklist_rig_ids,
     endpointDiff: endpoint.stratum_diff != null ? endpoint.stratum_diff : null,
+    supportsPasswordDiff: !!endpoint.supports_password_diff,
     fitTolerancePct: strat.fit_tolerance_pct,
     maxOvershootPct: strat.max_overshoot_pct,
     replaceLeadSec: (strat.replace_lead_minutes || 0) * 60,

@@ -33,6 +33,7 @@ const { MrrAmbiguousError } = require('./mrr-client');
 const algos = require('./algos');
 const units = require('./units');
 const endpoints = require('./endpoints');
+const stratumDiff = require('./diff');
 
 const REPRICE_TOLERANCE = 0.02;   // >2% move at confirm -> re-confirm instead of executing
 const RATE_CAP_HEADROOM = 1.01;   // protective rate.price cap: quoted price +1%
@@ -86,10 +87,14 @@ function planIntents(stored) {
     rateCapUnitDay: rateCapUnitDay(r.rateBtcThDay, priceUnit),
     priceUnit,
     // Diff telemetry captured at rent time (correlated later with delivered %).
-    endpointDiff,
+    // When we ask this rig for its own difficulty, endpointDiff records what it will
+    // actually run at rather than the endpoint's default, which is the number the
+    // delivered percentage should be read against.
+    endpointDiff: r.chosenDiff != null ? r.chosenDiff : endpointDiff,
     optimalDiffMin: r.optimalDiffMin != null ? r.optimalDiffMin : null,
     optimalDiffMax: r.optimalDiffMax != null ? r.optimalDiffMax : null,
     diffInRange: r.diffInRange,
+    stratumPass: stratumDiff.password(r.chosenDiff),
   }));
 }
 
@@ -145,9 +150,13 @@ async function rentOne(client, intent, endpoint, opts = {}) {
   // rather than persist a NaN handle.
   if (!Number.isInteger(mrrId) || mrrId <= 0) throw new MrrAmbiguousError('create returned no usable rental id');
   const worker = `${endpoint.worker_base}-r${mrrId}`;
+  // Carries this rig's difficulty request when there is one, else the inert 'x' this
+  // always sent. Falls back to 'x' rather than undefined so an intent from an older
+  // stored quote cannot put a literal "undefined" in the password field.
+  const stratumPass = intent.stratumPass || 'x';
   let poolOverride = 'applied';
   try {
-    await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: worker, pass: 'x', priority: 0 });
+    await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: worker, pass: stratumPass, priority: 0 });
   } catch {
     // The rental still runs on the profile's shared worker; we just lose per-rental
     // attribution. Note it rather than fail the whole session.
@@ -166,7 +175,11 @@ async function rentOne(client, intent, endpoint, opts = {}) {
       fallback = 'failed';
     }
   }
-  return { mrrId, worker, poolOverride, fallback, created };
+  // The fallback pool at priority 1 keeps 'x'. It is a third-party pool we do not run,
+  // engaged only when the primary endpoint has already dropped, and MRR measures the
+  // rental on pool 0 — so there is nothing to gain by asking it for a difficulty and a
+  // stranger's pool is the wrong place to try an unrecognised password.
+  return { mrrId, worker, poolOverride, fallback, created, stratumPass };
 }
 
 function persistRental(conn, sessionId, intent, res) {
@@ -178,12 +191,15 @@ function persistRental(conn, sessionId, intent, res) {
   conn.prepare(
     `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                           paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name,
-                          endpoint_diff, optimal_diff_min, optimal_diff_max, diff_in_range)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+                          endpoint_diff, optimal_diff_min, optimal_diff_max, diff_in_range, stratum_pass)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
   ).run(market.activeAlgo(conn), sessionId, res.mrrId, intent.rigId, intent.rigName, intent.region, intent.advertisedTh,
     intent.lengthHours, intent.paidSats, intent.feeSats, intent.rateBtcThDay, start, end, res.worker,
     intent.endpointDiff, intent.optimalDiffMin, intent.optimalDiffMax,
-    intent.diffInRange == null ? null : (intent.diffInRange ? 1 : 0));
+    intent.diffInRange == null ? null : (intent.diffInRange ? 1 : 0),
+    // What was actually sent, so the DuckDNS repoint can rewrite pool/0 without
+    // resetting the password to 'x' and undoing the difficulty mid-rental.
+    res.stratumPass || 'x');
   conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
     .run(market.activeAlgo(conn), nowSec(), (intent.paidSats || 0) + (intent.feeSats || 0), 'rent', sessionId, res.mrrId);
 }

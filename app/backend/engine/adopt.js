@@ -56,6 +56,16 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     // may never have run); if this fails, health will flag under-delivery. This is a real MRR
     // mutation, so it runs only in LIVE — recording the already-billed money above is correct in
     // any mode, but a DRY-RUN/paused session must not silently re-point a rental.
+    // 'x' rather than a difficulty request. Unlike a normal rental, this path has no
+    // quote behind it and so no chosen difficulty: it rebuilds the row from the rental
+    // detail, and nothing here reads a rig's optimal_diff. Whether that detail embeds
+    // one is untested — the recorded fixture omits the rig object rather than showing
+    // it absent — and the rig id is in hand either way (GET /rig/{id} is public and
+    // returns optimal_diff), so this is a gap that can be closed, not a dead end.
+    //
+    // Until then the rental runs at the endpoint's default difficulty, which is what
+    // every rental did before per-rig difficulty existed. stratum_pass stays NULL and
+    // the repoint paths read that as 'x', so the three stay consistent.
     if (!dryRun) {
       try { await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: worker, pass: 'x', priority: 0 }); } catch { /* health flags it */ }
     }

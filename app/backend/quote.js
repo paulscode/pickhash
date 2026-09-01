@@ -9,6 +9,8 @@
  * Everything here is pure (data in -> data out, no I/O, no Date.now()) so it is fully
  * unit-testable against recorded market fixtures. All hashrate is TH/s; money is sats.
  */
+const stratumDiff = require('./diff');   // pure: picks a rig's share difficulty from its optimal_diff
+
 const FEE_RATE = 0.03;   // MRR charges 3% on top (confirmed live); every total is fee-inclusive.
 
 function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
@@ -54,12 +56,23 @@ function derive(rig, opts = {}) {
   // Whether our endpoint difficulty sits inside the rig's *optimal* range. This is a soft
   // preference, NOT a hard requirement — rentals deliver full hashrate outside it (proven
   // live: two rentals delivered 98%/101% while outside their optimal_diff). null = unknown.
-  const diff = opts.endpointDiff;
+  /*
+   * When the endpoint honours a difficulty asked for in the Stratum password, this rig
+   * does not have to run at the endpoint's single default: we send it one drawn from
+   * its own optimal_diff. So the difficulty to judge it against is the one we intend to
+   * ask for, not the one the endpoint happens to offer by default.
+   *
+   * chosenDiff is null when the endpoint does not support the request, or when the rig
+   * publishes no usable range — in which case this falls back to the endpoint default
+   * and behaves exactly as it did before.
+   */
+  const chosenDiff = opts.supportsPasswordDiff ? stratumDiff.chooseDiff(rig) : null;
+  const diff = chosenDiff != null ? chosenDiff : opts.endpointDiff;
   const diffInRange = (diff != null && rig.optimalDiff && rig.optimalDiff.min != null && rig.optimalDiff.max != null)
     ? (diff >= rig.optimalDiff.min && diff <= rig.optimalDiff.max)
     : null;
 
-  return { ...rig, costPerThHour, measuredAvgTh, stabilityPct, minCommitSats, expectedDelivery, rankKey, diffInRange };
+  return { ...rig, costPerThHour, measuredAvgTh, stabilityPct, minCommitSats, expectedDelivery, rankKey, diffInRange, chosenDiff };
 }
 
 /**
@@ -75,7 +88,10 @@ function eligibility(rig, opts = {}) {
   const mode = opts.mode || 'quick';
   const tol = opts.stabilityTolerancePct != null ? opts.stabilityTolerancePct : 20;
   const allowUnproven = opts.allowUnproven === true;
-  const diff = opts.endpointDiff;   // may be null/undefined when the pool difficulty is unknown
+  // May be null/undefined when the pool difficulty is unknown. When the endpoint honours
+  // a password difficulty request, derive() has already picked one from this rig's own
+  // optimal_diff, and that is what it will actually run at.
+  const diff = rig.chosenDiff != null ? rig.chosenDiff : opts.endpointDiff;
 
   if (rig.status && rig.status !== 'available') reasons.push('not_available');
   if (rig.rented) reasons.push('rented');
@@ -154,6 +170,8 @@ function finalize(selected, durationHours, shortfallTh, warnings) {
       diffInRange: r.diffInRange,
       optimalDiffMin: r.optimalDiff && r.optimalDiff.min != null ? r.optimalDiff.min : null,
       optimalDiffMax: r.optimalDiff && r.optimalDiff.max != null ? r.optimalDiff.max : null,
+      // The difficulty this rig will be asked to run at, or null to leave it to the pool.
+      chosenDiff: r.chosenDiff != null ? r.chosenDiff : null,
     };
   });
   return {

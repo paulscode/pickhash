@@ -100,7 +100,7 @@ function clearToken(conn) { conn.prepare("DELETE FROM secrets WHERE name = 'duck
 
 /** Active rentals whose MRR pool we own (not parked on Ocean by dead-rig fallback). */
 function ownPoolRentals(conn) {
-  return conn.prepare("SELECT r.mrr_id, r.worker_name FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active','winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0").all();
+  return conn.prepare("SELECT r.mrr_id, r.worker_name, r.stratum_pass FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active','winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0").all();
 }
 
 /**
@@ -135,7 +135,7 @@ async function applyName(conn, dataDir, client, { subdomain, token, runMode, upd
   let repointed = 0;
   if (runMode === 'live' && client) {
     for (const r of ownPoolRentals(conn)) {
-      try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: name, port: ep.port, user: r.worker_name, pass: 'x', priority: 0 }); repointed++; } catch { /* best-effort */ }
+      try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: name, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 }); repointed++; } catch { /* best-effort */ }
     }
   }
   return { ok: true, name, repointed };
@@ -164,7 +164,7 @@ async function removeName(conn, dataDir, client, { runMode } = {}) {
     conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(ip, ep.id);
     if (runMode === 'live' && client) {
       for (const r of ownPoolRentals(conn)) {
-        try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: ip, port: ep.port, user: r.worker_name, pass: 'x', priority: 0 }); } catch { /* best-effort */ }
+        try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: ip, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 }); } catch { /* best-effort */ }
       }
     }
   }

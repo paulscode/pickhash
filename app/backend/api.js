@@ -32,6 +32,7 @@ const messaging = require('./messaging');
 const alerts = require('./alerts');
 const dispute = require('./engine/dispute');
 const endpoints = require('./endpoints');
+const diff = require('./diff');
 
 // Throttle for the authenticated endpoint-probe route (blunts use as an internal scanner).
 // Overridable so tests can disable the spacing between rapid consecutive probes.
@@ -288,6 +289,36 @@ async function handleApi(req, res, url, body, ctx = {}) {
       : null;
     const rentalWorkerOk = !!(rentalProbe && rentalProbe.gotWork);
 
+    /*
+     * Does this endpoint honour a difficulty asked for in the password?
+     *
+     * Detected rather than assumed. A stock DATUM Gateway reads the username and
+     * discards the password, so sending a per-rig difficulty at one changes nothing;
+     * recording rentals as if it applied would put a number in the telemetry that never
+     * reached the miner.
+     *
+     * The probe asks for four times the difficulty the endpoint just offered by itself.
+     * Asking HIGHER is what makes this a clean test: every floor in the gateway clamps a
+     * request upward, so a raise cannot be refused for being out of bounds, and a
+     * mismatch therefore means "ignored" rather than "clamped". Best-effort — an
+     * endpoint that fails only this third connection is still saved, just without the
+     * feature.
+     *
+     * Gated on the endpoint having already passed: there is nothing to learn about an
+     * endpoint that is about to be rejected, and opening a third connection to it would
+     * just be another connection to something that does not work.
+     */
+    let supportsPasswordDiff = null;
+    const wantDiff = (probe.gotWork && rentalWorkerOk) ? diff.probeDiff(probe.difficulty) : null;
+    if (wantDiff != null) {
+      try {
+        const diffProbe = await stratum.probe(connectIp, port, user, { pass: diff.password(wantDiff), timeoutMs: 12000 });
+        if (diffProbe && diffProbe.gotWork && diffProbe.difficulty != null) {
+          supportsPasswordDiff = Number(diffProbe.difficulty) === wantDiff;
+        }
+      } catch { /* leave unknown */ }
+    }
+
     let mrrAdvisory = null;
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     if (client) {
@@ -302,10 +333,11 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // Scoped: saving an endpoint for one algorithm must not stand the other's down.
       endpoints.deactivateAll(conn);
       conn.prepare(
-        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, last_test_json, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, supports_password_diff, last_test_json, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       ).run(market.activeAlgo(conn), `endpoint:${host}:${port}`, 'manual', host, port, user, probe.difficulty,
-        JSON.stringify({ probe, mrrAdvisory, isIp, at: Math.floor(Date.now() / 1000) }));
+        supportsPasswordDiff == null ? null : (supportsPasswordDiff ? 1 : 0),
+        JSON.stringify({ probe, mrrAdvisory, isIp, supportsPasswordDiff, at: Math.floor(Date.now() / 1000) }));
       // If the endpoint identity changed out from under an active DuckDNS name (the user saved a
       // different host), disable DuckDNS — the name tracked the old endpoint. They can re-enable it
       // for the new one. (Re-saving the SAME name keeps it.)
@@ -324,6 +356,11 @@ async function handleApi(req, res, url, body, ctx = {}) {
       rental_worker_ok: rentalWorkerOk,
       rental_worker: rentalUser,
       mrr_advisory: mrrAdvisory,
+      // null = not established (the endpoint failed before we got to it). Worth showing:
+      // when false, the gateway is too old to take a difficulty request, and every rental
+      // runs at whatever single difficulty the gateway hands out instead of one suited to
+      // its own hashrate — which is what MRR measures the rental on.
+      supports_password_diff: supportsPasswordDiff,
       bare_ip: isIp,
       warning: isIp
         ? 'Bare-IP endpoint: MRR does not refund rentals pointed at IP-based pools — prefer a DNS hostname (a HashGG playit tunnel gives you one).'

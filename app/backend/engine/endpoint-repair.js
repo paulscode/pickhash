@@ -46,14 +46,16 @@ async function repair(conn, client, { plan, runMode, now }) {
   // rerouted_ocean rentals were deliberately parked on Ocean by dead-rig fallback (dead on our pool);
   // don't yank them back to the endpoint — they'd just go offline again and flap.
   const active = conn.prepare(
-    "SELECT r.mrr_id, r.worker_name FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active', 'winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0",
+    "SELECT r.mrr_id, r.worker_name, r.stratum_pass FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active', 'winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0",
   ).all();
   let repaired = 0;
   let failed = 0;
   if (runMode === 'live' && client) {
     for (const r of active) {
       try {
-        await client.put(`/rental/${r.mrr_id}/pool/0`, { host: plan.to.host, port: plan.to.port, user: r.worker_name, pass: 'x', priority: 0 });
+        // Preserve the password the rental was created with: this rewrites pool/0 on a
+        // LIVE rental, and dropping back to 'x' would silently undo its difficulty.
+        await client.put(`/rental/${r.mrr_id}/pool/0`, { host: plan.to.host, port: plan.to.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 });
         repaired += 1;
       } catch { failed += 1; }
     }

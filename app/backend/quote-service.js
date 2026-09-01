@@ -61,6 +61,8 @@ function engineOpts(conn) {
     allowUnproven: strat.allow_unproven_rigs === true,
     blacklist: strat.blacklist_rig_ids || [],
     endpointDiff: ep && ep.stratum_diff != null ? Number(ep.stratum_diff) : null,
+    // Detected by the endpoint test, not assumed: a stock gateway discards the password.
+    supportsPasswordDiff: !!(ep && ep.supports_password_diff),
     rigScores,
     regionInclude: strat.region_include || [],
     regionExclude: strat.region_exclude || [],
@@ -249,6 +251,7 @@ async function buildQuote(conn, client, input, buildOpts = {}) {
     algo: activeSlug,
     marketContext: marketCtx,
     endpointDiff: opts.endpointDiff,   // for per-rental diff telemetry
+    supportsPasswordDiff: !!opts.supportsPasswordDiff,
     endpoint: {
       id: ep.id, host: ep.host, port: ep.port, worker_base: ep.worker_base,
       mrr_profile_id: ep.mrr_profile_id, mrr_pool_id: ep.mrr_pool_id,
