@@ -34,6 +34,7 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     hashrateTolerancePct: strat.hashrate_tolerance_pct,
     minRpi: strat.min_rpi,
     stabilityTolerancePct: strat.stability_tolerance_pct,
+    allowUnproven: strat.allow_unproven_rigs === true,
     blacklist: strat.blacklist_rig_ids,
     endpointDiff: endpoint.stratum_diff != null ? endpoint.stratum_diff : null,
     fitTolerancePct: strat.fit_tolerance_pct,

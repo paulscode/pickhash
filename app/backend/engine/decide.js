@@ -155,7 +155,7 @@ function contributionTh(r, opts = {}) {
  *   rentals: our active-session rental rows (advertised_th, delivered_th, health, rig_id, ended)
  *   marketRigs: normalized market rigs (market.normalizeRig shape) for candidate selection
  *   now: unix seconds; fetchOk: did the rentals/market fetch succeed this tick (dup-rent guard)
- *   hashrateTolerancePct, minRpi, stabilityTolerancePct, blacklist, endpointDiff, strictDiff, rigScores
+ *   hashrateTolerancePct, minRpi, stabilityTolerancePct, allowUnproven, blacklist, endpointDiff, strictDiff, rigScores
  * @returns { actions, activeTh, targetTh, neededTh, shortfallTh, windowRemainingH, budgetRemainingSats, notes }
  */
 function decide(ctx = {}) {
@@ -206,6 +206,7 @@ function decide(ctx = {}) {
   const ranked = quote.candidates(ctx.marketRigs || [], {
     mode: 'autopilot',
     minRpi: ctx.minRpi, blacklist: ctx.blacklist, stabilityTolerancePct: ctx.stabilityTolerancePct,
+    allowUnproven: ctx.allowUnproven,
     endpointDiff: ctx.endpointDiff, strictDiff: ctx.strictDiff, rigScores: ctx.rigScores,
   });
   const feasible = ranked.filter((r) => {

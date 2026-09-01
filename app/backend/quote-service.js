@@ -58,6 +58,7 @@ function engineOpts(conn) {
     mode: 'quick',
     minRpi: strat.min_rpi,
     stabilityTolerancePct: strat.stability_tolerance_pct,
+    allowUnproven: strat.allow_unproven_rigs === true,
     blacklist: strat.blacklist_rig_ids || [],
     endpointDiff: ep && ep.stratum_diff != null ? Number(ep.stratum_diff) : null,
     rigScores,

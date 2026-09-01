@@ -115,6 +115,11 @@ const ALGOS = {
          * chain its gateway is built for and a user may have that on BLAKE2b. The
          * setting is per-algorithm, so each remembers its own answer. */
         hashgg_source: 'companion',
+        /* Most rigs on this market have never been rented, so requiring a settled
+         * delivery history leaves autopilot buying nothing while rigs sit listed. It
+         * is a deadlock rather than a safety margin: nothing can earn a history until
+         * something rents it. */
+        allow_unproven_rigs: true,
       },
     },
   },

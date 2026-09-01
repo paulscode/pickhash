@@ -55,6 +55,7 @@ function eligibility(rig, opts = {}) {
   const blacklist = new Set((opts.blacklist || []).map(String));
   const mode = opts.mode || 'quick';
   const tol = opts.stabilityTolerancePct != null ? opts.stabilityTolerancePct : 20;
+  const allowUnproven = opts.allowUnproven === true;
   const diff = opts.endpointDiff;   // may be null/undefined when the pool difficulty is unknown
 
   if (rig.status && rig.status !== 'available') reasons.push('not_available');
@@ -78,8 +79,25 @@ function eligibility(rig, opts = {}) {
 
   // Stability: strict for autopilot, lenient for quick quotes.
   if (mode === 'autopilot') {
-    if (rig.stabilityPct == null) reasons.push('no_stability_data');
-    else if (rig.stabilityPct > tol) reasons.push('unstable');
+    /*
+     * A rig with no short-window history has never been measured. Autopilot rejects it
+     * by default, which is right on a deep market where there is always a proven
+     * alternative.
+     *
+     * On a young one it is a deadlock: a rig cannot earn a delivery history until
+     * somebody rents it, so every rig stays unproven and autopilot buys nothing while
+     * the marketplace plainly lists rigs. Hence the opt-out, which the algorithm's own
+     * defaults turn on where that is the normal case.
+     *
+     * This relaxes only "never measured". A rig that HAS been measured and came back
+     * too variable is still rejected, because that is evidence rather than an absence
+     * of it, and its threshold is already tunable on its own.
+     */
+    if (rig.stabilityPct == null) {
+      if (!allowUnproven) reasons.push('no_stability_data');
+    } else if (rig.stabilityPct > tol) {
+      reasons.push('unstable');
+    }
   }
 
   return { ok: reasons.length === 0, reasons };

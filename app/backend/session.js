@@ -434,6 +434,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   const candOpts = {
     mode: 'autopilot', minRpi: strat.min_rpi, blacklist: strat.blacklist_rig_ids,
     stabilityTolerancePct: strat.stability_tolerance_pct,
+    allowUnproven: strat.allow_unproven_rigs === true,
     endpointDiff: endpoint ? endpoint.stratum_diff : null,
   };
   const cands = quote.candidates(rigs, candOpts);
