@@ -353,7 +353,7 @@ document.addEventListener('alpine:init', () => {
         this.detectNote = '';
         const other = (r.candidates || []).find((c) => c.source !== r.source && c.reachable);
         this.error = other
-          ? `${label ? label.label : 'HashGG'} was not detected, but ${other.label} is running. If that is the one serving your gateway, switch to it above and detect again.`
+          ? `${label ? label.label : 'HashGG'} was not detected, but ${other.label} is running. If that is the one serving your gateway, pick it next to Auto-detect and try again.`
           : 'HashGG was not detected — enter your endpoint manually.';
       }
     },
@@ -969,12 +969,26 @@ document.addEventListener('alpine:init', () => {
       this.priceUnit = a.price_unit || this.priceUnit;
       if (Array.isArray(a.choices) && a.choices.length) this.algoChoices = a.choices;
       if (Array.isArray(a.hashgg_sources)) this.hashggSources = a.hashgg_sources;
-      // Follows the algorithm: each one has its own answer, and the choice a user made
-      // for the other algorithm is not theirs for this one.
-      if (a.hashgg_source) this.hashggSource = a.hashgg_source;
-      // Only follow the server while the user is not mid-change, so a poll landing
-      // between the select and its response cannot snap the dropdown back.
-      if (!this.algoBusy) this.algoPick = a.slug;
+      // Set on the next tick, after x-for has rendered the options.
+      //
+      // x-model applies its value when the select is created, which is before the
+      // options exist. With nothing to match, the browser shows the first option while
+      // the model still holds the real value, so the control says HashGG while detect
+      // uses Companion. Setting it after the options are there makes the two agree.
+      //
+      // Follows the algorithm: each has its own answer, and a choice made for one is
+      // not a choice for the other.
+      if (a.hashgg_source) {
+        const want = a.hashgg_source;
+        this.$nextTick(() => { this.hashggSource = want; });
+      }
+      // Same option-ordering problem as the source select above, and the same fix. Only
+      // follow the server while the user is not mid-change, so a poll landing between
+      // the select and its response cannot snap the dropdown back.
+      if (!this.algoBusy) {
+        const pick = a.slug;
+        this.$nextTick(() => { if (!this.algoBusy) this.algoPick = pick; });
+      }
       this.algoKnown = true;
     },
     // The setup wizard runs before /api/status and /api/config will answer, so the

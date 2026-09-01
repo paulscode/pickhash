@@ -254,3 +254,62 @@ test('the setup wizard can pick which HashGG to read the endpoint from', async (
     }
   });
 });
+
+test('a select whose options come from x-for has its model set after they render', () => {
+  /*
+   * x-model applies its value when the select is created, which is before x-for has
+   * produced any <option>. With nothing to match, the browser shows the first option
+   * while the model still holds the real value. The control then disagrees with what
+   * the app will actually do, silently: the HashGG select read "HashGG" while detect
+   * used the Companion, and the algorithm select had the same fault.
+   *
+   * The fix is to assign inside $nextTick. This checks every such select rather than
+   * the two that were found, because nothing about the symptom points at the cause.
+   */
+  const root = path.join(__dirname, '..', '..', 'frontend');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const js = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+
+  const models = new Set();
+  const ownHandlers = new Set();
+  for (const m of html.matchAll(/<select\b[^>]*>/g)) {
+    const model = /x-model="(\w+)"/.exec(m[0]);
+    if (!model) continue;
+    const body = html.slice(m.index + m[0].length, html.indexOf('</select>', m.index));
+    if (!body.includes('x-for')) continue;
+    models.add(model[1]);
+    // The select's own change handler runs after the user has used it, so the options
+    // exist by then and it may assign freely.
+    const handler = /@change="(\w+)\(/.exec(m[0]);
+    if (handler) ownHandlers.add(handler[1]);
+  }
+  assert.ok(models.size, 'no x-for-populated selects found; update this test');
+
+  // The method an offset falls inside, by the last method opener above it.
+  const methodAt = (offset) => {
+    let name = null;
+    const KEYWORD = /^(if|for|while|switch|catch|do|try|return|function|else)$/;
+    for (const m of js.matchAll(/^\s{4,6}(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/gm)) {
+      if (m.index > offset) break;
+      if (KEYWORD.test(m[1])) continue;
+      name = m[1];
+    }
+    return name;
+  };
+
+  const problems = [];
+  for (const model of models) {
+    // Every assignment to the model from application code, ignoring the declaration.
+    for (const a of js.matchAll(new RegExp(`this\\.${model}\\s*=`, 'g'))) {
+      const line = js.slice(0, a.index).split('\n').length;
+      // Look back a little: an assignment inside a $nextTick callback is the safe form.
+      const before = js.slice(Math.max(0, a.index - 200), a.index);
+      const inNextTick = /\$nextTick\(\s*\(\)\s*=>\s*\{[^}]*$/.test(before);
+      const fromUserEdit = ownHandlers.has(methodAt(a.index));
+      if (!inNextTick && !fromUserEdit) {
+        problems.push(`app.js:${line} sets ${model} outside $nextTick; the options may not exist yet`);
+      }
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'));
+});
