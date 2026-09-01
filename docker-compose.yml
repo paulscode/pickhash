@@ -20,6 +20,13 @@ services:
       # endpoint. Leave unset to configure the endpoint manually in the wizard.
       # HASHGG_HOST: host.docker.internal
       # HASHGG_PORT: "3000"
+      #
+      # Two can be set. HashGG Companion exposes the separate BLAKE2b Datum Gateway, and
+      # which one an endpoint comes from decides which chain your rented hashrate mines,
+      # so Pickhash picks per algorithm rather than taking whichever answers. Both listen
+      # on 3000 inside their containers.
+      # HASHGG_COMPANION_HOST: host.docker.internal
+      # HASHGG_COMPANION_PORT: "3000"
     volumes:
       - ./data:/root/data
     healthcheck:

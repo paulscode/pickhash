@@ -197,7 +197,24 @@ async function handleApi(req, res, url, body, ctx = {}) {
 
   // Auto-detect the user's public stratum endpoint from HashGG (optional).
   if (p === '/api/setup/hashgg-detect' && method === 'GET') {
-    return sendJson(res, 200, await hashgg.probe(process.env.HASHGG_HOST || '', process.env.HASHGG_PORT || '3000'));
+    /*
+     * Both are probed and reported, and the selected one is spread at the top level so
+     * the existing shape still reads. Which HashGG an endpoint comes from decides which
+     * chain the rented hashrate mines, so the answer names its source rather than
+     * arriving anonymously — the caller can then say where it came from.
+     */
+    const chosen = hashgg.sourceFor(conn);
+    const all = await hashgg.probeAll();
+    const selected = all.find((c) => c.source === chosen) || all[0];
+    return sendJson(res, 200, {
+      ...selected,
+      algorithm: algorithmBlock(conn),
+      candidates: all.map((c) => ({
+        source: c.source, label: hashgg.SOURCES[c.source].label,
+        configured: c.configured, reachable: c.reachable, host: c.host || null, port: c.port || null,
+        public_endpoint: c.publicEndpoint || null,
+      })),
+    });
   }
 
   // Validate a stratum endpoint. Our own AsicBoost-aware probe is authoritative; MRR's

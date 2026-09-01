@@ -22,6 +22,7 @@ const deadRigFallback = require('./dead-rig-fallback');
 const ownerNudge = require('./owner-nudge');
 const ledgerFetch = require('./ledger');
 const config = require('../config');
+const hashgg = require('../hashgg');
 const duckdns = require('../duckdns');
 const mrr = require('../mrr');
 const endpoints = require('../endpoints');
@@ -248,9 +249,13 @@ function startEngine(conn, dataDir, opts = {}) {
       // hashgg.startos, Umbrel the HashGG node IP). Empty = not probed, which also disables
       // endpoint auto-repair (it needs HashGG's reported public endpoint to re-point to). A
       // local run without HashGG relies on the endpoint_down alert + manual re-setup instead.
+      // Which of the two HashGGs is a per-algorithm setting, not the raw env var: the
+      // Companion exposes a different gateway, so probing the wrong one would let
+      // endpoint auto-repair re-point a live endpoint at a pool on the other chain.
+      const addr = hashgg.address(hashgg.sourceFor(conn));
       return observe.observe(conn, client, {
         ...ctx, dataDir,
-        hashggHost: process.env.HASHGG_HOST || '', hashggPort: process.env.HASHGG_PORT || 3000,
+        hashggHost: addr ? addr.host : '', hashggPort: addr ? addr.port : 3000,
       });
     },
     onTick: async (snapshot) => {

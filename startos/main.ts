@@ -31,11 +31,18 @@ export const main = sdk.setupMain(async ({ effects }) => {
         env: {
           PORT: String(uiPort),
           DATA_DIR: '/root/data',
-          // On StartOS 0.4.0 the HashGG service is reachable at this host name.
-          // Setting it only ENABLES optional auto-discovery; if HashGG is not
+          // On StartOS 0.4.0 the HashGG services are reachable at these host names.
+          // Setting them only ENABLES optional auto-discovery; if a HashGG is not
           // installed the probe simply fails and Pickhash stays fully usable.
           HASHGG_HOST: 'hashgg.startos',
           HASHGG_PORT: '3000',
+          // Both are named because both can be installed at once and they expose different
+          // Datum Gateways. Which one an endpoint is pulled from decides which chain the
+          // rented hashrate mines, so Pickhash chooses per algorithm rather than taking
+          // whichever answers. Both listen on 3000; the Companion's 3033 on Umbrel is
+          // host-facing only.
+          HASHGG_COMPANION_HOST: 'hashgg-companion.startos',
+          HASHGG_COMPANION_PORT: '3000',
           DASHBOARD_PASSWORD: dashboardPassword,
           // The dashboard is reached over StartOS's encrypted transport, so mark the cookie Secure.
           COOKIE_SECURE: '1',

@@ -148,6 +148,7 @@
       <p class="text-gray-400 text-xs font-mono" x-text="keyPermsText"></p>
       <div x-show="withdrawWarn" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono">This key can withdraw — going LIVE will need an extra confirmation.</div>
       <button type="button" @click="detect()" :disabled="busy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded-lg px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+      <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
       <form @submit.prevent="testPool()" class="space-y-3">
         <div class="grid grid-cols-3 gap-2">
           <input type="text" x-model="poolHost" @change="normalizeHost()" placeholder="host  (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
@@ -972,6 +973,7 @@
       <p class="font-mono text-xs text-gray-400">Current: <span class="text-white" x-text="seCurrent"></span></p>
       <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the worker username (btcaddress.worker). Each rig reports as your-worker-r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving; new rentals use the saved endpoint.</p>
       <button type="button" x-show="seHashggAvail" x-cloak @click="seDetect()" :disabled="seBusy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+      <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
       <div class="grid grid-cols-3 gap-2">
         <input type="text" x-model="seHost" placeholder="host (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
         <input type="text" x-model="sePort" placeholder="port" class="no-spinner bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">

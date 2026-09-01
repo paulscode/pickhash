@@ -101,6 +101,12 @@ const ALGOS = {
       strategy: {
         fallback_pool_enabled: false,
         dead_rig_reroute_enabled: false,
+        /* The Companion exposes the BLAKE2b Datum Gateway; the ordinary HashGG
+         * exposes whichever app holds the official Datum slot. This is the default
+         * pairing rather than a rule, because the ordinary HashGG follows whatever
+         * chain its gateway is built for and a user may have that on BLAKE2b. The
+         * setting is per-algorithm, so each remembers its own answer. */
+        hashgg_source: 'companion',
       },
     },
   },

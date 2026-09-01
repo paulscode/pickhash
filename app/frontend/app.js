@@ -163,6 +163,7 @@ document.addEventListener('alpine:init', () => {
     algoBusy: false,
     algoNote: '',
     algoNoteClass: 'text-gray-500',
+    detectNote: '',
     // Distinct colours, not shades: the point is that a screenshot taken from one
     // mode cannot be mistaken for the other.
     get algoBadgeClass() {
@@ -322,8 +323,22 @@ document.addEventListener('alpine:init', () => {
       this.busy = true;
       const r = await this.getJson('/api/setup/hashgg-detect');
       this.busy = false;
-      if (r.reachable && r.publicEndpoint) { this.poolHost = r.publicEndpoint.host; this.poolPort = String(r.publicEndpoint.port); }
-      else this.error = 'HashGG was not detected — enter your endpoint manually.';
+      const label = (r.candidates || []).find((c) => c.source === r.source);
+      if (r.reachable && r.publicEndpoint) {
+        this.poolHost = r.publicEndpoint.host;
+        this.poolPort = String(r.publicEndpoint.port);
+        // Name the source. Two HashGGs can be installed, they expose different Datum
+        // Gateways, and the endpoint they hand back looks identical either way — so
+        // which one it came from is the only thing distinguishing a working setup from
+        // hashrate pointed at the wrong chain.
+        this.detectNote = `Endpoint from ${label ? label.label : 'HashGG'}, for ${this.algoDisplay}.`;
+      } else {
+        this.detectNote = '';
+        const other = (r.candidates || []).find((c) => c.source !== r.source && c.reachable);
+        this.error = other
+          ? `${label ? label.label : 'HashGG'} was not detected, but ${other.label} is running. If that is the one serving your gateway, change "Pull endpoint from" in Settings.`
+          : 'HashGG was not detected — enter your endpoint manually.';
+      }
     },
     async testPool() {
       this.error = ''; this.busy = true; this.poolReport = null;

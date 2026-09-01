@@ -48,6 +48,10 @@ const DEFAULTS = {
     fallback_pool_enabled: true,    // Ocean safety-net at rental priority 1 (same BTC address); engages only if your endpoint drops
     dead_rig_reroute_enabled: true, // reroute a rig that's offline-on-your-pool (while healthy peers mine fine) to Ocean + message its owner; depends on fallback_pool_enabled
     owner_nudge_enabled: false,     // opt-in: message a rig owner when their rig sustains under-delivery (default OFF)
+    // Which HashGG to pull a public stratum endpoint from, when both are installed.
+    // Per-algorithm, because which gateway a HashGG exposes decides which chain the
+    // rented hashrate would mine. blake2b overrides this to 'companion' in algos.js.
+    hashgg_source: 'flagship',
     region_include: [],
     region_exclude: [],
     blacklist_rig_ids: [],
@@ -206,6 +210,10 @@ const SETTINGS = {
         : { unavailable: true, help: `Depends on the fallback pool, which no ${a.short} pool provides. Unavailable for this algorithm.` }),
     },
     owner_nudge_enabled: { type: 'bool', label: 'Nudge under-delivering owners', help: 'Automatically message a rig owner (once) when their rig sustains under-delivery. Off by default.' },
+    hashgg_source: {
+      type: 'enum', values: ['flagship', 'companion'], label: 'Pull endpoint from',
+      help: 'Which HashGG to read your public stratum endpoint from when both are installed. HashGG Companion exposes the separate BLAKE2b Datum Gateway; the ordinary HashGG exposes whichever app holds the official Datum slot. Set per algorithm, because the gateway decides which chain your rented hashrate mines.',
+    },
     region_include: { type: 'strlist', label: 'Region include', help: 'Comma-separated regions to restrict to (empty = any).' },
     region_exclude: { type: 'strlist', label: 'Region exclude', help: 'Comma-separated regions to avoid.' },
   },
