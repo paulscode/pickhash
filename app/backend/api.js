@@ -268,6 +268,26 @@ async function handleApi(req, res, url, body, ctx = {}) {
 
     const probe = await stratum.probe(connectIp, port, user, { pass, timeoutMs: 12000 });
 
+    /*
+     * Test the username a rental will actually send, not just the one typed here.
+     *
+     * Every rental connects as `<worker_base>-r<rentalid>`, so this endpoint used to
+     * confirm a string that is never used and save on the strength of it. The gap
+     * matters most to someone entering a bare address, which the charset check above
+     * allows: with no dot to separate it the suffix lands on the address itself, and a
+     * strict server reads the whole thing as one invalid address. Typed as
+     * address.worker the suffix lands on the worker name and the address survives.
+     *
+     * Only run when the base worked: if that failed there is nothing to distinguish.
+     * The id is synthetic but real-width, so a length limit shows up here rather than
+     * on the first rental.
+     */
+    const rentalUser = `${user}-r9999999`;
+    const rentalProbe = probe.gotWork
+      ? await stratum.probe(connectIp, port, rentalUser, { pass, timeoutMs: 12000 })
+      : null;
+    const rentalWorkerOk = !!(rentalProbe && rentalProbe.gotWork);
+
     let mrrAdvisory = null;
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     if (client) {
@@ -278,7 +298,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // Persist as the active endpoint ONLY when the probe confirmed work — a failed test
     // must not deactivate a previously-working endpoint. worker_base is the FULL entered
     // username (per-rental workers append "-r<rentalid>" to it, so it needs the address).
-    if (probe.gotWork) {
+    if (probe.gotWork && rentalWorkerOk) {
       // Scoped: saving an endpoint for one algorithm must not stand the other's down.
       endpoints.deactivateAll(conn);
       conn.prepare(
@@ -296,8 +316,13 @@ async function handleApi(req, res, url, body, ctx = {}) {
     }
 
     return sendJson(res, 200, {
-      ok: probe.gotWork,
+      ok: probe.gotWork && rentalWorkerOk,
       probe,
+      rental_probe: rentalProbe,
+      // The one case worth naming: the endpoint serves work for the username entered but
+      // not for the one rentals send. Without this it reads as a working endpoint.
+      rental_worker_ok: rentalWorkerOk,
+      rental_worker: rentalUser,
       mrr_advisory: mrrAdvisory,
       bare_ip: isIp,
       warning: isIp

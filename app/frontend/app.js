@@ -370,9 +370,14 @@ document.addEventListener('alpine:init', () => {
       this.duckdnsReport = '';
       this.showDuckdns = this.poolOk && this.bareIp && !this.duckdnsEnabled;
       const pr = r.json.probe || {};
+      // Distinguish the two failures. A username that works as typed but not in the form
+      // rentals send reads as a working endpoint otherwise, and costs money later rather
+      // than here.
       this.poolReportText = this.poolOk
         ? `Endpoint serves work (subscribe ${pr.msToSubscribe}ms, first work ${pr.msToFirstWork}ms, difficulty ${pr.difficulty}).`
-        : `Endpoint reachable: ${pr.reachable}, but no work received (${pr.error || 'no work'}). Check that Datum is running.`;
+        : (r.json.probe && r.json.probe.gotWork && r.json.rental_worker_ok === false)
+          ? `The endpoint serves work for that username, but not for the one rentals send (${r.json.rental_worker}). Pickhash adds -r<rental-id> per rental, so with no dot the suffix runs into the address. Enter it as address.worker and the suffix lands on the worker name instead.`
+          : `Endpoint reachable: ${pr.reachable}, but no work received (${pr.error || 'no work'}). Check that Datum is running.`;
     },
     poolTestErr(e) {
       return e === 'endpoint_not_allowed' ? 'That address can’t be used as a stratum endpoint (link-local/metadata ranges are blocked).'
@@ -1172,7 +1177,9 @@ document.addEventListener('alpine:init', () => {
       if (!r.json.ok) {
         this.seBusy = false;
         this.seReportClass = 'text-neon-pink';
-        this.seReport = `Endpoint reachable: ${pr.reachable}, but no work received (${pr.error || 'no work'}). Not saved.`;
+        this.seReport = (r.json.probe && r.json.probe.gotWork && r.json.rental_worker_ok === false)
+          ? `The endpoint serves work for that username, but not for the one rentals send (${r.json.rental_worker}). Pickhash adds -r<rental-id> per rental, so with no dot the suffix runs into the address. Enter it as address.worker and the suffix lands on the worker name instead. Not saved.`
+          : `Endpoint reachable: ${pr.reachable}, but no work received (${pr.error || 'no work'}). Not saved.`;
         return;
       }
       // Work confirmed and the endpoint is now active — re-ensure the MRR pool/profile for it.
