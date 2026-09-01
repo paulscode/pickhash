@@ -56,6 +56,30 @@ test('a never-measured rig is skipped by default and taken when allowed', () => 
   assert.deepEqual(reasons(fresh, { ...OPTS, allowUnproven: true }), [], 'accepted with the opt-out');
 });
 
+test('an idle rig counts as unmeasured, not as wildly unstable', () => {
+  /*
+   * The case that actually blocks a young market. The marketplace reports 0.00 across
+   * all three windows for a rig that is not currently hashing, and an unrented rig is
+   * never hashing, so the deviation-from-advertised formula scored it 100% and called
+   * it unstable. That is a permanent rejection for a reason the rig cannot escape.
+   *
+   * Measured on the live BLAKE2b market: of 12 rigs listed, 5 reported all-zero
+   * windows, including one advertising 15 TH.
+   */
+  const idle = rawRig('9', { windows: true, variance: 0 });
+  idle.hashrate.last_5min.hash = '0';
+  idle.hashrate.last_15min.hash = '0';
+  idle.hashrate.last_30min.hash = '0';
+
+  const derived = quote.derive(norm(idle), OPTS);
+  assert.equal(derived.stabilityPct, null, 'nothing observed, so nothing to call unstable');
+  assert.ok(reasons(idle, OPTS).includes('no_stability_data'));
+  assert.ok(!reasons(idle, OPTS).includes('unstable'), 'zero throughput is not variability');
+
+  // And so it falls under the setting, which is where the operator decides.
+  assert.deepEqual(reasons(idle, { ...OPTS, allowUnproven: true }), []);
+});
+
 test('the opt-out does not excuse a rig that was measured and came back too variable', () => {
   // This is the distinction that matters. Absence of evidence is what gets relaxed;
   // evidence of variability is not, and it has its own threshold already.

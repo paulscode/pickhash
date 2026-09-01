@@ -23,7 +23,26 @@ function derive(rig, opts = {}) {
   const windows = [rig.measuredTh && rig.measuredTh.m5, rig.measuredTh && rig.measuredTh.m15, rig.measuredTh && rig.measuredTh.m30]
     .filter((x) => x != null && x >= 0);
   const measuredAvgTh = windows.length ? mean(windows) : null;
-  const stabilityPct = (advertisedTh > 0 && windows.length)
+  /*
+   * Stability is the worst short-window deviation from advertised, as a percentage.
+   *
+   * It is null when there is nothing to measure, and an idle rig counts as nothing.
+   * The marketplace reports 0.00 across all three windows for a rig that is not
+   * currently hashing, and an unrented rig is not hashing by definition, so the
+   * formula read that as deviating from advertised by 100% and called it unstable.
+   *
+   * Zero throughput on an unrented rig is the absence of evidence, not evidence of
+   * variability, and the distinction decides whether a rig can ever be rented: called
+   * unstable it is rejected forever, because it cannot hash until someone rents it and
+   * nobody will. Called unmeasured it falls under the "allow rigs with no delivery
+   * history" setting, where the operator decides.
+   *
+   * A rig that IS rented and delivering zero is a different thing and stays visible as
+   * such: it is excluded as `rented` long before this, and the live loop has its own
+   * dead-rig handling.
+   */
+  const observed = windows.some((w) => w > 0);
+  const stabilityPct = (advertisedTh > 0 && windows.length && observed)
     ? (Math.max(...windows.map((w) => Math.abs(w - advertisedTh))) / advertisedTh) * 100
     : null;
 
