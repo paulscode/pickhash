@@ -43,6 +43,14 @@ const ALGOS = {
      * backstop. A user with no feel for the market needs an anchor to set it
      * against, and the anchor is different by three orders of magnitude. */
     typicalSatsThHour: 2.2,
+    /*
+     * The safety-net pool a rental falls back to if the user's own endpoint drops.
+     *
+     * Ocean runs real vardiff, so a rig starved by an endpoint difficulty mismatch
+     * still hashes, and it pays to the same Bitcoin address, so failover still earns.
+     * It also means the marketplace cannot deny a refund for "no backup pool".
+     */
+    fallbackPool: { host: 'bip110.mine.ocean.xyz', port: 3110, name: 'Ocean' },
     defaults: {},
   },
   blake2b: {
@@ -51,6 +59,17 @@ const ALGOS = {
     short: 'BLAKE2b',
     priceUnit: 'th',
     typicalSatsThHour: 5337.5,
+    /*
+     * No fallback pool. There is no public BLAKE2b pool that accepts arbitrary
+     * hashrate and pays to a Bitcoin address the way Ocean does for SHA256.
+     *
+     * This is null rather than left to inherit, because inheriting Ocean is exactly
+     * the failure. Ocean cannot accept BLAKE2b work: the rental would keep costing
+     * money and produce nothing, and it engages precisely when something has already
+     * gone wrong, so nobody is watching the right thing. The rental still runs on the
+     * user's own endpoint; it just has no second pool behind it.
+     */
+    fallbackPool: null,
     /*
      * The spend ceilings are absolute sats, so they do not rescale with the price
      * of hashrate on their own, and left alone they stop binding. The sha256ab
@@ -74,6 +93,14 @@ const ALGOS = {
        * digits pushed off the end. */
       ui: {
         hashrate_unit: 'th',
+      },
+      /* Both default to true for sha256ab, and both route hashrate to the fallback
+       * pool. With no fallback pool to route to they can only ever be no-ops, so they
+       * default off and the settings page says why rather than offering a switch that
+       * does nothing. */
+      strategy: {
+        fallback_pool_enabled: false,
+        dead_rig_reroute_enabled: false,
       },
     },
   },
@@ -109,4 +136,15 @@ function defaultsFor(slug, ns) {
   return get(slug).defaults[ns] || {};
 }
 
-module.exports = { ALGOS, SLUGS, DEFAULT_ALGO, isKnown, get, priceUnit, defaultsFor };
+/**
+ * The algorithm's fallback pool, or null if it has none.
+ *
+ * Callers pass the result of this around rather than a boolean, so that "fallback is
+ * enabled" can never be mistaken for "route to Ocean". An algorithm Ocean cannot
+ * serve has nothing to be enabled.
+ */
+function fallbackPool(slug) {
+  return get(slug).fallbackPool || null;
+}
+
+module.exports = { ALGOS, SLUGS, DEFAULT_ALGO, isKnown, get, priceUnit, defaultsFor, fallbackPool };

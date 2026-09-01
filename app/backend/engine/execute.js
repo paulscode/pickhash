@@ -9,7 +9,7 @@
  * The session's spent_sats/fee_sats are advanced as rentals are created so the gate's
  * budget checks see the live cumulative spend on the very next tick (no overspend window).
  */
-const { rentOne, persistRental, insertDecision } = require('../session');
+const { rentOne, persistRental, insertDecision, resolveFallbackPool } = require('../session');
 const { MrrAmbiguousError } = require('../mrr-client');
 const alerts = require('../alerts');
 const config = require('../config');
@@ -42,7 +42,7 @@ async function execute(conn, client, ctx) {
   // LIVE: perform each authorized rent (the gate already capped to one/tick + all ceilings).
   // Ocean safety-net at rental priority 1 — same knob the manual path honors (session.js). Autopilot
   // creates nearly all rentals in practice, so without this the fallback would never actually attach.
-  const fallbackOcean = !!config.getKey(conn, 'strategy', 'fallback_pool_enabled');
+  const fallbackPool = resolveFallbackPool(conn);
   for (const a of gateResult.authorized || []) {
     // Intent-first audit row — the reconciliation anchor if we crash mid-create.
     insertDecision(conn, sessionId, false, {
@@ -51,7 +51,7 @@ async function execute(conn, client, ctx) {
     });
     let res;
     try {
-      res = await rentOne(client, a, endpoint, { fallbackOcean });
+      res = await rentOne(client, a, endpoint, { fallbackPool });
     } catch (e) {
       if (e instanceof MrrAmbiguousError) {
         insertDecision(conn, sessionId, false, { executed: { ambiguous: true, rig: a.rigId }, note: 'ambiguous_halt: autopilot create outcome unknown — not retried, reconcile next tick' });

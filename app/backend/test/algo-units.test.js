@@ -56,7 +56,7 @@ test('a rental sends the rate cap in the unit it names, for each algorithm', asy
       priceUnit: unit,
       rateCapUnitDay: session.rateCapUnitDay(0.0000005, unit),
     };
-    await session.rentOne(client, intent, ENDPOINT, { fallbackOcean: false });
+    await session.rentOne(client, intent, ENDPOINT, { fallbackPool: null });
     const create = client.puts.find((c) => /\/rental$/.test(c[0]));
     assert.equal(create[1].rate.type, unit, `${algo} names its own unit`);
     assert.equal(create[1].rate.price, intent.rateCapUnitDay);

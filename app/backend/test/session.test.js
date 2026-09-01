@@ -92,19 +92,22 @@ test('rateCapUnitDay converts a per-TH price to a +1% cap in the algorithm\'s ow
   assert.equal(session.rateCapUnitDay(0.00000050, 'th'), Number((0.0000005 * 1.01).toFixed(8)));
 });
 
-test('oceanFallbackWorker uses the BTC address with a .fallback tag', () => {
-  assert.equal(session.oceanFallbackWorker('bc1qabc.phash'), 'bc1qabc.fallback');
-  assert.equal(session.oceanFallbackWorker('bc1qabc'), 'bc1qabc.fallback');
-  assert.equal(session.oceanFallbackWorker(''), null);
-  assert.equal(session.oceanFallbackWorker(null), null);
+// sha256ab's fallback, as the registry states it.
+const OCEAN = { host: 'bip110.mine.ocean.xyz', port: 3110, name: 'Ocean' };
+
+test('fallbackWorker uses the BTC address with a .fallback tag', () => {
+  assert.equal(session.fallbackWorker('bc1qabc.phash'), 'bc1qabc.fallback');
+  assert.equal(session.fallbackWorker('bc1qabc'), 'bc1qabc.fallback');
+  assert.equal(session.fallbackWorker(''), null);
+  assert.equal(session.fallbackWorker(null), null);
 });
 
 test('rentOne attaches the Ocean fallback at pool/1 when enabled (same address, .fallback worker)', async () => {
   const client = mockClient();
   const endpoint = { host: 'ab.example.gg', port: 26596, worker_base: 'bc1qabc.phash', mrr_profile_id: 953073 };
   const intent = { rigId: 42, lengthHours: 3, rateCapUnitDay: 0.001, advertisedTh: 4 };
-  const res = await session.rentOne(client, intent, endpoint, { fallbackOcean: true });
-  assert.equal(res.fallback, 'ocean');
+  const res = await session.rentOne(client, intent, endpoint, { fallbackPool: OCEAN });
+  assert.equal(res.fallback, 'on');
   const fb = client.state.puts.find((c) => /\/pool\/1$/.test(c[0]));
   assert.ok(fb, 'a pool/1 override was issued');
   assert.equal(fb[1].host, 'bip110.mine.ocean.xyz');
@@ -116,7 +119,7 @@ test('rentOne skips the fallback pool when disabled', async () => {
   const client = mockClient();
   const endpoint = { host: 'ab.example.gg', port: 26596, worker_base: 'bc1qabc.phash', mrr_profile_id: 953073 };
   const intent = { rigId: 42, lengthHours: 3, rateCapUnitDay: 0.001, advertisedTh: 4 };
-  const res = await session.rentOne(client, intent, endpoint, { fallbackOcean: false });
+  const res = await session.rentOne(client, intent, endpoint, { fallbackPool: null });
   assert.equal(res.fallback, 'off');
   assert.ok(!client.state.puts.some((c) => /\/pool\/1$/.test(c[0])), 'no pool/1 override issued');
 });

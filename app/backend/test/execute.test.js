@@ -81,7 +81,7 @@ test('a LIVE authorized rent creates the rental + worker override + decision and
   assert.equal(s.fee_sats, 1_800);
 });
 
-test('autopilot honors the Ocean fallback: attaches pool/1 (same address, .fallback tag) and records fallback=ocean', async () => {
+test('autopilot honors the fallback pool: attaches pool/1 (same address, .fallback tag)', async () => {
   // Regression: the fallback was wired only into the manual rent path — autopilot (which creates
   // nearly all rentals) called rentOne without it, so Ocean never actually attached. Default is ON.
   const client = mockClient();
@@ -92,7 +92,7 @@ test('autopilot honors the Ocean fallback: attaches pool/1 (same address, .fallb
   assert.equal(poolOne[0][1].port, 3110);
   assert.equal(poolOne[0][1].priority, 1);
   assert.equal(poolOne[0][1].user, 'bc1qx.fallback', 'same BTC address with the .fallback worker tag');
-  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback ocean/);
+  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback on/);
 });
 
 test('autopilot skips the Ocean fallback when disabled: no pool/1 attach', async () => {
@@ -107,12 +107,12 @@ test('autopilot skips the Ocean fallback when disabled: no pool/1 attach', async
   }
 });
 
-test('a failed Ocean pool/1 attach is best-effort: the rental still succeeds (fallback=ocean_failed)', async () => {
+test('a failed pool/1 attach is best-effort: the rental still succeeds', async () => {
   const client = mockClient({ poolOneFail: true });
   const r = await execute(db.get(), client, { sessionId, endpoint, gateResult: { authorized: [action(1)], wouldDo: [] } });
   assert.equal(r.executed.length, 1, 'the rental is not failed over a best-effort fallback attach');
   assert.ok(db.get().prepare('SELECT 1 FROM rentals WHERE session_id = ?').get(sessionId), 'rental persisted');
-  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback ocean_failed/);
+  assert.match(db.get().prepare("SELECT note FROM decisions WHERE note LIKE 'autopilot rented%'").get().note, /fallback failed/);
 });
 
 test('an ambiguous create fires needs_reconcile, halts, persists no rental, and never retries', async () => {

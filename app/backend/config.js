@@ -179,8 +179,32 @@ const SETTINGS = {
     fit_tolerance_pct: { type: 'int', min: 0, max: 500, unit: '%', label: 'Fit tolerance', help: 'A top-up rig may overshoot the gap by up to this and stay cheapest-first.' },
     max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot, hold a shortfall and retry rather than over-provision.' },
     replace_lead_minutes: { type: 'int', min: 0, max: 60, unit: 'min', label: 'Replace lead', help: 'Rent a replacement this long before a rig ends (0 disables the lookahead).' },
-    fallback_pool_enabled: { type: 'bool', label: 'Fallback pool (Ocean)', help: 'If your endpoint becomes unreachable, rented hashrate fails over to Ocean, mining to your same Bitcoin address instead of being wasted. Your node stays primary — Ocean only engages on failure.' },
-    dead_rig_reroute_enabled: { type: 'bool', label: 'Reroute dead rigs to Ocean', dependsOn: 'fallback_pool_enabled', help: 'When a rented rig connects but never mines on your pool (offline ~10 min while your OTHER rented rigs are mining fine on the same pool), switch just that rental to the Ocean fallback and message its owner. Targets only the stuck rig; the rest keep mining to your node. On by default. Extends the Fallback pool (Ocean) — turns off with it.' },
+    fallback_pool_enabled: {
+      type: 'bool', label: 'Fallback pool',
+      help: 'If your endpoint becomes unreachable, rented hashrate fails over to a backup pool, mining to your same Bitcoin address instead of being wasted. Your node stays primary — the fallback only engages on failure.',
+      forAlgo: (a) => (a.fallbackPool
+        ? {
+          label: `Fallback pool (${a.fallbackPool.name})`,
+          help: `If your endpoint becomes unreachable, rented hashrate fails over to ${a.fallbackPool.name}, mining to your same Bitcoin address instead of being wasted. Your node stays primary — ${a.fallbackPool.name} only engages on failure.`,
+        }
+        : {
+          // Marked unavailable rather than quietly hidden. It is on by default for the
+          // other algorithm, so a user who knows that deserves to be told why it is not
+          // here, instead of wondering whether their rentals have a safety net.
+          unavailable: true,
+          help: `No fallback pool accepts ${a.short} work. Failover would route rented hashrate to a pool that cannot mine it — still billing, producing nothing, at the moment your endpoint has already failed. Unavailable for this algorithm.`,
+        }),
+    },
+    dead_rig_reroute_enabled: {
+      type: 'bool', label: 'Reroute dead rigs', dependsOn: 'fallback_pool_enabled',
+      help: 'When a rented rig connects but never mines on your pool (offline ~10 min while your OTHER rented rigs are mining fine on the same pool), switch just that rental to the fallback pool and message its owner. Targets only the stuck rig; the rest keep mining to your node.',
+      forAlgo: (a) => (a.fallbackPool
+        ? {
+          label: `Reroute dead rigs to ${a.fallbackPool.name}`,
+          help: `When a rented rig connects but never mines on your pool (offline ~10 min while your OTHER rented rigs are mining fine on the same pool), switch just that rental to the ${a.fallbackPool.name} fallback and message its owner. Targets only the stuck rig; the rest keep mining to your node. On by default. Extends the Fallback pool — turns off with it.`,
+        }
+        : { unavailable: true, help: `Depends on the fallback pool, which no ${a.short} pool provides. Unavailable for this algorithm.` }),
+    },
     owner_nudge_enabled: { type: 'bool', label: 'Nudge under-delivering owners', help: 'Automatically message a rig owner (once) when their rig sustains under-delivery. Off by default.' },
     region_include: { type: 'strlist', label: 'Region include', help: 'Comma-separated regions to restrict to (empty = any).' },
     region_exclude: { type: 'strlist', label: 'Region exclude', help: 'Comma-separated regions to avoid.' },

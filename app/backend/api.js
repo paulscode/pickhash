@@ -23,7 +23,7 @@ const auth = require('./auth');
 const quoteService = require('./quote-service');
 const session = require('./session');
 // Aliased at module scope: the /api/diag handler shadows `session` with a local DB row.
-const { OCEAN_FALLBACK, oceanFallbackWorker } = session;
+const { fallbackWorker } = session;
 const algos = require('./algos');
 const units = require('./units');
 const charts = require('./charts');
@@ -596,13 +596,29 @@ async function handleApi(req, res, url, body, ctx = {}) {
       session,
       endpoint: ep ? { host: ep.host, port: ep.port, worker: ep.worker_base, source: ep.source, is_ip: net.isIP(ep.host) > 0 } : null,
       duckdns: (() => { const d = config.get(conn, 'duckdns'); return { enabled: !!d.enabled, subdomain: d.subdomain || null, name: d.subdomain ? duckdns.fqdn(d.subdomain) : null, ip: d.ip || null }; })(),
-      fallback: {
-        enabled: !!config.get(conn, 'strategy').fallback_pool_enabled,
-        reroute_dead_rigs: !!config.get(conn, 'strategy').dead_rig_reroute_enabled,
-        pool: 'Ocean',
-        host: OCEAN_FALLBACK.host, port: OCEAN_FALLBACK.port,
-        worker: ep ? oceanFallbackWorker(ep.worker_base) : null,
-      },
+        fallback: (() => {
+          // `available` is the algorithm's answer and `enabled` is the user's. Both are
+          // reported, because "switched on but cannot apply here" is a different thing
+          // from "switched off", and the UI should not have to infer one from a missing
+          // host.
+          const active = market.activeAlgo(conn);
+          const pool = algos.fallbackPool(active);
+          const strat = config.get(conn, 'strategy');
+          return {
+            available: !!pool,
+            algo_short: algos.get(active).short,
+            unavailable_reason: pool ? null
+              : `No fallback pool accepts ${algos.get(active).short} work, so failover would send rented hashrate somewhere it cannot mine.`,
+            // Reported as off when the algorithm has no pool, whatever the stored
+            // setting says, so the UI can never show a safety net that is not there.
+            enabled: !!pool && !!strat.fallback_pool_enabled,
+            reroute_dead_rigs: !!pool && !!strat.dead_rig_reroute_enabled,
+            pool: pool ? pool.name : null,
+            host: pool ? pool.host : null,
+            port: pool ? pool.port : null,
+            worker: pool && ep ? fallbackWorker(ep.worker_base) : null,
+          };
+        })(),
       hashgg_host_set: !!process.env.HASHGG_HOST,
       alerts: alerts.listActive(conn),
     });

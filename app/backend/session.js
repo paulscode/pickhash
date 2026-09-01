@@ -106,14 +106,27 @@ function insertDecision(conn, sessionId, dryRun, fields) {
   );
 }
 
-// Ocean fallback pool (priority 1): a safety net that only engages if the primary endpoint drops.
-// Ocean runs real vardiff (so a rig starved by an endpoint difficulty mismatch actually hashes) and
-// pays out to the SAME Bitcoin address, so a fallback still earns for the user — and MRR can't deny a
-// refund for "no backup pool". The '.fallback' worker tag makes fallback hashrate obvious on Ocean.
-const OCEAN_FALLBACK = { host: 'bip110.mine.ocean.xyz', port: 3110 };
-function oceanFallbackWorker(workerBase) {
+// Fallback pool (priority 1): a safety net that only engages if the primary endpoint
+// drops. Which pool, or whether there is one at all, is a property of the algorithm —
+// see algos.js. The '.fallback' worker tag makes fallback hashrate obvious on the pool.
+function fallbackWorker(workerBase) {
   const address = String(workerBase || '').split('.')[0];   // strip any '.worker' suffix -> the BTC address
   return address ? `${address}.fallback` : null;
+}
+
+/**
+ * The pool a rental should fall back to, or null for none.
+ *
+ * Both conditions have to hold: the user has the safety net switched on, AND the
+ * active algorithm has a pool that can actually accept its work. Resolving them
+ * together, here, is the point — callers pass this object rather than a boolean, so
+ * there is no way to express "fallback enabled" and have it mean Ocean on an
+ * algorithm Ocean cannot serve. That would keep the rental billing and produce
+ * nothing, at the moment something has already gone wrong.
+ */
+function resolveFallbackPool(conn) {
+  if (!config.getKey(conn, 'strategy', 'fallback_pool_enabled')) return null;
+  return algos.fallbackPool(market.activeAlgo(conn));
 }
 
 /** Create one real rental + apply the per-rental worker pool override. Impure. */
@@ -142,13 +155,14 @@ async function rentOne(client, intent, endpoint, opts = {}) {
   // Optional Ocean fallback at priority 1. Best-effort: a failure here just means this rental has no
   // safety net — it still runs on the primary, so never fail the rental over it.
   let fallback = 'off';
-  const fbWorker = opts.fallbackOcean ? oceanFallbackWorker(endpoint.worker_base) : null;
-  if (fbWorker) {
-    fallback = 'ocean';
+  const pool = opts.fallbackPool || null;
+  const fbWorker = pool ? fallbackWorker(endpoint.worker_base) : null;
+  if (pool && fbWorker) {
+    fallback = 'on';
     try {
-      await client.put(`/rental/${mrrId}/pool/1`, { host: OCEAN_FALLBACK.host, port: OCEAN_FALLBACK.port, user: fbWorker, pass: 'x', priority: 1 });
+      await client.put(`/rental/${mrrId}/pool/1`, { host: pool.host, port: pool.port, user: fbWorker, pass: 'x', priority: 1 });
     } catch {
-      fallback = 'ocean_failed';
+      fallback = 'failed';
     }
   }
   return { mrrId, worker, poolOverride, fallback, created };
@@ -272,7 +286,7 @@ async function startSession(conn, client, quoteId, opts = {}) {
  */
 async function executeSession(conn, client, stored, { dryRun, sessionId, confirmedSats }) {
   const endpoint = stored.endpoint;
-  const fallbackOcean = !!config.get(conn, 'strategy').fallback_pool_enabled;   // Ocean safety-net at priority 1
+  const fallbackPool = resolveFallbackPool(conn);   // null when off, or when the algorithm has no pool
   // Hard spend ceiling: the user's actual budget (budget-locked modes) or, when the spend
   // itself was the computed output, the total they confirmed. NO headroom — a pricier
   // re-packed replacement for a taken rig must never push spend past this, so the gate
@@ -341,7 +355,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
       // LIVE create — no retry on an ambiguous outcome.
       let res;
       try {
-        res = await rentOne(client, intent, endpoint, { fallbackOcean });
+        res = await rentOne(client, intent, endpoint, { fallbackPool });
       } catch (e) {
         if (e instanceof MrrAmbiguousError) {
           insertDecision(conn, sessionId, dryRun, { executed: { ambiguous: true, rig: intent.rigId }, note: 'ambiguous_halt: create outcome unknown — not retried, reconcile next tick' });
@@ -544,4 +558,4 @@ async function stopSession(conn, client = null) {
   return { stopped: true, state: 'ended' };
 }
 
-module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapUnitDay, SessionError, OCEAN_FALLBACK, oceanFallbackWorker };
+module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapUnitDay, SessionError, fallbackWorker, resolveFallbackPool };

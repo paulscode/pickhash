@@ -17,7 +17,7 @@
 const config = require('../config');
 const market = require('../market');
 const alerts = require('../alerts');
-const session = require('../session');   // OCEAN_FALLBACK + oceanFallbackWorker (shared with rent-time setup)
+const session = require('../session');   // fallback pool resolution, shared with rent-time setup
 
 /**
  * The owner notice (plain text; MRR renders it, the rig owner is the recipient). Every factual claim
@@ -48,7 +48,11 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
   const nowMs = opts.now || Date.now();
   const nowSec = Math.floor(nowMs / 1000);
   if (!config.getKey(conn, 'strategy', 'dead_rig_reroute_enabled')) return { ran: false, reason: 'disabled' };
-  if (!config.getKey(conn, 'strategy', 'fallback_pool_enabled')) return { ran: false, reason: 'no_fallback_pool' };
+  // Resolves the setting AND the algorithm together. Rerouting a stuck rig to a pool
+  // that cannot accept its work turns a rig delivering nothing into a rig delivering
+  // nothing somewhere else, still billing.
+  const pool = session.resolveFallbackPool(conn);
+  if (!pool) return { ran: false, reason: 'no_fallback_pool' };
   // Only when the pool endpoint is healthy. If it's down, EVERY rig goes offline — that's an endpoint
   // problem (endpoint-repair / MRR's own failover), not a per-rig one, and rerouting each individually
   // would be exactly wrong.
@@ -82,10 +86,10 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
       mark(rental, 'dry_run'); return { ran: true, decided: 'dry_run', mrr_id: Number(mrrId) };
     }
     if (!client) return { ran: false, reason: 'no_client' };
-    const worker = session.oceanFallbackWorker(endpoint.worker_base);
+    const worker = session.fallbackWorker(endpoint.worker_base);
     try {
       // Promote Ocean to THIS rental's primary pool. Per-rental, so peers are untouched.
-      await client.put(`/rental/${mrrId}/pool/0`, { host: session.OCEAN_FALLBACK.host, port: session.OCEAN_FALLBACK.port, user: worker, pass: 'x', priority: 0 });
+      await client.put(`/rental/${mrrId}/pool/0`, { host: pool.host, port: pool.port, user: worker, pass: 'x', priority: 0 });
     } catch { return { ran: false, reason: 'reroute_failed' }; }   // no marker -> retry next tick
     // Mark rerouted BEFORE the (best-effort) owner message: a message failure must never re-reroute.
     conn.prepare('UPDATE rentals SET rerouted_ocean = 1 WHERE mrr_id = ?').run(mrrId);

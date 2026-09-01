@@ -158,26 +158,36 @@
         </div>
       </div>
       <p x-show="duckdnsEnabled" x-cloak class="text-xs font-mono text-neon-green">✓ Using <span x-text="duckdnsName"></span> — new rentals point here.</p>
-      <!-- Ocean fallback (on by default) — called out here so the user is aware and can opt out. -->
-      <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
-        <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
+      <!-- Fallback pool (on by default where the algorithm has one) — called out here so the user is aware and can opt out. -->
+      <!-- No fallback pool for this algorithm. Stated rather than hidden: the switch is
+           on by default for the other one, so a silent absence reads as a safety net
+           that is quietly missing. -->
+      <div x-show="fallbackKnown && !fallbackAvailable" x-cloak class="bg-navy-800/50 border border-navy-600 rounded-lg p-3">
+        <p class="text-xs font-mono text-gray-400 leading-relaxed">
+          <span class="text-gray-300">No fallback pool for <span x-text="algoShort"></span>.</span>
+          <span x-text="fallbackReason"></span>
+          Your rentals mine to your own node as usual; there is simply no second pool behind them.
+        </p>
+      </div>
+      <label x-show="fallbackKnown && fallbackAvailable" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
+        <input type="checkbox" x-model="fallbackEnabled" @change="saveFallbackEnabled()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">
-          <span class="text-neon-flame">Fall back to Ocean if your endpoint drops</span> (recommended).
+          <span class="text-neon-flame">Fall back to <span x-text="fallbackPoolName"></span> if your endpoint drops</span> (recommended).
           Your rented hashrate normally mines your own templates through your node. If that becomes
-          unreachable, it fails over to <span class="text-white">Ocean</span> — mining to your
+          unreachable, it fails over to <span class="text-white" x-text="fallbackPoolName"></span> — mining to your
           <span class="text-white">same Bitcoin address</span> — so no rented time is wasted and the
           marketplace can't deny a refund for having no backup. It only engages on failure; change it
           anytime in Settings.
         </span>
       </label>
-      <!-- Dead-rig reroute: a sub-option of the Ocean fallback. Shown only while Ocean is on, so the
-           two settings read as connected; turning Ocean off hides and disables it. -->
-      <label x-show="fallbackOcean" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
+      <!-- Dead-rig reroute: a sub-option of the fallback pool. Shown only while the fallback
+           is on, so the two settings read as connected; turning it off hides and disables it. -->
+      <label x-show="fallbackKnown && fallbackAvailable && fallbackEnabled" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
         <input type="checkbox" x-model="rerouteDeadRigs" @change="saveRerouteDeadRigs()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">
-          <span class="text-neon-flame">Also reroute a stuck rig to Ocean</span> (recommended).
+          <span class="text-neon-flame">Also reroute a stuck rig to <span x-text="fallbackPoolName"></span></span> (recommended).
           If a rented rig connects but never mines here — offline ~10 min while your other rented rigs
-          are mining fine — switch just that one rig to <span class="text-white">Ocean</span> and message
+          are mining fine — switch just that one rig to <span class="text-white" x-text="fallbackPoolName"></span> and message
           its owner. Targets only the stuck rig; the rest keep mining to your node.
         </span>
       </label>
@@ -938,22 +948,32 @@
         <span class="text-xs font-mono text-gray-300">Endpoint name: <span class="text-neon-green" x-text="duckdnsName"></span> <span class="text-gray-500">(DuckDNS)</span></span>
         <button type="button" @click="disableDuckdns()" :disabled="duckdnsBusy" class="text-xs font-mono text-gray-400 hover:text-neon-pink underline disabled:opacity-50">Use raw IP</button>
       </div>
-      <label class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
-        <input type="checkbox" x-model="fallbackOcean" @change="saveFallbackOcean()" class="mt-0.5" style="accent-color:#ff7847">
+      <!-- No fallback pool for this algorithm. Stated rather than hidden: the switch is
+           on by default for the other one, so a silent absence reads as a safety net
+           that is quietly missing. -->
+      <div x-show="fallbackKnown && !fallbackAvailable" x-cloak class="bg-navy-800/50 border border-navy-600 rounded-lg p-3">
+        <p class="text-xs font-mono text-gray-400 leading-relaxed">
+          <span class="text-gray-300">No fallback pool for <span x-text="algoShort"></span>.</span>
+          <span x-text="fallbackReason"></span>
+          Your rentals mine to your own node as usual; there is simply no second pool behind them.
+        </p>
+      </div>
+      <label x-show="fallbackKnown && fallbackAvailable" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 cursor-pointer">
+        <input type="checkbox" x-model="fallbackEnabled" @change="saveFallbackEnabled()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">
-          <span class="text-neon-flame">Fall back to Ocean if this endpoint drops</span> (recommended).
+          <span class="text-neon-flame">Fall back to <span x-text="fallbackPoolName"></span> if this endpoint drops</span> (recommended).
           Rented hashrate normally mines your own templates here; if this endpoint becomes unreachable it
-          fails over to <span class="text-white">Ocean</span>, mining to your <span class="text-white">same
+          fails over to <span class="text-white" x-text="fallbackPoolName"></span>, mining to your <span class="text-white">same
           Bitcoin address</span> — so no rented time is wasted. Only engages on failure.
         </span>
       </label>
-      <!-- Dead-rig reroute: sub-option of the Ocean fallback; shown only while Ocean is on. -->
-      <label x-show="fallbackOcean" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
+      <!-- Dead-rig reroute: sub-option of the fallback pool; shown only while it is on. -->
+      <label x-show="fallbackKnown && fallbackAvailable && fallbackEnabled" x-cloak class="flex items-start gap-2.5 bg-navy-800/50 border border-neon-flame/25 rounded-lg p-3 ml-6 cursor-pointer">
         <input type="checkbox" x-model="rerouteDeadRigs" @change="saveRerouteDeadRigs()" class="mt-0.5" style="accent-color:#ff7847">
         <span class="text-xs font-mono text-gray-300 leading-relaxed">
-          <span class="text-neon-flame">Also reroute a stuck rig to Ocean</span> (recommended).
+          <span class="text-neon-flame">Also reroute a stuck rig to <span x-text="fallbackPoolName"></span></span> (recommended).
           If a rented rig connects but never mines here — offline ~10 min while your other rented rigs
-          are mining fine — switch just that one rig to <span class="text-white">Ocean</span> and message
+          are mining fine — switch just that one rig to <span class="text-white" x-text="fallbackPoolName"></span> and message
           its owner. Targets only the stuck rig; the rest keep mining to your node.
         </span>
       </label>

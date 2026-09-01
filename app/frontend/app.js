@@ -134,8 +134,18 @@ document.addEventListener('alpine:init', () => {
     // history view
     showHistory: false, historySessions: [], historyEmpty: false, appReady: false,
     showSettings: false, settingsGroups: [], diagText: { mrr: '', mode: '', tick: '', hashgg: '', fallback: '' },
-    fallbackOcean: true,
-    rerouteDeadRigs: true,   // sub-option of the Ocean fallback (surfaced beside it, not in the generic list)
+    fallbackEnabled: true,
+    rerouteDeadRigs: true,   // sub-option of the fallback pool (surfaced beside it, not in the generic list)
+    // Whether the ACTIVE algorithm has a fallback pool at all, which is a different
+    // question from whether the user wants one. Defaults true so the card does not
+    // flash its "unavailable" state on first paint before /api/diag answers.
+    fallbackAvailable: true,
+    fallbackPoolName: 'the fallback pool',
+    // Nothing about the fallback is shown until /api/diag has answered, so neither the
+    // switch nor the "unavailable" notice can flash the wrong state on first paint.
+    fallbackKnown: false,
+    fallbackReason: '',
+    algoShort: '',
     showMarket: false, marketEmpty: false, hasMarket: false, mktSummary: '', cheapText: '', cheapSub: '', cheapClass: '', marketRegions: [], regionsEmpty: false,
     // The active algorithm's price unit, from the API. Every "sats/<unit>·day" label
     // reads from this rather than hardcoding PH, which is only right for sha256ab.
@@ -507,7 +517,7 @@ document.addEventListener('alpine:init', () => {
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
         rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
-        rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the Ocean fallback${c.messaged ? ' and messaged the owner' : ''}`,
+        rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the fallback pool${c.messaged ? ' and messaged the owner' : ''}`,
         duckdns_update_failed: `Your endpoint's IP changed but the DuckDNS name couldn't be updated${c.name ? ` (${c.name}.duckdns.org)` : ''} — it may point at the old IP. Check your DuckDNS token.`,
       };
       return map[a.kind] || a.kind;
@@ -963,8 +973,14 @@ document.addEventListener('alpine:init', () => {
       const m = d.mrr || {};
       this.skUser = m.configured ? `Connected as ${m.username || m.userid}` : 'Not connected';
       this.seHashggAvail = !!d.hashgg_host_set;
-      this.fallbackOcean = !!(d.fallback && d.fallback.enabled);   // reflect the saved setting on the endpoint card
-      this.rerouteDeadRigs = !!(d.fallback && d.fallback.reroute_dead_rigs);
+      const fb = d.fallback || {};
+      this.fallbackAvailable = fb.available !== false;
+      this.fallbackPoolName = fb.pool || 'the fallback pool';
+      this.fallbackReason = fb.unavailable_reason || '';
+      this.algoShort = fb.algo_short || '';
+      this.fallbackKnown = true;
+      this.fallbackEnabled = !!fb.enabled;   // reflect the saved setting on the endpoint card
+      this.rerouteDeadRigs = !!fb.reroute_dead_rigs;
       this.seIsIp = !!(d.endpoint && d.endpoint.is_ip);
       this.duckdnsEnabled = !!(d.duckdns && d.duckdns.enabled);
       this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
@@ -1057,12 +1073,12 @@ document.addEventListener('alpine:init', () => {
       if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
     },
-    // Persist the setup-wizard Ocean-fallback toggle (default on server-side, so only a change needs saving).
-    async saveFallbackOcean() {
-      // The reroute sub-option only makes sense with the Ocean fallback on. Turning Ocean off turns it
+    // Persist the setup-wizard fallback toggle (default on server-side, so only a change needs saving).
+    async saveFallbackEnabled() {
+      // The reroute sub-option only makes sense with the fallback on. Turning the fallback off turns it
       // off too (and hides it); the backend also no-ops it without the fallback, so the two stay in sync.
-      const patch = { fallback_pool_enabled: this.fallbackOcean };
-      if (!this.fallbackOcean && this.rerouteDeadRigs) { this.rerouteDeadRigs = false; patch.dead_rig_reroute_enabled = false; }
+      const patch = { fallback_pool_enabled: this.fallbackEnabled };
+      if (!this.fallbackEnabled && this.rerouteDeadRigs) { this.rerouteDeadRigs = false; patch.dead_rig_reroute_enabled = false; }
       await this.send('POST', '/api/config', { ns: 'strategy', patch });
     },
     async saveRerouteDeadRigs() {
@@ -1116,7 +1132,7 @@ document.addEventListener('alpine:init', () => {
         mode: d.run_mode || '—',
         tick: e.last_tick_age_sec != null ? `${e.last_tick_age_sec}s ago · ${e.ticks_last_hour}/hr` : 'no ticks yet',
         hashgg: d.hashgg_host_set ? 'set' : 'not set (endpoint auto-repair off)',
-        fallback: (d.fallback && d.fallback.enabled) ? `Ocean · ${d.fallback.worker || 'your address'}` : 'off',
+        fallback: (d.fallback && d.fallback.enabled) ? `${d.fallback.pool} · ${d.fallback.worker || 'your address'}` : (d.fallback && d.fallback.available === false ? 'unavailable for this algorithm' : 'off'),
       };
     },
     async loadHistory() {
