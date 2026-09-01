@@ -1144,13 +1144,23 @@ document.addEventListener('alpine:init', () => {
           if (isBool) value = !!val;
           else if (isText) value = Array.isArray(val) ? val.join(', ') : (val || '');
           else value = (val == null ? '' : String(val));
-          return { key, label: spec.label || key, help: spec.help || '', unit: spec.unit || '', isBool, isEnum, isText, isNum, values: spec.values || [], value };
+          // `unavailable` means the active algorithm cannot use this setting at all.
+          // The control is disabled rather than hidden: it is on by default for the
+          // other algorithm, and a silently missing row reads as a feature that has
+          // quietly gone away. The help text carries the reason.
+          const unavailable = spec.unavailable === true;
+          return {
+            key, label: spec.label || key, help: spec.help || '', unit: spec.unit || '',
+            isBool, isEnum, isText, isNum, values: spec.values || [], value, unavailable,
+          };
         }),
       }));
     },
     async saveGroup(group) {
       const patch = {};
-      for (const f of group.fields) patch[f.key] = f.value;
+      // Skip what the active algorithm cannot use, so the browser never writes a
+      // setting that would only ever be ignored. The server refuses these too.
+      for (const f of group.fields) if (!f.unavailable) patch[f.key] = f.value;
       const r = await this.send('POST', '/api/config', { ns: group.ns, patch });
       if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }

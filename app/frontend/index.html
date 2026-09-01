@@ -932,12 +932,12 @@
         <template x-for="f in group.fields" :key="f.key">
           <div class="space-y-1 border-t border-navy-800 pt-3">
             <div class="flex items-center justify-between gap-3">
-              <label class="font-mono text-sm text-gray-300" x-text="f.label"></label>
+              <label :class="f.unavailable ? 'font-mono text-sm text-gray-600' : 'font-mono text-sm text-gray-300'" x-text="f.label"></label>
               <div class="flex items-center gap-2">
-                <input x-show="f.isNum" type="text" inputmode="decimal" x-model="f.value" class="w-32 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm text-right focus:border-neon-ember/50 focus:outline-none">
-                <input x-show="f.isText" type="text" x-model="f.value" class="w-44 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
-                <input x-show="f.isBool" type="checkbox" x-model="f.value" class="w-4 h-4 accent-neon-ember">
-                <select x-show="f.isEnum" x-model="f.value" class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm">
+                <input x-show="f.isNum" type="text" inputmode="decimal" :disabled="f.unavailable" x-model="f.value" class="w-32 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm text-right focus:border-neon-ember/50 focus:outline-none">
+                <input x-show="f.isText" type="text" :disabled="f.unavailable" x-model="f.value" class="w-44 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+                <input x-show="f.isBool" type="checkbox" :disabled="f.unavailable" x-model="f.value" class="w-4 h-4 accent-neon-ember">
+                <select x-show="f.isEnum" :disabled="f.unavailable" x-model="f.value" class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm">
                   <template x-for="opt in f.values" :key="opt"><option :value="opt" x-text="opt"></option></template>
                 </select>
                 <span class="font-mono text-xs text-gray-500 w-16" x-text="f.unit"></span>

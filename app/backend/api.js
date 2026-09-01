@@ -649,6 +649,15 @@ async function handleApi(req, res, url, body, ctx = {}) {
   if (p === '/api/config' && method === 'POST') {
     const ns = String(body.ns || '');
     if (!config.SETTINGS[ns]) return sendJson(res, 400, { error: 'bad_namespace' });
+    // A setting the active algorithm cannot use is refused rather than stored and
+    // ignored. Stored, it would sit there looking set, and mean nothing — which is
+    // the same shape as a guardrail that never fires.
+    const liveSchema = config.settings(conn)[ns] || {};
+    for (const key of Object.keys(body.patch || {})) {
+      if (liveSchema[key] && liveSchema[key].unavailable) {
+        return sendJson(res, 409, { error: 'unavailable_for_algorithm', field: key });
+      }
+    }
     const v = config.validatePatch(ns, body.patch || {});
     if (!v.ok) return sendJson(res, 400, { error: 'invalid_setting', field: v.field, reason: v.reason });
     config.set(conn, ns, v.patch);

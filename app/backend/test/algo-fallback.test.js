@@ -129,3 +129,41 @@ test('every algorithm either has a usable fallback pool or none at all', () => {
     assert.ok(pool.host && pool.port && pool.name, `${slug} fallback pool is fully specified`);
   }
 });
+
+test('the server refuses to store a setting the active algorithm cannot use', async () => {
+  const fsx = require('fs'); const osx = require('os'); const pathx = require('path');
+  const dbx = require('../db'); const { handleApi } = require('../api');
+  const dir = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'pickhash-un-'));
+  dbx.open(dir);
+  try {
+    const conn = dbx.get();
+    config.set(conn, 'setup', { completed: true });
+    config.set(conn, 'algorithm', { active: 'blake2b' });
+    const out = { status: 0, json: null };
+    const res = {
+      writeHead(s) { out.status = s; }, setHeader() {},
+      end(payload) { try { out.json = JSON.parse(payload); } catch { out.json = payload; } },
+    };
+    await handleApi(
+      { method: 'POST', headers: {}, url: '/api/config' }, res,
+      new URL('/api/config', 'http://x'),
+      { ns: 'strategy', patch: { fallback_pool_enabled: true } }, { dataDir: dir },
+    );
+    // Stored, it would sit there looking set and mean nothing, which is the same shape
+    // as a guardrail that never fires.
+    assert.equal(out.status, 409);
+    assert.equal(out.json.error, 'unavailable_for_algorithm');
+    assert.equal(out.json.field, 'fallback_pool_enabled');
+    assert.equal(config.getKey(conn, 'strategy', 'fallback_pool_enabled'), false, 'unchanged');
+
+    // A setting the algorithm CAN use still saves.
+    out.status = 0;
+    await handleApi(
+      { method: 'POST', headers: {}, url: '/api/config' }, res,
+      new URL('/api/config', 'http://x'),
+      { ns: 'strategy', patch: { min_rpi: 77 } }, { dataDir: dir },
+    );
+    assert.equal(out.status, 200);
+    assert.equal(config.getKey(conn, 'strategy', 'min_rpi'), 77);
+  } finally { dbx.close(); fsx.rmSync(dir, { recursive: true, force: true }); }
+});
