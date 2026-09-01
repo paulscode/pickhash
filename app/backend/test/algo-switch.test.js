@@ -140,3 +140,76 @@ test('status and config both describe the algorithm the same way', async () => {
     assert.deepEqual(cfg.json.algorithm.choices.map((c) => c.slug), algos.SLUGS);
   });
 });
+
+test('nothing the setup wizard can click calls an endpoint the setup gate closes', () => {
+  /*
+   * The wizard runs before setup completes, when every route but a named few answers
+   * 412. A handler on a wizard control that calls a gated route fails silently: the
+   * control moves, the setting does not, and the only sign is a line in the browser
+   * console. Switching algorithm did exactly that, and so did both fallback toggles.
+   *
+   * Derived rather than listed, because the wizard gains controls over time and the
+   * gate is not obvious from the frontend.
+   */
+  const root = path.join(__dirname, '..', '..');
+  const html = fs.readFileSync(path.join(root, 'frontend', 'index.html'), 'utf8');
+  const js = fs.readFileSync(path.join(root, 'frontend', 'app.js'), 'utf8');
+  const api = fs.readFileSync(path.join(root, 'backend', 'api.js'), 'utf8');
+
+  // What the server actually leaves open, read from the gate itself.
+  const gate = api.indexOf("if (!isSetupComplete(conn)) return sendJson(res, 412");
+  assert.notEqual(gate, -1, 'the setup gate moved; update this test');
+  const open = new Set([...api.slice(0, gate).matchAll(/p === '(\/api\/[a-z0-9/_-]+)'/g)].map((m) => m[1]));
+
+  // The wizard is the x-show="sN" step blocks.
+  const steps = [...html.matchAll(/x-show="s\d"/g)].map((m) => m.index);
+  assert.ok(steps.length, 'no wizard steps found; update this test');
+  let region = html.slice(steps[0]);
+  for (const marker of ['id="app"', 'x-show="showApp"', '============ SETTINGS']) {
+    const k = region.indexOf(marker);
+    if (k > 0) { region = region.slice(0, k); break; }
+  }
+  const handlers = [...new Set([...region.matchAll(/(?:@click|@change|@submit)(?:\.\w+)*="(\w+)\(/g)].map((m) => m[1]))];
+  assert.ok(handlers.length > 3, 'wizard handlers not found; update this test');
+
+  // Resolve what a handler reaches, not just what it calls directly. switchAlgorithm
+  // hit /api/config through loadSettings(), one level down, which is exactly how the
+  // bug survived review.
+  const bodyOf = (name) => {
+    const m = new RegExp(`\\b${name}\\s*\\([^)]*\\)\\s*\\{`).exec(js);
+    if (!m) return null;
+    let depth = 0;
+    for (let i = m.index + m[0].length - 1; i < js.length; i++) {
+      if (js[i] === '{') depth++;
+      else if (js[i] === '}' && --depth === 0) return js.slice(m.index + m[0].length, i);
+    }
+    return null;
+  };
+
+  const problems = [];
+  for (const entry of handlers) {
+    const seen = new Set();
+    const queue = [entry];
+    while (queue.length) {
+      const name = queue.shift();
+      if (seen.has(name) || seen.size > 40) continue;
+      seen.add(name);
+      const body = bodyOf(name);
+      if (body === null) continue;
+      // A body that returns early unless appReady never runs in the wizard, so neither
+      // its own calls nor anything it would have called counts. The guard may sit on the
+      // handler or on a helper it shares, and both are fine.
+      if (/!this\.appReady/.test(body)) continue;
+      const completesAt = body.indexOf('/api/setup/complete');
+      for (const call of body.matchAll(/(?:send|getJson)\(\s*(?:'\w+',\s*)?'(\/api\/[a-z0-9/_-]+)/g)) {
+        if (open.has(call[1])) continue;
+        if (completesAt !== -1 && call.index > completesAt) continue;
+        problems.push(`${entry}() reaches ${call[1]} via ${name}(), which the setup gate closes`);
+      }
+      for (const inner of body.matchAll(/this\.(\w+)\(/g)) queue.push(inner[1]);
+    }
+  }
+
+  assert.deepEqual([...new Set(problems)], [],
+    `a wizard control calls a route that returns 412 before setup completes:\n${[...new Set(problems)].join('\n')}`);
+});

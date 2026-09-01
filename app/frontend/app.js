@@ -550,7 +550,7 @@ document.addEventListener('alpine:init', () => {
       const map = {
         rental_underdelivering: `${c.name || 'A rig'} is under-delivering (${c.percent != null ? Math.round(c.percent) + '%' : 'low'})`,
         rental_offline: `${c.name || 'A rig'} is offline`,
-        endpoint_down: `Your pool endpoint is unreachable — new rentals are paused`,
+        endpoint_down: `Your stratum endpoint is unreachable — new rentals are paused`,
         mrr_api_outage: `MiningRigRentals API is unreachable`,
         balance_low: `Low balance — about ${c.runway_hours != null ? c.runway_hours + 'h' : 'little'} of runway left`,
         deposit_seen: `Deposit detected — waiting for confirmations`,
@@ -559,7 +559,7 @@ document.addEventListener('alpine:init', () => {
         session_ended: `Session ended`,
         refund_received: `Refund received`,
         needs_reconcile: `A rental's outcome was unclear — check MiningRigRentals for an untracked rental${c.name ? ` (${c.name})` : ''}`,
-        endpoint_repaired: `Your pool endpoint moved${c.to ? ` to ${c.to.host}:${c.to.port}` : ''} — active rentals were re-pointed to it`,
+        endpoint_repaired: `Your stratum endpoint moved${c.to ? ` to ${c.to.host}:${c.to.port}` : ''} — active rentals were re-pointed to it`,
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
         rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
@@ -785,7 +785,7 @@ document.addEventListener('alpine:init', () => {
         if (silent) return;   // keep the last good quote on a transient background failure
         this.quote = null;
         this.quoteError = r.json.error === 'missing_inputs' ? 'Fill in the two fields above to get a quote.'
-          : r.json.error === 'no_endpoint' ? 'No pool endpoint is configured.'
+          : r.json.error === 'no_endpoint' ? 'No stratum endpoint is configured.'
           : 'Could not price a quote right now — try again in a moment.';
         return;
       }
@@ -992,6 +992,14 @@ document.addEventListener('alpine:init', () => {
       this.applyAlgorithm(r.json.algorithm);
       this.unitKnown = false;   // adopt the new algorithm's display unit
       this.algoNoteClass = 'text-neon-green';
+      // The wizard cannot reload any of this. Only the algorithm route sits above the
+      // setup gate, so /api/config answers 412 there, and refresh() would restart the
+      // wizard. Nothing needs reloading anyway: no endpoint has been saved yet and there
+      // is no settings page on screen.
+      if (!this.appReady) {
+        this.algoNote = `Now renting ${this.algoDisplay}. The endpoint you save next belongs to it.`;
+        return;
+      }
       this.algoNote = `Now renting ${this.algoDisplay}. Guardrails, endpoint and display unit have followed.`;
       // Everything on screen was priced against the other market.
       await this.loadSettings();
@@ -1191,16 +1199,27 @@ document.addEventListener('alpine:init', () => {
       if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
     },
-    // Persist the setup-wizard fallback toggle (default on server-side, so only a change needs saving).
+    // The wizard shows these toggles but cannot save them: /api/config is behind the
+    // setup gate. Posting anyway returns 412 and the checkbox silently disagrees with
+    // the stored setting, so a user who opts out of the fallback during setup gets it
+    // anyway. Hold the patch and send it once setup completes.
+    pendingStrategy: null,
+    async saveStrategy(patch) {
+      if (!this.appReady) {
+        this.pendingStrategy = { ...(this.pendingStrategy || {}), ...patch };
+        return;
+      }
+      await this.send('POST', '/api/config', { ns: 'strategy', patch });
+    },
     async saveFallbackEnabled() {
       // The reroute sub-option only makes sense with the fallback on. Turning the fallback off turns it
       // off too (and hides it); the backend also no-ops it without the fallback, so the two stay in sync.
       const patch = { fallback_pool_enabled: this.fallbackEnabled };
       if (!this.fallbackEnabled && this.rerouteDeadRigs) { this.rerouteDeadRigs = false; patch.dead_rig_reroute_enabled = false; }
-      await this.send('POST', '/api/config', { ns: 'strategy', patch });
+      await this.saveStrategy(patch);
     },
     async saveRerouteDeadRigs() {
-      await this.send('POST', '/api/config', { ns: 'strategy', patch: { dead_rig_reroute_enabled: this.rerouteDeadRigs } });
+      await this.saveStrategy({ dead_rig_reroute_enabled: this.rerouteDeadRigs });
     },
     // --- DuckDNS: give a raw-IP endpoint a stable name ---
     async setupDuckdns() {
@@ -1481,7 +1500,7 @@ document.addEventListener('alpine:init', () => {
           : (e === 'session_active' || e === 'session_in_progress') ? 'A session is already running — stop it in the “Active rentals” card above before starting another.'
           : e === 'quote_expired' ? 'This quote expired — close this and get a fresh one.'
           : e === 'algorithm_changed' ? 'The algorithm changed while this quote was open — close this and get a fresh one.'
-          : e === 'endpoint_down' ? 'Your pool endpoint is unreachable right now — renting would pay for hashrate that can’t reach it. Wait for the connection to recover, then try again.'
+          : e === 'endpoint_down' ? 'Your stratum endpoint is unreachable right now — renting would pay for hashrate that can’t reach it. Wait for the connection to recover, then try again.'
           : 'Could not start the session — try again in a moment.';
         return;
       }
@@ -1511,6 +1530,12 @@ document.addEventListener('alpine:init', () => {
     async finish() {
       this.error = ''; this.busy = true;
       const r = await this.send('POST', '/api/setup/complete');
+      // Setup is complete, so /api/config answers now. Send what the wizard collected
+      // before reloading into the app.
+      if (r.ok && this.pendingStrategy) {
+        await this.send('POST', '/api/config', { ns: 'strategy', patch: this.pendingStrategy });
+        this.pendingStrategy = null;
+      }
       this.busy = false;
       if (r.ok) window.location.reload();
       else this.error = 'Could not finish setup.';

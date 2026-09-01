@@ -125,9 +125,9 @@
       <button type="submit" :disabled="busy" class="bg-neon-ember/15 border border-neon-ember/30 text-neon-ember font-medium rounded-lg px-4 py-2.5 hover:bg-neon-ember/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="busy" x-cloak class="animate-pulse-neon">● </span>Connect</button>
     </form>
 
-    <!-- Step 2: pool endpoint -->
+    <!-- Step 2: stratum endpoint -->
     <div x-show="s2" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
-      <h2 class="font-mono text-lg text-neon-ember">Your pool endpoint</h2>
+      <h2 class="font-mono text-lg text-neon-ember">Your stratum endpoint</h2>
       <!-- The algorithm, before the endpoint rather than after it. The saved endpoint
            belongs to whichever algorithm is active, so choosing afterwards would mean
            configuring a stratum and then finding it belongs to the algorithm just left.
