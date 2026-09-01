@@ -221,9 +221,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (probe.gotWork) {
       conn.prepare('UPDATE pool_endpoints SET active = 0').run();
       conn.prepare(
-        `INSERT INTO pool_endpoints (name, source, host, port, worker_base, stratum_diff, last_test_json, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-      ).run(`endpoint:${host}:${port}`, 'manual', host, port, user, probe.difficulty,
+        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, last_test_json, active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      ).run(market.activeAlgo(conn), `endpoint:${host}:${port}`, 'manual', host, port, user, probe.difficulty,
         JSON.stringify({ probe, mrrAdvisory, isIp, at: Math.floor(Date.now() / 1000) }));
       // If the endpoint identity changed out from under an active DuckDNS name (the user saved a
       // different host), disable DuckDNS — the name tracked the old endpoint. They can re-enable it

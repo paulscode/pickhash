@@ -6,6 +6,7 @@
  * arming/debounce arrives later — for now these are written directly.)
  */
 const units = require('./units');
+const market = require('./market');
 const config = require('./config');
 
 /** Extract the BTC deposit address from a GET /account response. Shape verified against the live API. */
@@ -49,8 +50,8 @@ async function pollOnce(conn, client, now = Math.floor(Date.now() / 1000)) {
   const prev = config.get(conn, 'deposit_watch');
   const events = depositTransitions(prev, next);
   for (const e of events) {
-    conn.prepare('INSERT INTO alerts (kind, severity, state, fired_at, context_json) VALUES (?, ?, ?, ?, ?)')
-      .run(e.kind, 'info', 'fired', now, JSON.stringify(e));
+    conn.prepare('INSERT INTO alerts (algo, kind, severity, state, fired_at, context_json) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(market.activeAlgo(conn), e.kind, 'info', 'fired', now, JSON.stringify(e));
   }
   config.set(conn, 'deposit_watch', next);
   return { balance: next, events };

@@ -10,6 +10,7 @@
  * fire `refund_received`. Idempotent: each transaction id is applied once (applied_refunds).
  */
 const accounting = require('./accounting');
+const market = require('../market');
 const ledger = require('./ledger');
 const alerts = require('../alerts');
 
@@ -66,8 +67,8 @@ async function reconcile(conn, client, nowSec, refundWatchDays) {
   for (const m of matches) {
     // Gate the money mutation on the idempotency insert ACTUALLY happening — never double-
     // credit a tx that's already applied.
-    const info = conn.prepare('INSERT OR IGNORE INTO applied_refunds (tx_id, rental_mrr_id, sats, applied_at) VALUES (?, ?, ?, ?)')
-      .run(m.tx_id, m.mrr_id, m.refund_sats, nowSec);
+    const info = conn.prepare('INSERT OR IGNORE INTO applied_refunds (algo, tx_id, rental_mrr_id, sats, applied_at) VALUES (?, ?, ?, ?, ?)')
+      .run(market.activeAlgo(conn), m.tx_id, m.mrr_id, m.refund_sats, nowSec);
     if (info.changes === 0) continue;
     conn.prepare('UPDATE rentals SET refund_sats = COALESCE(refund_sats, 0) + ?, refunded = 1 WHERE mrr_id = ?')
       .run(m.refund_sats, m.mrr_id);

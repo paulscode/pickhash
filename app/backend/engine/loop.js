@@ -14,6 +14,7 @@
  * the whole MRR world.
  */
 const observeModule = require('./observe');
+const market = require('../market');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -53,10 +54,10 @@ function buildTickMetrics(snapshot, now) {
 function persistTick(conn, snapshot, now) {
   const m = buildTickMetrics(snapshot, now);
   conn.prepare(`INSERT OR REPLACE INTO tick_metrics
-    (ts, session_id, delivered_th, target_th, active_rentals, spent_sats, balance_confirmed_sats,
+    (algo, ts, session_id, delivered_th, target_th, active_rentals, spent_sats, balance_confirmed_sats,
      balance_unconfirmed_sats, market_lowest, market_last10, endpoint_ok, mrr_ok, hashgg_ok)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    m.ts, m.session_id, m.delivered_th, m.target_th, m.active_rentals, m.spent_sats,
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    market.activeAlgo(conn), m.ts, m.session_id, m.delivered_th, m.target_th, m.active_rentals, m.spent_sats,
     m.balance_confirmed_sats, m.balance_unconfirmed_sats, m.market_lowest, m.market_last10,
     m.endpoint_ok, m.mrr_ok, m.hashgg_ok);
   return m;

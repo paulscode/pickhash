@@ -15,6 +15,7 @@
  * so nothing yanks its pool/0 back or double-messages the owner.
  */
 const config = require('../config');
+const market = require('../market');
 const alerts = require('../alerts');
 const session = require('../session');   // OCEAN_FALLBACK + oceanFallbackWorker (shared with rent-time setup)
 
@@ -58,8 +59,8 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
 
   const offline = conn.prepare("SELECT DISTINCT key FROM alerts WHERE kind = 'rental_offline' AND state = 'fired'").all().map((a) => String(a.key));
   const dryRun = (config.getKey(conn, 'run', 'mode') || 'dry-run') !== 'live';
-  const mark = (rental, note) => conn.prepare('INSERT INTO decisions (ts, session_id, dry_run, note) VALUES (?, ?, ?, ?)')
-    .run(nowSec, rental.session_id, dryRun ? 1 : 0, `reroute_ocean:${rental.mrr_id}:${note}`);
+  const mark = (rental, note) => conn.prepare('INSERT INTO decisions (algo, ts, session_id, dry_run, note) VALUES (?, ?, ?, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec, rental.session_id, dryRun ? 1 : 0, `reroute_ocean:${rental.mrr_id}:${note}`);
 
   let sawNoPeer = false;
   for (const mrrId of offline) {

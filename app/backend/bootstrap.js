@@ -17,8 +17,8 @@ function nowSec() { return Math.floor(Date.now() / 1000); }
 function asArray(v) { return Array.isArray(v) ? v : []; }
 
 function decision(conn, note, executed) {
-  conn.prepare('INSERT INTO decisions (ts, dry_run, note, executed_json) VALUES (?, 0, ?, ?)')
-    .run(nowSec(), note, JSON.stringify(executed ?? null));
+  conn.prepare('INSERT INTO decisions (algo, ts, dry_run, note, executed_json) VALUES (?, ?, 0, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec(), note, JSON.stringify(executed ?? null));
 }
 
 function endpointPoolName(ep) { return `pickhash:${ep.host}:${ep.port}`; }

@@ -1,4 +1,5 @@
 'use strict';
+const market = require('./market');
 /*
  * Alert evaluator (state-transition machinery).
  *
@@ -55,8 +56,8 @@ function runTransition(conn, { kind, key = null, bad, now, thresholdMs = 0, cont
   const cur = currentActive(conn, kind, key);
   if (bad) {
     if (!cur) {
-      const info = conn.prepare('INSERT INTO alerts (kind, key, severity, state, armed_at, context_json) VALUES (?,?,?,?,?,?)')
-        .run(kind, key, SEVERITY[kind] || 'warning', 'armed', now, JSON.stringify(context));
+      const info = conn.prepare('INSERT INTO alerts (algo, kind, key, severity, state, armed_at, context_json) VALUES (?,?,?,?,?,?,?)')
+        .run(market.activeAlgo(conn), kind, key, SEVERITY[kind] || 'warning', 'armed', now, JSON.stringify(context));
       if (thresholdMs <= 0) {
         conn.prepare("UPDATE alerts SET state='fired', fired_at=? WHERE id=?").run(now, info.lastInsertRowid);
         return { event: 'fired', kind, key, id: Number(info.lastInsertRowid), context };
@@ -88,8 +89,8 @@ function runTransition(conn, { kind, key = null, bad, now, thresholdMs = 0, cont
 function raiseReconcile(conn, { key = null, now = Date.now(), context = {} }) {
   const active = conn.prepare("SELECT id FROM alerts WHERE kind = 'needs_reconcile' AND key IS ? AND state IN ('armed','fired')").get(key);
   if (active) return null;
-  const info = conn.prepare("INSERT INTO alerts (kind, key, severity, state, armed_at, fired_at, context_json) VALUES ('needs_reconcile',?,?,'fired',?,?,?)")
-    .run(key, SEVERITY.needs_reconcile || 'warning', now, now, JSON.stringify(context));
+  const info = conn.prepare("INSERT INTO alerts (algo, kind, key, severity, state, armed_at, fired_at, context_json) VALUES (?,'needs_reconcile',?,?,'fired',?,?,?)")
+    .run(market.activeAlgo(conn), key, SEVERITY.needs_reconcile || 'warning', now, now, JSON.stringify(context));
   return { event: 'fired', kind: 'needs_reconcile', key, id: Number(info.lastInsertRowid), context };
 }
 
@@ -97,8 +98,8 @@ function raiseReconcile(conn, { key = null, now = Date.now(), context = {} }) {
 function fireOnce(conn, { kind, key = null, now, context = {} }) {
   const existing = conn.prepare('SELECT id FROM alerts WHERE kind = ? AND key IS ?').get(kind, key);
   if (existing) return null;
-  const info = conn.prepare('INSERT INTO alerts (kind, key, severity, state, armed_at, fired_at, context_json) VALUES (?,?,?,?,?,?,?)')
-    .run(kind, key, SEVERITY[kind] || 'info', 'fired', now, now, JSON.stringify(context));
+  const info = conn.prepare('INSERT INTO alerts (algo, kind, key, severity, state, armed_at, fired_at, context_json) VALUES (?,?,?,?,?,?,?,?)')
+    .run(market.activeAlgo(conn), kind, key, SEVERITY[kind] || 'info', 'fired', now, now, JSON.stringify(context));
   return { event: 'fired', kind, key, id: Number(info.lastInsertRowid), context };
 }
 

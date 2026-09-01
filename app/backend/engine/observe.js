@@ -123,8 +123,8 @@ async function observe(conn, client, ctx = {}) {
     // Persist a per-tick sample (only when we have a fresh reading, so stale rows don't
     // pollute the delivered-hashrate chart).
     if (signal.fresh) {
-      conn.prepare('INSERT OR REPLACE INTO rental_samples (rental_id, ts, delivered_th, percent, health) VALUES (?, ?, ?, ?, ?)')
-        .run(rental.mrr_id, nowSec, signal.deliveredTh, signal.authoritative, h.state);
+      conn.prepare('INSERT OR REPLACE INTO rental_samples (algo, rental_id, ts, delivered_th, percent, health) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(market.activeAlgo(conn), rental.mrr_id, nowSec, signal.deliveredTh, signal.authoritative, h.state);
     }
     // Refresh end_ts to MRR's ACTUAL end once the rental has ended, so the 12h dispute
     // deadline and the refund-watch window anchor to the real end — not the scheduled end

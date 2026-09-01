@@ -80,10 +80,10 @@ function planIntents(stored) {
 
 function insertDecision(conn, sessionId, dryRun, fields) {
   conn.prepare(
-    `INSERT INTO decisions (ts, session_id, dry_run, observed_json, proposed_json, gated_json, executed_json, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO decisions (algo, ts, session_id, dry_run, observed_json, proposed_json, gated_json, executed_json, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    nowSec(), sessionId, dryRun ? 1 : 0,
+    market.activeAlgo(conn), nowSec(), sessionId, dryRun ? 1 : 0,
     fields.observed ? JSON.stringify(fields.observed) : null,
     fields.proposed ? JSON.stringify(fields.proposed) : null,
     fields.gated ? JSON.stringify(fields.gated) : null,
@@ -147,16 +147,16 @@ function persistRental(conn, sessionId, intent, res) {
   // time-fallback would read as already-ended and close the session under a live rental.
   const end = c.end_unix != null && Number(c.end_unix) > 0 ? Number(c.end_unix) : start + Math.round(intent.lengthHours * 3600);
   conn.prepare(
-    `INSERT INTO rentals (session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
+    `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                           paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name,
                           endpoint_diff, optimal_diff_min, optimal_diff_max, diff_in_range)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
-  ).run(sessionId, res.mrrId, intent.rigId, intent.rigName, intent.region, intent.advertisedTh,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+  ).run(market.activeAlgo(conn), sessionId, res.mrrId, intent.rigId, intent.rigName, intent.region, intent.advertisedTh,
     intent.lengthHours, intent.paidSats, intent.feeSats, intent.rateBtcThDay, start, end, res.worker,
     intent.endpointDiff, intent.optimalDiffMin, intent.optimalDiffMax,
     intent.diffInRange == null ? null : (intent.diffInRange ? 1 : 0));
-  conn.prepare('INSERT INTO spend_events (ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?)')
-    .run(nowSec(), (intent.paidSats || 0) + (intent.feeSats || 0), 'rent', sessionId, res.mrrId);
+  conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec(), (intent.paidSats || 0) + (intent.feeSats || 0), 'rent', sessionId, res.mrrId);
 }
 
 /**
@@ -220,9 +220,9 @@ async function startSession(conn, client, quoteId, opts = {}) {
 
     // Open the session.
     const info = conn.prepare(
-      `INSERT INTO sessions (mode, state, target_th, budget_sats, duration_hours, created_at, started_at)
-         VALUES ('quick', 'active', ?, ?, ?, ?, ?)`,
-    ).run(stored.result.targetTh, stored.result.totalSats, stored.result.durationHours, nowSec(), nowSec());
+      `INSERT INTO sessions (algo, mode, state, target_th, budget_sats, duration_hours, created_at, started_at)
+         VALUES (?, 'quick', 'active', ?, ?, ?, ?, ?)`,
+    ).run(market.activeAlgo(conn), stored.result.targetTh, stored.result.totalSats, stored.result.durationHours, nowSec(), nowSec());
     const sessionId = Number(info.lastInsertRowid);
 
     const summary = await executeSession(conn, client, stored, { dryRun, sessionId, confirmedSats });
@@ -458,9 +458,9 @@ async function startAutopilotSession(conn, client, params = {}) {
     if (!estimate.eligibleRigs) throw new SessionError('no_rigs_available');
 
     const info = conn.prepare(
-      `INSERT INTO sessions (mode, state, target_th, budget_sats, time_cap_hours, spent_sats, fee_sats, created_at, started_at)
-         VALUES ('autopilot', 'active', ?, ?, ?, 0, 0, ?, ?)`,
-    ).run(targetTh, budgetSats, timeCapHours, nowSec(), nowSec());
+      `INSERT INTO sessions (algo, mode, state, target_th, budget_sats, time_cap_hours, spent_sats, fee_sats, created_at, started_at)
+         VALUES (?, 'autopilot', 'active', ?, ?, ?, 0, 0, ?, ?)`,
+    ).run(market.activeAlgo(conn), targetTh, budgetSats, timeCapHours, nowSec(), nowSec());
 
     // Persist the blended ceiling from the preview only now that the session is committed — a start
     // that bailed earlier (no endpoint / no rigs) must not have changed the standing guardrail. The

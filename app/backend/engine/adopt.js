@@ -11,6 +11,7 @@
  * stay a manual-review alert.
  */
 const units = require('../units');
+const market = require('../market');
 const alerts = require('../alerts');
 
 function num(v) { return v === '' || v == null ? null : Number(v); }
@@ -43,14 +44,14 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     // pay-rate like any normal rental: base_btc = rate × adv × (lengthHours/24).
     const rate = adv > 0 && lengthHours > 0 ? (base / 1e8) / (adv * (lengthHours / 24)) : null;
     conn.prepare(
-      `INSERT INTO rentals (session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
+      `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                             paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    ).run(sessionId, mrrId, s.rigId, (d.rig && d.rig.name) || null, (d.rig && d.rig.region) || null, adv, lengthHours, base, fee, rate, start, end, worker);
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    ).run(market.activeAlgo(conn), sessionId, mrrId, s.rigId, (d.rig && d.rig.name) || null, (d.rig && d.rig.region) || null, adv, lengthHours, base, fee, rate, start, end, worker);
     conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
       .run(paidTotal, fee, sessionId);
-    conn.prepare('INSERT INTO spend_events (ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?)')
-      .run(nowSec, paidTotal, 'rent', sessionId, mrrId);
+    conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(market.activeAlgo(conn), nowSec, paidTotal, 'rent', sessionId, mrrId);
     // Point the recovered rental at our endpoint/worker (the ambiguous create's override step
     // may never have run); if this fails, health will flag under-delivery. This is a real MRR
     // mutation, so it runs only in LIVE — recording the already-billed money above is correct in

@@ -7,6 +7,7 @@
  * nothing; LIVE sends. Every outcome is logged to `decisions`. This is NEVER a spend.
  */
 const config = require('../config');
+const market = require('../market');
 
 /** The templated message body (plain text; MRR renders it, and the owner is the recipient). */
 function templateFor(rental) {
@@ -35,8 +36,8 @@ async function maybeNudge(conn, client, opts = {}) {
   // rental_underdelivering — nudge on BOTH sustained-bad alerts (a dead rig is the most nudge-worthy).
   const fired = conn.prepare("SELECT DISTINCT key FROM alerts WHERE kind IN ('rental_underdelivering','rental_offline') AND state = 'fired'").all().map((a) => String(a.key));
   const dryRun = (config.getKey(conn, 'run', 'mode') || 'dry-run') !== 'live';
-  const mark = (mrrId, note) => conn.prepare('INSERT INTO decisions (ts, session_id, dry_run, note) VALUES (?, ?, ?, ?)')
-    .run(nowSec, null, dryRun ? 1 : 0, `owner_nudge:${mrrId}:${note}`);
+  const mark = (mrrId, note) => conn.prepare('INSERT INTO decisions (algo, ts, session_id, dry_run, note) VALUES (?, ?, ?, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec, null, dryRun ? 1 : 0, `owner_nudge:${mrrId}:${note}`);
 
   for (const mrrId of fired) {
     if (attempted(conn, mrrId, dryRun)) continue;

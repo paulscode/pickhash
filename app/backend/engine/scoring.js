@@ -1,4 +1,5 @@
 'use strict';
+const market = require('../market');
 /*
  * Rig scoring. Each rig's realized delivery is folded into a persistent per-rig score when
  * a rental of it ENDS; the running mean becomes `expectedDelivery` in the rank key (quote.js), so a
@@ -40,11 +41,11 @@ function recordRentalScore(conn, rental, finalPercent, nowSec) {
   conn.exec('BEGIN');
   try {
     conn.prepare(
-      `INSERT INTO rig_scores (rig_id, rentals, mean_percent, offline_incidents, last_price, last_seen)
-         VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO rig_scores (algo, rig_id, rentals, mean_percent, offline_incidents, last_price, last_seen)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(rig_id) DO UPDATE SET rentals = excluded.rentals, mean_percent = excluded.mean_percent,
            offline_incidents = excluded.offline_incidents, last_price = excluded.last_price, last_seen = excluded.last_seen`,
-    ).run(rental.rig_id, next.rentals, next.mean_percent, next.offline_incidents, next.last_price, next.last_seen);
+    ).run(market.activeAlgo(conn), rental.rig_id, next.rentals, next.mean_percent, next.offline_incidents, next.last_price, next.last_seen);
     if (rental.mrr_id != null) conn.prepare('UPDATE rentals SET scored = 1 WHERE mrr_id = ?').run(rental.mrr_id);
     conn.exec('COMMIT');
   } catch (e) {

@@ -8,6 +8,7 @@
  * (a winding-down session is spending nothing more; a quick session is a fixed one-shot).
  */
 const config = require('../config');
+const market = require('../market');
 const gate = require('./gate');
 const alerts = require('../alerts');
 const { MrrAmbiguousError } = require('../mrr-client');
@@ -124,8 +125,8 @@ async function reconcileAmbiguousExtend(conn, client, session, rental, plan, now
     .run(plan.lengthHours, Math.round(plan.lengthHours * 3600), dBase, dFee, rental.mrr_id);
   conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
     .run(deltaTotal, dFee, session.id);
-  conn.prepare('INSERT INTO spend_events (ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?)')
-    .run(nowSec, deltaTotal, 'extend', session.id, rental.mrr_id);
+  conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec, deltaTotal, 'extend', session.id, rental.mrr_id);
   alerts.fireOnce(conn, { kind: 'rental_extended', key: `x${rental.mrr_id}_${rental.end_ts}`, now: nowMs, context: { rig: rental.rig_id, name: rental.rig_name, hours: plan.lengthHours, sats: deltaTotal, reconciled: true } });
   return 'extended_reconciled';
 }
@@ -162,8 +163,8 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   // The note stays a stable machine-readable string; the getcost sim's raw numbers ride along in
   // executed_json so a soak can tell WHY an extend was/wasn't possible (e.g. a not_extendable with
   // maxhrs == current_hrs = rig at its max length, vs new_hrs < asked = we over-asked).
-  const mark = (mrrId, note, extra) => conn.prepare('INSERT INTO decisions (ts, session_id, dry_run, note, executed_json) VALUES (?, ?, ?, ?, ?)')
-    .run(nowSec, session.id, dryRun ? 1 : 0, `auto_extend:${mrrId}:${note}`, extra ? JSON.stringify(extra) : null);
+  const mark = (mrrId, note, extra) => conn.prepare('INSERT INTO decisions (algo, ts, session_id, dry_run, note, executed_json) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(market.activeAlgo(conn), nowSec, session.id, dryRun ? 1 : 0, `auto_extend:${mrrId}:${note}`, extra ? JSON.stringify(extra) : null);
   const windowRemainingH = session.time_cap_hours > 0
     ? session.time_cap_hours - (nowSec - (session.started_at || nowSec)) / 3600
     : Infinity;
@@ -233,8 +234,8 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
       .run(plan.lengthHours, Math.round(plan.lengthHours * 3600), extBase, feePart, rental.mrr_id);
     conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
       .run(plan.costSats, feePart, session.id);
-    conn.prepare('INSERT INTO spend_events (ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?)')
-      .run(nowSec, plan.costSats, 'extend', session.id, rental.mrr_id);
+    conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(market.activeAlgo(conn), nowSec, plan.costSats, 'extend', session.id, rental.mrr_id);
     mark(rental.mrr_id, `extended:${plan.lengthHours}h_${plan.costSats}sats`, simInfo);
     alerts.fireOnce(conn, { kind: 'rental_extended', key: `x${rental.mrr_id}_${rental.end_ts}`, now: nowMs, context: { rig: rental.rig_id, name: rental.rig_name, hours: plan.lengthHours, sats: plan.costSats } });
     return { ran: true, decided: 'extended', plan, sim: simInfo };

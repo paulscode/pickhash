@@ -149,3 +149,36 @@ test('health freshness uses our ticks, so a foreign tick cannot mask a stall', a
   const seen = JSON.stringify(json || {});
   assert.ok(!seen.includes(String(NOW - 10)), 'a foreign tick timestamp reached the health read');
 });
+
+test('every write to a scoped table names the algorithm', () => {
+  // The column carries DEFAULT 'sha256ab' so the migration could land without
+  // touching writers. That default is now a hazard rather than a help: once the
+  // algorithm is configurable, a writer that omits the column stamps sha256ab while
+  // the app is running blake2b, and the scoped reads then hide the row it wrote.
+  //
+  // SQLite cannot drop a DEFAULT without rebuilding the table, and rebuilding eleven
+  // of them to gain a constraint is more risk than the risk it removes. This check
+  // is the cheaper equivalent: it fails the moment a write forgets.
+  const SCOPED = new Set(['rentals', 'sessions', 'pool_endpoints', 'alerts', 'tick_metrics',
+    'spend_events', 'market_snapshots', 'decisions', 'rig_scores', 'rental_samples', 'applied_refunds']);
+  const dir = path.join(__dirname, '..');
+  const files = [];
+  for (const d of [dir, path.join(dir, 'engine')]) {
+    for (const f of fs.readdirSync(d)) if (f.endsWith('.js')) files.push(path.join(d, f));
+  }
+  const re = /INSERT (?:OR \w+ )?INTO (\w+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/g;
+  const problems = [];
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(re)) {
+      const [, table, cols, vals] = m;
+      if (!SCOPED.has(table)) continue;
+      const rel = path.relative(dir, file);
+      if (!/\balgo\b/.test(cols)) problems.push(`${rel}: INSERT INTO ${table} does not name algo`);
+      const nc = cols.split(',').filter((c) => c.trim()).length;
+      const nv = vals.split(',').filter((v) => v.trim()).length;
+      if (nc !== nv) problems.push(`${rel}: INSERT INTO ${table} has ${nc} columns and ${nv} values`);
+    }
+  }
+  assert.deepEqual(problems, [], problems.join('\n'));
+});

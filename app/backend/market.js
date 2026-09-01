@@ -143,13 +143,13 @@ function buildMarketSnapshot(rigs, tsSeconds) {
 /** Persist a snapshot row. */
 function writeSnapshot(conn, snap) {
   conn.prepare(`INSERT OR REPLACE INTO market_snapshots
-    (ts, lowest, last10, last, available_rigs, available_th, depth_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-    snap.ts, snap.lowest, snap.last10, snap.last, snap.availableRigs, snap.availableTh,
+    (algo, ts, lowest, last10, last, available_rigs, available_th, depth_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    activeAlgo(conn), snap.ts, snap.lowest, snap.last10, snap.last, snap.availableRigs, snap.availableTh,
     JSON.stringify(snap.depth || []));
 }
 
-/** Fetch every sha256ab rig, paginating 100 at a time. */
+/** Fetch every rig for the active algorithm, paginating 100 at a time. */
 async function fetchAllRigs(client, filters = {}) {
   const out = [];
   let offset = 0;

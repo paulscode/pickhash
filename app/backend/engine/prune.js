@@ -9,6 +9,14 @@
 const DAY = 86400;
 const RETAIN_DAYS = 90;
 
+/*
+ * Deliberately NOT scoped by algorithm, unlike every other read and write of these
+ * tables. Retention exists to bound the database, and old raw rows should age out
+ * whichever algorithm produced them. Scoping this would leave the inactive
+ * algorithm's ticks and samples growing without limit, since prune only ever runs
+ * on the active one's cadence. This is the one place where crossing algorithms is
+ * correct, which is why it says so.
+ */
 function prune(conn, nowSec, retainDays = RETAIN_DAYS) {
   const cutoff = nowSec - retainDays * DAY;
   conn.prepare('DELETE FROM tick_metrics WHERE ts < ?').run(cutoff);
