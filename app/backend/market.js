@@ -18,6 +18,21 @@ const units = require('./units');
 // between them surfaces far from its cause.
 const ALGO = 'sha256ab';
 
+/**
+ * The algorithm this instance is operating on, for scoping reads and stamping writes.
+ *
+ * A function rather than the bare constant, because every call site that needs
+ * scoping should already be asking a question that has an answer per instance. It
+ * returns ALGO today; when the algorithm becomes configurable this is the one place
+ * that has to learn to read the setting, and every scoped query follows.
+ *
+ * Takes the connection it will eventually read the setting from, so adding that
+ * later does not mean touching the call sites again.
+ */
+function activeAlgo(_conn) {
+  return ALGO;
+}
+
 function num(v) { return v === '' || v === null || v === undefined ? null : Number(v); }
 
 // The API returns booleans sometimes as JSON booleans, sometimes as "0"/"1"/"true"
@@ -221,4 +236,4 @@ function hashValue(latest, rentals) {
   };
 }
 
-module.exports = { ALGO, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, fetchAllRigs, depthByRegion, cheapNow, hashValue };
+module.exports = { ALGO, activeAlgo, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, fetchAllRigs, depthByRegion, cheapNow, hashValue };

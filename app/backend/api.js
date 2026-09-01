@@ -42,7 +42,7 @@ function sendJson(res, status, data) {
 
 /** Hash Value block from the newest market snapshot + the active session's held rentals. */
 function hashValueFor(conn) {
-  const latest = conn.prepare('SELECT lowest, last10 FROM market_snapshots ORDER BY ts DESC LIMIT 1').get() || null;
+  const latest = conn.prepare('SELECT lowest, last10 FROM market_snapshots WHERE algo = ? ORDER BY ts DESC LIMIT 1').get(market.activeAlgo(conn)) || null;
   const sess = conn.prepare("SELECT id FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get();
   const rentals = sess ? conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ? AND ended = 0').all(sess.id) : [];
   return market.hashValue(latest, rentals);
@@ -328,8 +328,8 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // Latest engine-observed balance (already polled each tick) so the dashboard balance
     // card updates live off /api/status without an extra per-poll MRR call.
     const bal = conn.prepare(
-      'SELECT balance_confirmed_sats AS c, balance_unconfirmed_sats AS u FROM tick_metrics WHERE balance_confirmed_sats IS NOT NULL ORDER BY ts DESC LIMIT 1',
-    ).get();
+      'SELECT balance_confirmed_sats AS c, balance_unconfirmed_sats AS u FROM tick_metrics WHERE algo = ? AND balance_confirmed_sats IS NOT NULL ORDER BY ts DESC LIMIT 1',
+    ).get(market.activeAlgo(conn));
     const balance = bal ? { confirmed_sats: bal.c, unconfirmed_sats: bal.u } : null;
     return sendJson(res, 200, { ok: true, mode, session: sessionOut, rentals, balance, hash_value: hashValueFor(conn), alerts: alerts.listActive(conn) });
   }
@@ -346,7 +346,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // Market is global, so it stays time-only.
     const sid = latest ? latest.id : -1;
     const ticks = conn.prepare('SELECT ts, delivered_th, target_th, spent_sats FROM tick_metrics WHERE session_id = ? AND ts >= ? ORDER BY ts').all(sid, sinceTs);
-    const snaps = conn.prepare('SELECT ts, lowest, last10 FROM market_snapshots WHERE ts >= ? ORDER BY ts').all(sinceTs);
+    const snaps = conn.prepare('SELECT ts, lowest, last10 FROM market_snapshots WHERE algo = ? AND ts >= ? ORDER BY ts').all(market.activeAlgo(conn), sinceTs);
     const samples = conn.prepare(
       `SELECT rs.rental_id, rs.ts, rs.delivered_th, r.rig_name, r.end_ts
          FROM rental_samples rs JOIN rentals r ON r.mrr_id = rs.rental_id
@@ -368,16 +368,16 @@ async function handleApi(req, res, url, body, ctx = {}) {
   // "cheap right now?" read of the current lowest vs the last 30 days of snapshots.
   if (p === '/api/market' && method === 'GET') {
     const nowSec = Math.floor(Date.now() / 1000);
-    const latest = conn.prepare('SELECT * FROM market_snapshots ORDER BY ts DESC LIMIT 1').get() || null;
-    const history = conn.prepare('SELECT ts, lowest, last10, last FROM market_snapshots WHERE ts >= ? ORDER BY ts').all(nowSec - 30 * 86400);
+    const latest = conn.prepare('SELECT * FROM market_snapshots WHERE algo = ? ORDER BY ts DESC LIMIT 1').get(market.activeAlgo(conn)) || null;
+    const history = conn.prepare('SELECT ts, lowest, last10, last FROM market_snapshots WHERE algo = ? AND ts >= ? ORDER BY ts').all(market.activeAlgo(conn), nowSec - 30 * 86400);
     let depth = [];
     if (latest && latest.depth_json) { try { depth = JSON.parse(latest.depth_json); } catch { depth = []; } }
     const hv = hashValueFor(conn);
     const pr = payRateSatsPhDay(conn);
     // Cumulative hashrate directed at the user's own node (PH·days) — the durable per-session record.
     const impactEvents = conn.prepare(
-      "SELECT started_at, ended_at, summary_json FROM sessions WHERE state = 'ended' AND summary_json IS NOT NULL AND ended_at IS NOT NULL ORDER BY started_at",
-    ).all().map((s) => {
+      "SELECT started_at, ended_at, summary_json FROM sessions WHERE algo = ? AND state = 'ended' AND summary_json IS NOT NULL AND ended_at IS NOT NULL ORDER BY started_at",
+    ).all(market.activeAlgo(conn)).map((s) => {
       let thHours = 0; try { thHours = JSON.parse(s.summary_json).delivered_th_hours || 0; } catch { thHours = 0; }
       return { start: s.started_at, end: s.ended_at, thHours };
     });
@@ -572,8 +572,8 @@ async function handleApi(req, res, url, body, ctx = {}) {
   if (p === '/api/diag' && method === 'GET') {
     const mrrCfg = config.get(conn, 'mrr');
     const nowSec = Math.floor(Date.now() / 1000);
-    const lastTick = conn.prepare('SELECT MAX(ts) AS t FROM tick_metrics').get().t || null;
-    const ticksHour = conn.prepare('SELECT COUNT(*) AS n FROM tick_metrics WHERE ts >= ?').get(nowSec - 3600).n;
+    const lastTick = conn.prepare('SELECT MAX(ts) AS t FROM tick_metrics WHERE algo = ?').get(market.activeAlgo(conn)).t || null;
+    const ticksHour = conn.prepare('SELECT COUNT(*) AS n FROM tick_metrics WHERE algo = ? AND ts >= ?').get(market.activeAlgo(conn), nowSec - 3600).n;
     const session = conn.prepare("SELECT id, mode, state, started_at FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get() || null;
     const ep = conn.prepare('SELECT host, port, worker_base, source FROM pool_endpoints WHERE active = 1').get() || null;
     return sendJson(res, 200, {

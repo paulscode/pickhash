@@ -265,7 +265,8 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
   // rents land in spend_events, so `spent + cost <= remainingDaily` holds without double-counting.
   const maxDaily = config.getKey(conn, 'guardrails', 'max_daily_spend_sats');
   if (maxDaily != null) {
-    const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE ts >= ?').get(nowSec() - 24 * 3600).s;
+    const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE algo = ? AND ts >= ?')
+      .get(market.activeAlgo(conn), nowSec() - 24 * 3600).s;
     ceiling = Math.min(ceiling, Math.max(0, maxDaily - dailySpent));
   }
   const attempted = new Set();
