@@ -147,7 +147,23 @@
       </div>
       <p class="text-gray-400 text-xs font-mono" x-text="keyPermsText"></p>
       <div x-show="withdrawWarn" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono">This key can withdraw — going LIVE will need an extra confirmation.</div>
-      <button type="button" @click="detect()" :disabled="busy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded-lg px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+      <!-- Which HashGG to read the endpoint from, offered here rather than only in
+           Settings. Settings is behind the setup gate, so a user told to change it
+           there during setup cannot. Only shown when more than one exists. -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <button type="button" @click="detect()" :disabled="busy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded-lg px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
+        <template x-if="hashggSources.length > 1">
+          <label class="flex items-center gap-2 font-mono text-xs text-gray-400">
+            from
+            <select x-model="hashggSource" @change="saveHashggSource()" :disabled="busy"
+                    class="bg-navy-800 border border-navy-600 rounded px-2 py-1.5 font-mono text-xs text-white disabled:opacity-50">
+              <template x-for="c in hashggSources" :key="c.source">
+                <option :value="c.source" x-text="c.label"></option>
+              </template>
+            </select>
+          </label>
+        </template>
+      </div>
       <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
       <form @submit.prevent="testPool()" class="space-y-3">
         <div class="grid grid-cols-3 gap-2">

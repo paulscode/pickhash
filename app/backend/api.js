@@ -57,7 +57,20 @@ function algorithmBlock(conn) {
     const a = algos.get(slug);
     return { slug, short: a.short, display: a.display, price_unit: a.priceUnit };
   };
-  return { ...describe(active), choices: algos.SLUGS.map(describe) };
+  return {
+    ...describe(active),
+    choices: algos.SLUGS.map(describe),
+    /*
+     * Where this algorithm reads its stratum endpoint from, and what else it could.
+     *
+     * Carried on the algorithm block because the choice is per-algorithm and follows
+     * a switch. The setup wizard has to offer it and cannot reach the settings API,
+     * which is behind the setup gate, so telling a user to change it in Settings is
+     * advice they cannot take until setup is finished.
+     */
+    hashgg_source: hashgg.sourceFor(conn),
+    hashgg_sources: hashgg.SOURCE_KEYS.map((source) => ({ source, label: hashgg.SOURCES[source].label })),
+  };
 }
 
 /** Hash Value block from the newest market snapshot + the active session's held rentals. */
@@ -209,7 +222,10 @@ async function handleApi(req, res, url, body, ctx = {}) {
      * chain the rented hashrate mines, so the answer names its source rather than
      * arriving anonymously — the caller can then say where it came from.
      */
-    const chosen = hashgg.sourceFor(conn);
+    // The wizard passes its own choice, because it cannot store one yet. Anything
+    // unrecognised falls back to the algorithm's own answer rather than probing nothing.
+    const requested = url.searchParams.get('source');
+    const chosen = hashgg.isKnownSource(requested) ? requested : hashgg.sourceFor(conn);
     const all = await hashgg.probeAll();
     const selected = all.find((c) => c.source === chosen) || all[0];
     return sendJson(res, 200, {

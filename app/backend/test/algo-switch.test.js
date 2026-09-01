@@ -213,3 +213,44 @@ test('nothing the setup wizard can click calls an endpoint the setup gate closes
   assert.deepEqual([...new Set(problems)], [],
     `a wizard control calls a route that returns 412 before setup completes:\n${[...new Set(problems)].join('\n')}`);
 });
+
+test('the setup wizard can pick which HashGG to read the endpoint from', async () => {
+  /*
+   * The choice is a per-algorithm setting, stored in `strategy`, which the wizard
+   * cannot write: /api/config is behind the setup gate. Telling a user to change it
+   * in Settings, which is what the failed-detection message used to say, is advice
+   * they cannot take until setup is finished.
+   *
+   * So detect takes the source as a parameter, and the algorithm block carries the
+   * default and the options so the wizard can offer them before it can store one.
+   */
+  await withDb(async (conn, dir) => {
+    process.env.HASHGG_HOST = 'flagship.invalid';
+    process.env.HASHGG_COMPANION_HOST = 'companion.invalid';
+    try {
+      const block = (await call(dir, 'GET', '/api/algorithm')).json.algorithm;
+      assert.equal(block.hashgg_source, 'flagship', "sha256ab's default");
+      assert.deepEqual(block.hashgg_sources.map((s) => s.source), algos.SLUGS.length ? ['flagship', 'companion'] : []);
+      assert.deepEqual(block.hashgg_sources.map((s) => s.label), ['HashGG', 'HashGG Companion'],
+        'the wizard needs names, not slugs, to put in a dropdown');
+
+      // An explicit choice wins over the algorithm's default, which is the whole point:
+      // the Companion is the blake2b default, and a user whose ordinary HashGG serves
+      // the gateway has to be able to say so during setup.
+      assert.equal((await call(dir, 'GET', '/api/setup/hashgg-detect?source=companion')).json.source, 'companion');
+      assert.equal((await call(dir, 'GET', '/api/setup/hashgg-detect?source=flagship')).json.source, 'flagship');
+
+      // Nonsense falls back to the algorithm's answer rather than probing nothing.
+      assert.equal((await call(dir, 'GET', '/api/setup/hashgg-detect?source=nope')).json.source, 'flagship');
+      assert.equal((await call(dir, 'GET', '/api/setup/hashgg-detect')).json.source, 'flagship');
+
+      // And the default follows a switch, while an explicit choice still overrides it.
+      await call(dir, 'POST', '/api/algorithm', { algo: 'blake2b' });
+      assert.equal((await call(dir, 'GET', '/api/algorithm')).json.algorithm.hashgg_source, 'companion');
+      assert.equal((await call(dir, 'GET', '/api/setup/hashgg-detect?source=flagship')).json.source, 'flagship');
+    } finally {
+      delete process.env.HASHGG_HOST;
+      delete process.env.HASHGG_COMPANION_HOST;
+    }
+  });
+});

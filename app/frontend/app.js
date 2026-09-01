@@ -167,6 +167,11 @@ document.addEventListener('alpine:init', () => {
     algoNote: '',
     algoNoteClass: 'text-gray-500',
     detectNote: '',
+    // Which HashGG the endpoint is read from. Offered in the wizard as well as in
+    // Settings, because Settings is behind the setup gate and cannot be reached until
+    // setup finishes.
+    hashggSource: '',
+    hashggSources: [],
     // Distinct colours, not shades: the point is that a screenshot taken from one
     // mode cannot be mistaken for the other.
     get algoBadgeClass() {
@@ -330,7 +335,10 @@ document.addEventListener('alpine:init', () => {
 
     async detect() {
       this.busy = true;
-      const r = await this.getJson('/api/setup/hashgg-detect');
+      // Pass the chosen source explicitly. The wizard cannot store one yet, and the
+      // endpoint has to come from the HashGG the user picked, not a stored default.
+      const q = this.hashggSource ? `?source=${encodeURIComponent(this.hashggSource)}` : '';
+      const r = await this.getJson('/api/setup/hashgg-detect' + q);
       this.busy = false;
       const label = (r.candidates || []).find((c) => c.source === r.source);
       if (r.reachable && r.publicEndpoint) {
@@ -345,7 +353,7 @@ document.addEventListener('alpine:init', () => {
         this.detectNote = '';
         const other = (r.candidates || []).find((c) => c.source !== r.source && c.reachable);
         this.error = other
-          ? `${label ? label.label : 'HashGG'} was not detected, but ${other.label} is running. If that is the one serving your gateway, change "Pull endpoint from" in Settings.`
+          ? `${label ? label.label : 'HashGG'} was not detected, but ${other.label} is running. If that is the one serving your gateway, switch to it above and detect again.`
           : 'HashGG was not detected — enter your endpoint manually.';
       }
     },
@@ -960,6 +968,10 @@ document.addEventListener('alpine:init', () => {
       this.algoDisplay = a.display || a.slug;
       this.priceUnit = a.price_unit || this.priceUnit;
       if (Array.isArray(a.choices) && a.choices.length) this.algoChoices = a.choices;
+      if (Array.isArray(a.hashgg_sources)) this.hashggSources = a.hashgg_sources;
+      // Follows the algorithm: each one has its own answer, and the choice a user made
+      // for the other algorithm is not theirs for this one.
+      if (a.hashgg_source) this.hashggSource = a.hashgg_source;
       // Only follow the server while the user is not mid-change, so a poll landing
       // between the select and its response cannot snap the dropdown back.
       if (!this.algoBusy) this.algoPick = a.slug;
@@ -1217,6 +1229,11 @@ document.addEventListener('alpine:init', () => {
       const patch = { fallback_pool_enabled: this.fallbackEnabled };
       if (!this.fallbackEnabled && this.rerouteDeadRigs) { this.rerouteDeadRigs = false; patch.dead_rig_reroute_enabled = false; }
       await this.saveStrategy(patch);
+    },
+    async saveHashggSource() {
+      this.detectNote = '';
+      this.error = '';
+      await this.saveStrategy({ hashgg_source: this.hashggSource });
     },
     async saveRerouteDeadRigs() {
       await this.saveStrategy({ dead_rig_reroute_enabled: this.rerouteDeadRigs });
