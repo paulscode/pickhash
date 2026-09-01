@@ -1,6 +1,6 @@
 id: pickhash
 title: "Pickhash"
-version: 0.1.3.0
+version: 0.1.4.0
 release-notes: >-
   Adds BLAKE2b. Pickhash can now rent either SHA256 AsicBoost or Blake2B hashrate, chosen in Settings or during setup, so it works against a BLAKE2b node as well as a Bitcoin one.
 
