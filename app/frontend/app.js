@@ -733,7 +733,7 @@ document.addEventListener('alpine:init', () => {
       }
       this.apShortfall = est.shortfallTh > 0;
       this.apShortfallText = est.shortfallTh > 0
-        ? `The market can only cover ${this.fmtHashTh(est.coveredTh)} of your target right now — autopilot will hold what it can and keep watching for more.`
+        ? this.shortfallReason(est)
         : '';
     },
     async startAutopilot() {
@@ -999,6 +999,45 @@ document.addEventListener('alpine:init', () => {
     // The setup wizard runs before /api/status and /api/config will answer, so the
     // choice it offers is seeded from the switch route itself: posting the algorithm
     // that is already active is a no-op that returns the current block.
+      /*
+       * Why the target could not be covered, in the user's terms.
+       *
+       * The old wording said only that the market could cover so much, which reads as
+       * scarcity. Someone looking at the marketplace listing rigs then concludes the app
+       * is broken, and on a young market they are looking at rigs that are really there:
+       * autopilot is stricter than a quick rent and passes over anything without a
+       * settled delivery history, plus anything offline or over the price cap.
+       *
+       * So name the biggest reason and the count. If nothing was passed over, the market
+       * really is that small and the original wording is the honest one.
+       */
+      shortfallReason(est) {
+        const covered = this.fmtHashTh(est.coveredTh);
+        const over = est.passedOver || {};
+        const WHY = {
+          no_stability_data: 'no delivery history yet',
+          unstable: 'delivery too variable',
+          pool_offline: 'their pool is offline',
+          offline: 'offline',
+          rented: 'already rented',
+          not_available: 'not available',
+          unavailable_status: 'not available',
+          low_rpi: 'rated below your minimum',
+          btc_disabled: 'not priced in BTC',
+          no_price: 'no price set',
+          no_hashrate: 'no hashrate advertised',
+          blacklisted: 'blacklisted by you',
+          diff_mismatch: 'outside your pool difficulty',
+        };
+        const ranked = Object.entries(over).sort((a, b) => b[1] - a[1]);
+        if (!ranked.length) {
+          return `The market can only cover ${covered} of your target right now — autopilot will hold what it can and keep watching for more.`;
+        }
+        const [reason, count] = ranked[0];
+        const listed = est.listedRigs != null ? est.listedRigs : 0;
+        const why = WHY[reason] || reason;
+        return `Autopilot can cover ${covered} of your target right now. Of ${listed} rigs listed, ${count} were passed over — mostly ${why}. It will hold what it can and keep watching.`;
+      },
       async loadAlgorithm() {
         const r = await this.getJson('/api/algorithm');
         if (r && r.algorithm) this.applyAlgorithm(r.algorithm);

@@ -8,16 +8,21 @@
  * into the `algo` column and what goes on the wire.
  *
  * The two supported algorithms are not variations on a theme. Measured from the
- * live API on 2026-08-30 (the fixtures in test/fixtures/mrr/algo-*.json):
+ * live API on 2026-09-01 (2026-08-30 in brackets, to show how fast this moves):
  *
- *                         sha256ab              blake2b
- *   suggested price       52,820 sats/PH·day    128,100 sats/TH·day
- *   the same, per TH/hr   2.2                   5,337.5        (2,425x)
- *   available hashrate    36,674 PH             136 TH         (269,000x)
+ *                         sha256ab                    blake2b
+ *   suggested price       53,760 [52,820] sats/PH·d   292,545 [128,100] sats/TH·d
+ *   the same, per TH/hr   2.24                        12,189         (5,440x)
+ *   available hashrate    52,935 [36,674] PH          45.5 [136] TH  (1,163,000x)
  *
  * Nothing about those two columns is comparable, which is why the database keeps
  * them apart and why the price knobs below are per-algorithm. A ceiling that is
  * merely generous on one is unreachable or unlimited on the other.
+ *
+ * The blake2b column moves fast: its price more than doubled and its supply fell by
+ * two thirds in two days. Treat these as an order of magnitude, not a constant. The
+ * spend defaults below were derived at the earlier price and are still in range, but
+ * they are worth re-checking against /info/algos rather than trusted indefinitely.
  */
 
 /*
@@ -55,10 +60,13 @@ const ALGOS = {
   },
   blake2b: {
     slug: 'blake2b',
-    display: 'Blake2B Siacoin',
+    // MRR's own name for it, which it shortened from "Blake2B Siacoin" at some point
+    // after this was written. Shown verbatim so what the app calls the algorithm matches
+    // what the marketplace calls it; check it against /info/algos if it looks stale.
+    display: 'Blake2B',
     short: 'BLAKE2b',
     priceUnit: 'th',
-    typicalSatsThHour: 5337.5,
+    typicalSatsThHour: 12189,
     /*
      * No fallback pool. There is no public BLAKE2b pool that accepts arbitrary
      * hashrate and pays to a Bitcoin address the way Ocean does for SHA256.

@@ -107,7 +107,10 @@ test('the settings schema labels the ceiling in the active algorithm\'s unit', (
     config.set(conn, 'algorithm', { active: 'blake2b' });
     const b2 = config.settings(conn).guardrails;
     assert.equal(b2.blended_ceiling_sats_unit_day.unit, 'sats/TH·day');
-    assert.match(b2.rate_ceiling_sats_th_hour.help, /BLAKE2b rig runs ~5337\.5 sats\/TH\/hr/);
+    // The number is an anchor read from the live market, so it moves; what must hold is
+    // that the help names THIS algorithm and quotes its own figure, not the other one's.
+    assert.match(b2.rate_ceiling_sats_th_hour.help, /BLAKE2b rig runs ~\d/);
+    assert.doesNotMatch(b2.rate_ceiling_sats_th_hour.help, /SHA256/);
 
     // Same keys and same bounds either way — only the human-facing parts move.
     assert.deepEqual(Object.keys(sha), Object.keys(b2));

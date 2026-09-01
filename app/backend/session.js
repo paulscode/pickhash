@@ -430,15 +430,33 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
 async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint }) {
   const strat = config.get(conn, 'strategy');
   const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
-  const cands = quote.candidates(rigs, {
+  // One options object, so the tally below cannot drift from the filter above it.
+  const candOpts = {
     mode: 'autopilot', minRpi: strat.min_rpi, blacklist: strat.blacklist_rig_ids,
     stabilityTolerancePct: strat.stability_tolerance_pct,
     endpointDiff: endpoint ? endpoint.stratum_diff : null,
-  });
+  };
+  const cands = quote.candidates(rigs, candOpts);
   // Pack to the target with the SAME overshoot-bounded packer the live decide loop uses, so the
   // preview reflects what execution will actually rent — a small target is never "held" by a giant
   // rig (which inflated rigCount/coveredTh/burn/runway ~6x before this). costOf uses each rig's
   // fee-inclusive minimum commit, so the budget only gates affordability here.
+  /*
+   * Why the market fell short, not just that it did.
+   *
+   * "The market can only cover 0" reads as scarcity, and a user looking at the
+   * marketplace listing rigs concludes the app is broken. Usually it is not: the rigs
+   * are there and were passed over, for reasons only this function knows. Autopilot
+   * is stricter than a quick rent by design, and on a young market that can exclude
+   * most of what is listed.
+   */
+  const listed = rigs.filter((r) => r.advertisedTh > 0).length;
+  const passedOver = {};
+  for (const raw of rigs) {
+    const e = quote.eligibility(quote.derive(raw, candOpts), candOpts);
+    if (e.ok) continue;
+    for (const reason of e.reasons) passedOver[reason] = (passedOver[reason] || 0) + 1;
+  }
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
   const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50) / 100;
   // Pack to the target WITHOUT a budget constraint. The cost to HOLD a target is a market property,
@@ -461,6 +479,8 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
     eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    listedRigs: listed,
+    passedOver,
     rigCount: selection.length,
     coveredTh,
     shortfallTh: Math.max(0, targetTh - coveredTh),
