@@ -59,6 +59,14 @@
       <div class="flex items-center gap-2">
         <i data-lucide="pickaxe" class="w-5 h-5 text-neon-ember"></i>
         <span class="font-mono text-lg text-neon-ember">Pickhash</span>
+        <!-- The active algorithm, on every view. Renting the wrong one spends real money on
+             hashrate that cannot mine what was intended, and the mistake is invisible
+             everywhere else because the numbers all look plausible for whichever market
+             they came from. The colour differs per algorithm so a screenshot taken from
+             one mode is not mistakable for the other. -->
+        <span x-show="algoKnown" x-cloak :class="algoBadgeClass"
+              class="ml-1 px-2 py-0.5 rounded border font-mono text-xs tracking-wide"
+              :title="algoDisplay" x-text="algoShort"></span>
       </div>
       <nav class="flex items-center gap-6 text-sm font-mono text-gray-400">
         <a href="#" @click.prevent="goDashboard()" :class="navDashClass">Dashboard</a>
@@ -120,6 +128,23 @@
     <!-- Step 2: pool endpoint -->
     <div x-show="s2" x-cloak class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4">
       <h2 class="font-mono text-lg text-neon-ember">Your pool endpoint</h2>
+      <!-- The algorithm, before the endpoint rather than after it. The saved endpoint
+           belongs to whichever algorithm is active, so choosing afterwards would mean
+           configuring a stratum and then finding it belongs to the algorithm just left.
+           Most users never touch this; it is small and second in the step for that
+           reason, not hidden. -->
+      <div class="flex items-center justify-between gap-3 bg-navy-800/50 border border-navy-600 rounded-lg p-3">
+        <div class="font-mono text-xs text-gray-400 leading-relaxed">
+          Renting hashrate for <span class="text-white" x-text="algoDisplay"></span>.
+          Your endpoint is saved against it, so pick this first if you are not on the default.
+        </div>
+        <select x-model="algoPick" @change="switchAlgorithm()" :disabled="algoBusy"
+                class="bg-navy-800 border border-navy-600 rounded px-2 py-1.5 font-mono text-xs text-white disabled:opacity-50">
+          <template x-for="c in algoChoices" :key="c.slug">
+            <option :value="c.slug" x-text="c.display"></option>
+          </template>
+        </select>
+      </div>
       <p class="text-gray-400 text-xs font-mono" x-text="keyPermsText"></p>
       <div x-show="withdrawWarn" x-cloak class="bg-neon-yellow/10 border border-neon-yellow/30 rounded p-2 text-neon-yellow text-xs font-mono">This key can withdraw — going LIVE will need an extra confirmation.</div>
       <button type="button" @click="detect()" :disabled="busy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded-lg px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
@@ -621,7 +646,7 @@
         <div class="flex items-center justify-end gap-3 pt-1">
           <span x-show="apBusy" x-cloak class="text-neon-ember text-xs font-mono animate-pulse-neon" x-text="apBusyText"></span>
           <button type="button" @click="apPreview()" :disabled="apBusy" class="bg-navy-800 border border-navy-600 text-gray-300 rounded-lg px-4 py-2.5 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm">Preview</button>
-          <button type="button" x-show="apHasEstimate" @click="startAutopilot()" :disabled="apBusy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green font-medium rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm">Start Autopilot</button>
+          <button type="button" x-show="apHasEstimate" @click="startAutopilot()" :disabled="apBusy" class="bg-neon-green/10 border border-neon-green/30 text-neon-green font-medium rounded-lg px-4 py-2.5 hover:bg-neon-green/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-mono text-sm">Start Autopilot <span :class="algoBadgeClass" class="ml-1 px-1.5 py-0.5 rounded border text-[10px]" x-text="algoShort"></span></button>
         </div>
       </div>
     </div>
@@ -631,7 +656,12 @@
       <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 max-w-md w-full space-y-4">
         <div class="flex items-center justify-between">
           <h2 class="font-mono text-lg text-neon-ember">Review &amp; Rent</h2>
-          <span :class="reviewBadgeClass" class="px-2 py-1 rounded border font-mono text-xs" x-text="reviewBadge"></span>
+          <div class="flex items-center gap-2">
+            <!-- Named here as well as in the header, because this is the screen that spends
+                 and the header may not have been read. -->
+            <span :class="algoBadgeClass" class="px-2 py-1 rounded border font-mono text-xs" x-text="algoShort"></span>
+            <span :class="reviewBadgeClass" class="px-2 py-1 rounded border font-mono text-xs" x-text="reviewBadge"></span>
+          </div>
         </div>
         <div class="space-y-1 font-mono">
           <div class="text-white text-sm" x-text="qHeadline"></div>
@@ -869,6 +899,32 @@
 
   <!-- ============ SETTINGS ============ -->
   <main class="max-w-3xl mx-auto px-4 py-6 space-y-6" x-show="showSettings" x-cloak>
+    <!-- Algorithm. Its own card above the generic groups, and its own endpoint: it
+         changes which market is bought from, which guardrails apply and which endpoint
+         is live, so it is not a knob among knobs. -->
+    <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
+      <h2 class="font-mono text-neon-ember text-lg">Algorithm</h2>
+      <div class="border-t border-navy-800 pt-3 space-y-2">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="font-mono text-sm text-gray-300">Rent hashrate for</div>
+            <p class="font-mono text-[11px] text-gray-500 leading-relaxed mt-1">
+              Prices, available hashrate and every guardrail are kept separate per algorithm — the
+              two markets differ in scale by orders of magnitude, so a limit set for one means
+              nothing for the other. Your endpoint, spend ceilings and display unit all follow
+              this setting.
+            </p>
+          </div>
+          <select x-model="algoPick" @change="switchAlgorithm()" :disabled="algoBusy"
+                  class="bg-navy-800 border border-navy-600 rounded px-2 py-1.5 font-mono text-sm text-white disabled:opacity-50">
+            <template x-for="c in algoChoices" :key="c.slug">
+              <option :value="c.slug" x-text="c.display"></option>
+            </template>
+          </select>
+        </div>
+        <div x-show="algoNote" x-cloak class="font-mono text-xs" :class="algoNoteClass" x-text="algoNote"></div>
+      </div>
+    </div>
     <template x-for="group in settingsGroups" :key="group.ns">
       <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
         <h2 class="font-mono text-neon-ember text-lg" x-text="group.title"></h2>

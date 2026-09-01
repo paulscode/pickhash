@@ -150,6 +150,26 @@ document.addEventListener('alpine:init', () => {
     // The active algorithm's price unit, from the API. Every "sats/<unit>·day" label
     // reads from this rather than hardcoding PH, which is only right for sha256ab.
     priceUnit: 'ph',
+    // The active algorithm. `algoKnown` gates the header badge so it never paints one
+    // algorithm's name before the first status call answers: a badge that is briefly
+    // wrong is worse than one briefly absent, since its whole job is to be trusted at
+    // a glance.
+    algoKnown: false,
+    algoSlug: '',
+    algoShort: '',
+    algoDisplay: '',
+    algoChoices: [],
+    algoPick: '',
+    algoBusy: false,
+    algoNote: '',
+    algoNoteClass: 'text-gray-500',
+    // Distinct colours, not shades: the point is that a screenshot taken from one
+    // mode cannot be mistaken for the other.
+    get algoBadgeClass() {
+      return this.algoSlug === 'sha256ab'
+        ? 'text-neon-ember border-neon-ember/40 bg-neon-ember/10'
+        : 'text-neon-green border-neon-green/40 bg-neon-green/10';
+    },
     impactUnit: 'TH·days',
     get rateUnit() { return `sats/${this.priceUnit.toUpperCase()}·day`; },
     // TH in one price unit: 1000 for an algorithm quoted per PH, 1 for one quoted per TH.
@@ -200,6 +220,8 @@ document.addEventListener('alpine:init', () => {
       const setup = await this.getJson('/api/setup/state');
       if (setup.completed) { this.appReady = true; this.showApp = true; this.initApp(); return; }
       this.showWizard = true;
+      // The wizard offers the algorithm choice, and cannot reach the routes the app uses.
+      await this.loadAlgorithm();
       // Resume at the first incomplete step: if the MRR key is already stored, skip
       // the password/keys steps and land on the pool step.
       if (setup.configured) this.goStep(2);
@@ -889,6 +911,51 @@ document.addEventListener('alpine:init', () => {
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
     // Populate the Hash Value readout (your pay-rate vs market rate) from an /api/{status,market} block.
+    // One place applies the algorithm block, whichever endpoint returned it, so the
+    // header, the settings card and the spend confirmations cannot disagree.
+    applyAlgorithm(a) {
+      if (!a || !a.slug) return;
+      this.algoSlug = a.slug;
+      this.algoShort = a.short || a.slug;
+      this.algoDisplay = a.display || a.slug;
+      this.priceUnit = a.price_unit || this.priceUnit;
+      if (Array.isArray(a.choices) && a.choices.length) this.algoChoices = a.choices;
+      // Only follow the server while the user is not mid-change, so a poll landing
+      // between the select and its response cannot snap the dropdown back.
+      if (!this.algoBusy) this.algoPick = a.slug;
+      this.algoKnown = true;
+    },
+    // The setup wizard runs before /api/status and /api/config will answer, so the
+    // choice it offers is seeded from the switch route itself: posting the algorithm
+    // that is already active is a no-op that returns the current block.
+      async loadAlgorithm() {
+        const r = await this.getJson('/api/algorithm');
+        if (r && r.algorithm) this.applyAlgorithm(r.algorithm);
+      },
+    async switchAlgorithm() {
+      const want = this.algoPick;
+      if (!want || want === this.algoSlug) return;
+      this.algoBusy = true;
+      this.algoNote = '';
+      const r = await this.send('POST', '/api/algorithm', { algo: want });
+      this.algoBusy = false;
+      if (!r.ok) {
+        // Put the dropdown back: the setting did not change, and a control showing an
+        // algorithm that is not active is the exact confusion this feature prevents.
+        this.algoPick = this.algoSlug;
+        this.algoNoteClass = 'text-neon-pink';
+        this.algoNote = r.json && r.json.error === 'session_active'
+          ? 'Stop the running session first. Switching under it would leave rentals bought on the other market unmanaged.'
+          : 'Could not switch algorithm.';
+        return;
+      }
+      this.applyAlgorithm(r.json.algorithm);
+      this.algoNoteClass = 'text-neon-green';
+      this.algoNote = `Now renting ${this.algoDisplay}. Guardrails, endpoint and display unit have followed.`;
+      // Everything on screen was priced against the other market.
+      await this.loadSettings();
+      await this.refresh();
+    },
     fmtHashValue(hv) {
       hv = hv || {};
       if (hv.price_unit) this.priceUnit = hv.price_unit;
@@ -977,7 +1044,6 @@ document.addEventListener('alpine:init', () => {
       this.fallbackAvailable = fb.available !== false;
       this.fallbackPoolName = fb.pool || 'the fallback pool';
       this.fallbackReason = fb.unavailable_reason || '';
-      this.algoShort = fb.algo_short || '';
       this.fallbackKnown = true;
       this.fallbackEnabled = !!fb.enabled;   // reflect the saved setting on the endpoint card
       this.rerouteDeadRigs = !!fb.reroute_dead_rigs;
@@ -1044,6 +1110,7 @@ document.addEventListener('alpine:init', () => {
     },
     async loadSettings() {
       const r = await this.getJson('/api/config');
+      this.applyAlgorithm(r && r.algorithm);
       const schema = (r && r.schema) || {};
       const values = (r && r.values) || {};
       const titles = { strategy: 'Strategy', guardrails: 'Guardrails', notifications: 'Notifications', ui: 'Display' };
@@ -1268,6 +1335,8 @@ document.addEventListener('alpine:init', () => {
     async refreshStatus() {
       const s = await this.getJson('/api/status');
       if (!s || !s.ok) return;   // a dropped/failed poll must leave the last good state intact, not blank the card
+      // The header badge rides the poll the dashboard already makes.
+      this.applyAlgorithm(s.algorithm);
       if (s && s.mode) {
         this.setModeBadge(s.mode);
         this.modeIsLive = s.mode === 'live';

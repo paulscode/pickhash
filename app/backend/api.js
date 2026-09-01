@@ -43,6 +43,23 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * What the UI needs to say which algorithm is active, and to offer the others.
+ *
+ * One shape, served from every endpoint that needs it, so the header, the settings
+ * page and the spend confirmation cannot disagree about what is active. That
+ * disagreement is the failure mode: every number on the screen looks plausible for
+ * whichever market it came from, so a stale label is invisible.
+ */
+function algorithmBlock(conn) {
+  const active = market.activeAlgo(conn);
+  const describe = (slug) => {
+    const a = algos.get(slug);
+    return { slug, short: a.short, display: a.display, price_unit: a.priceUnit };
+  };
+  return { ...describe(active), choices: algos.SLUGS.map(describe) };
+}
+
 /** Hash Value block from the newest market snapshot + the active session's held rentals. */
 function hashValueFor(conn) {
   const latest = conn.prepare('SELECT lowest, last10 FROM market_snapshots WHERE algo = ? ORDER BY ts DESC LIMIT 1').get(market.activeAlgo(conn)) || null;
@@ -310,6 +327,45 @@ async function handleApi(req, res, url, body, ctx = {}) {
     } catch { return sendJson(res, 502, { ok: false, error: 'duckdns_failed' }); }
   }
 
+    /*
+     * Above the setup gate on purpose. The saved endpoint belongs to an algorithm, so
+     * choosing one after saving an endpoint is exactly the mismatch this work exists to
+     * prevent: the user would configure a stratum, switch, and find it belongs to the
+     * algorithm they just left. The wizard offers the choice before the endpoint step.
+     */
+  /*
+   * Switching algorithms. Deliberately not a key in the settings schema: it changes
+   * which market is being bought from, which guardrails apply, which endpoint is live
+   * and which marketplace account objects are used. A generic key/value POST that
+   * happened to accept it would carry none of the checks below.
+   */
+  // Readable before setup completes, because the wizard offers the choice and cannot
+  // reach /api/status or /api/config yet.
+  if (p === '/api/algorithm' && method === 'GET') {
+    return sendJson(res, 200, { ok: true, algorithm: algorithmBlock(conn) });
+  }
+  if (p === '/api/algorithm' && method === 'POST') {
+    const want = String(body.algo || '');
+    if (!algos.isKnown(want)) return sendJson(res, 400, { error: 'unknown_algorithm' });
+    const current = market.activeAlgo(conn);
+    if (want === current) return sendJson(res, 200, { ok: true, algorithm: algorithmBlock(conn) });
+
+    // Not while money is in flight. A running session holds rentals bought on one
+    // market, priced by that market's guardrails, pointed at that algorithm's
+    // endpoint; switching under it would leave the loop maintaining a target it can
+    // no longer buy for, and the rentals already paid for would go unmanaged.
+    const live = conn.prepare(
+      "SELECT id FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1",
+    ).get();
+    if (live) return sendJson(res, 409, { error: 'session_active', session_id: live.id });
+
+    config.set(conn, 'algorithm', { active: want });
+    conn.prepare('INSERT INTO decisions (algo, ts, dry_run, note, executed_json) VALUES (?, ?, 0, ?, ?)')
+      .run(want, Math.floor(Date.now() / 1000), `algorithm switched from ${current} to ${want}`,
+        JSON.stringify({ from: current, to: want }));
+    return sendJson(res, 200, { ok: true, algorithm: algorithmBlock(conn) });
+  }
+
   // --- Setup gate: the rest of the API is closed until the wizard completes ---
   if (!isSetupComplete(conn)) return sendJson(res, 412, { needs_setup: true });
 
@@ -341,7 +397,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // The UI labels money in the active algorithm's unit, so it needs both on the
       // one call it already polls. Sending the label with the numbers means they
       // cannot drift apart in the browser.
-      algo: market.activeAlgo(conn),
+      algorithm: algorithmBlock(conn),
       price_unit: algos.priceUnit(market.activeAlgo(conn)),
       hash_value: hashValueFor(conn), alerts: alerts.listActive(conn),
     });
@@ -570,8 +626,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
       values[ns] = {};
       for (const key of Object.keys(schema[ns])) values[ns][key] = config.getKey(conn, ns, key);
     }
-    return sendJson(res, 200, { schema, values, algo: market.activeAlgo(conn) });
+    return sendJson(res, 200, { schema, values, algorithm: algorithmBlock(conn) });
   }
+
   if (p === '/api/config' && method === 'POST') {
     const ns = String(body.ns || '');
     if (!config.SETTINGS[ns]) return sendJson(res, 400, { error: 'bad_namespace' });
@@ -608,7 +665,6 @@ async function handleApi(req, res, url, body, ctx = {}) {
           const strat = config.get(conn, 'strategy');
           return {
             available: !!pool,
-            algo_short: algos.get(active).short,
             unavailable_reason: pool ? null
               : `No fallback pool accepts ${algos.get(active).short} work, so failover would send rented hashrate somewhere it cannot mine.`,
             // Reported as off when the algorithm has no pool, whatever the stored
