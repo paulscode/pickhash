@@ -255,3 +255,117 @@ test('a rental keeps its difficulty when endpoint repair moves it to a new host'
     assert.equal(repoint[1].pass, 'd=16384', 'and kept the difficulty while doing it');
   });
 });
+
+// ---- adopting an orphan (the ambiguous-create recovery path) ----
+//
+// A normal rental carries its rig record down from the quote. Adoption has no quote: it
+// rebuilds the row after a create whose result we never saw, so it has to find the rig
+// itself. What must not happen is that looking for a nicety like difficulty gets in the
+// way of the adoption, which is what lifts the halt and lets autopilot resume.
+
+const adopt = require('../engine/adopt');
+
+// As GET /rig/{id} really returns it (fields this path reads).
+function rawRig(over = {}) {
+  return {
+    id: '42', name: 'Skippy-HS3-SE', owner: 'skippy247', type: 'blake2b', region: 'us-east',
+    rpi: 'new', online: true, poolstatus: 'online', status: { status: 'rented', rented: true },
+    optimal_diff: { min: '4330.650', max: '25983.900' },
+    hashrate: { advertised: { hash: '1.86', type: 'th' } },
+    price: { type: 'th', BTC: { price: '0.004', hour: '0.0003', enabled: true } },
+    ...over,
+  };
+}
+function rentalDetail(mrrId, over = {}) {
+  return {
+    id: String(mrrId), length: 3, start: 1000, end: 1000 + 3 * 3600,
+    price: { paid: 0.0006, currency: 'BTC' },
+    hashrate: { advertised: { hash: '1.86', type: 'th' } },
+    ...over,
+  };
+}
+function adoptClient(handlers = {}) {
+  const state = { puts: [], gets: [] };
+  return {
+    state,
+    async get(p) { state.gets.push(p); if (handlers[p]) return handlers[p](); throw new Error('no handler ' + p); },
+    async put(p, params) { state.puts.push([p, params]); return { message: 'ok' }; },
+  };
+}
+function seedSession(conn) {
+  return Number(conn.prepare("INSERT INTO sessions (mode, state, target_th, budget_sats, spent_sats, fee_sats, created_at, started_at) VALUES ('autopilot','active',300,1000000,0,0,1,1)").run().lastInsertRowid);
+}
+const EP_SUPPORTED = { host: 'ab.gg', port: 26596, worker_base: 'bc1qx.phash', supports_password_diff: 1 };
+
+test('an adopted orphan gets its own difficulty, looked up from the rig', async () => {
+  await withDb(async (conn) => {
+    const sessionId = seedSession(conn);
+    const client = adoptClient({ '/rental/9001': () => rentalDetail(9001), '/rig/42': () => rawRig() });
+    const r = await adopt.adoptStrays(conn, client, { sessionId, endpoint: EP_SUPPORTED, adopt: [{ mrrId: '9001', rigId: 42 }], nowSec: 5000 });
+    assert.deepEqual(r.adopted, [9001]);
+    // 4330.650 -> 8192, the same value the normal path would have chosen for this rig.
+    assert.equal(conn.prepare('SELECT stratum_pass FROM rentals WHERE mrr_id = 9001').get().stratum_pass, 'd=8192');
+    assert.equal(client.state.puts.find((p) => /\/pool\/0$/.test(p[0]))[1].pass, 'd=8192');
+    // and the name and region the rental detail did not carry are recovered with it.
+    const row = conn.prepare('SELECT rig_name, region FROM rentals WHERE mrr_id = 9001').get();
+    assert.equal(row.rig_name, 'Skippy-HS3-SE');
+    assert.equal(row.region, 'us-east');
+  });
+});
+
+test('a rig lookup that fails still adopts the rental, at the endpoint default', async () => {
+  // This is the property that matters most here. Adoption books money already spent and
+  // lifts the reconcile halt; if a failed side lookup could abort it, a network blip
+  // would strand paid-for hashrate and keep autopilot halted.
+  await withDb(async (conn) => {
+    const sessionId = seedSession(conn);
+    const client = adoptClient({ '/rental/9001': () => rentalDetail(9001) });   // no /rig/42 handler: throws
+    const r = await adopt.adoptStrays(conn, client, { sessionId, endpoint: EP_SUPPORTED, adopt: [{ mrrId: '9001', rigId: 42 }], nowSec: 5000 });
+    assert.deepEqual(r.adopted, [9001], 'adopted anyway');
+    assert.equal(conn.prepare('SELECT stratum_pass FROM rentals WHERE mrr_id = 9001').get().stratum_pass, 'x');
+    assert.equal(client.state.puts.find((p) => /\/pool\/0$/.test(p[0]))[1].pass, 'x');
+    // the money and the alert still land, which is the whole point of adopting
+    assert.equal(conn.prepare('SELECT spent_sats FROM sessions WHERE id = ?').get(sessionId).spent_sats, 60_000);
+    assert.ok(conn.prepare("SELECT 1 FROM alerts WHERE kind = 'rental_adopted'").get());
+  });
+});
+
+test('an adopted orphan asks for nothing when the endpoint does not honour requests', async () => {
+  await withDb(async (conn) => {
+    const sessionId = seedSession(conn);
+    const client = adoptClient({ '/rental/9001': () => rentalDetail(9001), '/rig/42': () => rawRig() });
+    const ep = { ...EP_SUPPORTED, supports_password_diff: 0 };
+    await adopt.adoptStrays(conn, client, { sessionId, endpoint: ep, adopt: [{ mrrId: '9001', rigId: 42 }], nowSec: 5000 });
+    assert.equal(conn.prepare('SELECT stratum_pass FROM rentals WHERE mrr_id = 9001').get().stratum_pass, 'x');
+  });
+});
+
+test('a rental detail that already embeds the rig is not looked up a second time', async () => {
+  // The extra call is only worth making when the detail does not already answer the
+  // question. Adoption runs while the system is degraded; do not add requests to it
+  // that the response in hand has already satisfied.
+  await withDb(async (conn) => {
+    const sessionId = seedSession(conn);
+    const client = adoptClient({ '/rental/9001': () => rentalDetail(9001, { rig: rawRig() }) });
+    await adopt.adoptStrays(conn, client, { sessionId, endpoint: EP_SUPPORTED, adopt: [{ mrrId: '9001', rigId: 42 }], nowSec: 5000 });
+    assert.equal(conn.prepare('SELECT stratum_pass FROM rentals WHERE mrr_id = 9001').get().stratum_pass, 'd=8192');
+    assert.deepEqual(client.state.gets, ['/rental/9001'], 'the embedded rig was enough');
+  });
+});
+
+test('an embedded rig without a difficulty range is topped up by the lookup', async () => {
+  // The detail can embed a rig that lacks optimal_diff. That is not an answer, so the
+  // lookup still runs rather than concluding the rig has no range.
+  await withDb(async (conn) => {
+    const sessionId = seedSession(conn);
+    const client = adoptClient({
+      '/rental/9001': () => rentalDetail(9001, { rig: { name: 'Orphan', region: 'us' } }),
+      '/rig/42': () => rawRig(),
+    });
+    await adopt.adoptStrays(conn, client, { sessionId, endpoint: EP_SUPPORTED, adopt: [{ mrrId: '9001', rigId: 42 }], nowSec: 5000 });
+    assert.ok(client.state.gets.includes('/rig/42'), 'looked it up');
+    assert.equal(conn.prepare('SELECT stratum_pass FROM rentals WHERE mrr_id = 9001').get().stratum_pass, 'd=8192');
+    // The detail's own name wins where it has one: it describes this rental.
+    assert.equal(conn.prepare('SELECT rig_name FROM rentals WHERE mrr_id = 9001').get().rig_name, 'Orphan');
+  });
+});
