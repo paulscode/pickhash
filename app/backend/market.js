@@ -9,28 +9,25 @@
  * the live API: advertised.type "ph", last_Xmin.type "mh", price.type "ph".)
  */
 const units = require('./units');
-
-// Single source of truth for the algorithm, and now actually the only place the
-// slug appears. It previously claimed that while api.js and bootstrap.js spelled
-// it out themselves, so flipping this would have left the app reading one
-// algorithm's marketplace while creating and testing another's pool and profile.
-// Keep it that way: the MRR account objects are per-algorithm, and a mismatch
-// between them surfaces far from its cause.
-const ALGO = 'sha256ab';
+const config = require('./config');
+const algos = require('./algos');
 
 /**
  * The algorithm this instance is operating on, for scoping reads and stamping writes.
  *
- * A function rather than the bare constant, because every call site that needs
- * scoping should already be asking a question that has an answer per instance. It
- * returns ALGO today; when the algorithm becomes configurable this is the one place
- * that has to learn to read the setting, and every scoped query follows.
+ * The single source of truth, and now genuinely the only way to learn the slug:
+ * api.js and bootstrap.js used to spell it out themselves, so flipping one constant
+ * would have left the app reading one algorithm's marketplace while creating and
+ * testing another's pool and profile. The MRR account objects are per-algorithm and
+ * a mismatch between them surfaces far from its cause.
  *
- * Takes the connection it will eventually read the setting from, so adding that
- * later does not mean touching the call sites again.
+ * The setting itself lives in config.js because the config layer needs it to resolve
+ * an algorithm-scoped namespace, and market.js already reads config; owning it here
+ * would be a require cycle. This re-export exists because most call sites are asking
+ * a market question, not a settings question.
  */
-function activeAlgo(_conn) {
-  return ALGO;
+function activeAlgo(conn) {
+  return config.activeAlgo(conn);
 }
 
 function num(v) { return v === '' || v === null || v === undefined ? null : Number(v); }
@@ -149,13 +146,20 @@ function writeSnapshot(conn, snap) {
     JSON.stringify(snap.depth || []));
 }
 
-/** Fetch every rig for the active algorithm, paginating 100 at a time. */
-async function fetchAllRigs(client, filters = {}) {
+/**
+ * Fetch every rig for one algorithm, paginating 100 at a time.
+ *
+ * `algo` is required and deliberately has no default. This is the call that decides
+ * which marketplace the whole app is looking at, and a default here would mean a
+ * caller that forgot silently priced, rented and charged against the wrong one.
+ */
+async function fetchAllRigs(client, algo, filters = {}) {
+  if (!algos.isKnown(algo)) throw new Error(`fetchAllRigs: unknown algorithm ${algo}`);
   const out = [];
   let offset = 0;
   let total = Infinity;
   while (offset < total) {
-    const page = await client.get('/rig', { type: ALGO, count: 100, offset, ...filters });
+    const page = await client.get('/rig', { type: algo, count: 100, offset, ...filters });
     const norm = normalizeSearchPage(page);
     out.push(...norm.rigs);
     // Use the reported total only if it's a real number; otherwise keep paginating
@@ -236,4 +240,4 @@ function hashValue(latest, rentals) {
   };
 }
 
-module.exports = { ALGO, activeAlgo, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, fetchAllRigs, depthByRegion, cheapNow, hashValue };
+module.exports = { activeAlgo, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, fetchAllRigs, depthByRegion, cheapNow, hashValue };

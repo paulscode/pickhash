@@ -383,7 +383,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
  */
 async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint }) {
   const strat = config.get(conn, 'strategy');
-  const rigs = await market.fetchAllRigs(client);
+  const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
   const cands = quote.candidates(rigs, {
     mode: 'autopilot', minRpi: strat.min_rpi, blacklist: strat.blacklist_rig_ids,
     stabilityTolerancePct: strat.stability_tolerance_pct,

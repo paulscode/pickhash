@@ -16,20 +16,26 @@ const market = require('./market');
 const quote = require('./quote');
 const deposit = require('./deposit');
 const scoring = require('./engine/scoring');
+const algos = require('./algos');
 
 const MARKET_TTL_MS = 30_000;   // rigs get rented; a quote shouldn't be built on stale depth
 const QUOTE_TTL_MS = 60_000;    // a quote id is honored this long, then re-priced at confirm
 
-let marketCache = null;         // { rigs, at }
+// { algo, rigs, at }. Keyed by algorithm, not just time: a cache hit from the other
+// algorithm's marketplace would price a quote against rigs that cannot be rented for
+// this one, and the 30s window is easily long enough to span a switch.
+let marketCache = null;
 const quotes = new Map();       // id -> stored quote
 
 function nowMs() { return Date.now(); }
 function invalidateMarket() { marketCache = null; }
 
-async function freshMarket(client, force = false) {
-  if (!force && marketCache && nowMs() - marketCache.at < MARKET_TTL_MS) return marketCache;
-  const rigs = await market.fetchAllRigs(client);
-  marketCache = { rigs, at: nowMs() };
+async function freshMarket(client, algo, force = false) {
+  if (!force && marketCache && marketCache.algo === algo && nowMs() - marketCache.at < MARKET_TTL_MS) {
+    return marketCache;
+  }
+  const rigs = await market.fetchAllRigs(client, algo);
+  marketCache = { algo, rigs, at: nowMs() };
   return marketCache;
 }
 
@@ -157,7 +163,8 @@ async function buildQuote(conn, client, input, buildOpts = {}) {
   const packParams = toPackerParams(input);          // validates inputs
   // At confirm we force a fresh fetch: reusing the ~30s cache would compare a quote to
   // itself and defeat the reprice guard, executing at a price that may have moved.
-  const mkt = await freshMarket(client, buildOpts.forceMarket === true);
+  const activeSlug = market.activeAlgo(conn);
+  const mkt = await freshMarket(client, activeSlug, buildOpts.forceMarket === true);
   const cands = quote.candidates(applyRegion(mkt.rigs, opts), opts);
   const { params, guardWarnings } = clampBudget(conn, packParams);
   const result = quote.pack(cands, params);
@@ -178,7 +185,7 @@ async function buildQuote(conn, client, input, buildOpts = {}) {
   let balanceSats = null;
   try { balanceSats = deposit.balanceToSats(await client.get('/account/balance')).confirmed_sats; } catch { /* show no balance */ }
   let algo = null;
-  try { algo = parseAlgo(await client.get(`/info/algos/${market.ALGO}`)); } catch { /* no market badge */ }
+  try { algo = parseAlgo(await client.get(`/info/algos/${activeSlug}`)); } catch { /* no market badge */ }
 
   const blendedBtcPhDay = result.blendedBtcThDay * 1000;   // engine works per-TH; the API/UI speak per-PH
   // Only compute a market badge for a real quote — a 0-rig quote has blended 0, which would

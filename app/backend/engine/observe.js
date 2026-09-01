@@ -264,10 +264,10 @@ async function observe(conn, client, ctx = {}) {
   let marketAt = prev.marketAt || 0;
   if (nowMs - marketAt >= MARKET_CADENCE_MS) {
     try {
-      const rigs = await market.fetchAllRigs(client);
+      const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
       const snap = market.buildMarketSnapshot(rigs, nowSec);
       try {
-        const algo = await client.get('/info/algos/' + market.ALGO);
+        const algo = await client.get('/info/algos/' + market.activeAlgo(conn));
         const prices = (algo && algo.stats && algo.stats.prices) || (algo && algo.prices) || {};
         // info/algos amounts are per-PH·day (sha256ab unit "ph*day"); market_snapshots
         // stores per-TH·day (like `lowest`), so divide by 1000 to keep units consistent.

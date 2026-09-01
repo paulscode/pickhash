@@ -1,15 +1,38 @@
 'use strict';
 /*
- * Typed configuration over the `config` table (one JSON row per namespace).
+ * Typed configuration over the `config` table (one JSON row per namespace, per
+ * algorithm where the namespace is algorithm-specific).
  *
  * Defaults live here so nothing else hard-codes a knob. Only explicit overrides are
  * stored; defaults are merged in on read, so changing a default here propagates to
- * any value the user never touched. Defaults are tuned for the common operating scale
- * (single-digit PH/s, hundreds-of-k to a few-M sats) and are provisional until the
- * live soak.
+ * any value the user never touched. The base defaults are tuned for the common
+ * sha256ab operating scale (single-digit PH/s, hundreds-of-k to a few-M sats) and are
+ * provisional until the live soak; an algorithm whose market has a different shape
+ * overlays its own in algos.js rather than restating the whole set.
  */
+const algos = require('./algos');
+
+/*
+ * Namespaces whose values describe how to spend money in a particular market, and
+ * so mean different things per algorithm. Everything else is shared.
+ *
+ * The split is deliberate in both directions. Sharing `guardrails` would let a
+ * ceiling tuned for one market silently govern the other, three orders of magnitude
+ * away. Splitting `duckdns` would lose a user their DNS setup on a switch, for no
+ * gain, since a hostname has nothing to do with which algorithm is being rented.
+ */
+const SCOPED_NS = new Set(['strategy', 'guardrails']);
+
+// Stored in the algo column for a global namespace. Not a valid slug, so a global
+// row can never be read as one algorithm's settings.
+const GLOBAL = '';
 
 const DEFAULTS = {
+  // Which algorithm this instance rents. Global by definition: it is the thing the
+  // scoped namespaces are scoped BY, so scoping it would be circular.
+  algorithm: {
+    active: algos.DEFAULT_ALGO,
+  },
   strategy: {
     min_rpi: 90,                    // reliability floor for eligible rigs
     stability_tolerance_pct: 20,    // max 5/15/30-min variance to count a rig "steady"
@@ -58,35 +81,79 @@ const DEFAULTS = {
 
 function nowSeconds() { return Math.floor(Date.now() / 1000); }
 
-/** Effective config for a namespace: defaults merged with stored overrides. */
-function get(conn, ns) {
-  const row = conn.prepare('SELECT json FROM config WHERE ns = ?').get(ns);
-  const stored = row ? JSON.parse(row.json) : {};
+/** Read one namespace's stored overrides. `algo` is already resolved. */
+function storedFor(conn, ns, algo) {
+  const row = conn.prepare('SELECT json FROM config WHERE ns = ? AND algo = ?').get(ns, algo);
+  if (!row) return {};
+  // A corrupt row must not take the process down on a read, and must not read as
+  // "no overrides" either, since that would silently restore defaults on a namespace
+  // the user had deliberately tightened. Failing here is the honest option.
+  return JSON.parse(row.json);
+}
+
+/**
+ * The algorithm this instance is renting.
+ *
+ * Lives here, not in market.js, because the config layer needs it to resolve a
+ * scoped namespace and market.js already reads config. Putting it the other way
+ * round is a require cycle. market.activeAlgo re-exports this for the call sites
+ * that think of it as a market question.
+ *
+ * Reads only a global namespace, so it cannot recurse back into itself. An
+ * unrecognised stored slug falls back to the default rather than throwing: this is
+ * on the path of every read and every write, and a bad config row should not be
+ * able to stop the app from starting.
+ */
+function activeAlgo(conn) {
+  const stored = storedFor(conn, 'algorithm', GLOBAL);
+  const slug = stored.active;
+  return algos.isKnown(slug) ? slug : algos.DEFAULT_ALGO;
+}
+
+/** Which algo column a namespace lives under, resolving the active one if needed. */
+function algoFor(conn, ns, algo) {
+  if (!SCOPED_NS.has(ns)) return GLOBAL;
+  return algo || activeAlgo(conn);
+}
+
+/**
+ * Effective config for a namespace: base defaults, then the algorithm's own
+ * defaults, then stored overrides.
+ *
+ * `algo` is optional and only meaningful for a scoped namespace; it exists so the
+ * settings UI can show one algorithm's values while another is active, and so a
+ * switch can validate the incoming algorithm's config before committing to it.
+ */
+function get(conn, ns, algo) {
+  const scope = algoFor(conn, ns, algo);
+  const stored = storedFor(conn, ns, scope);
   // A stored null/undefined must NOT mask a non-null default — otherwise a corrupt config could
   // null out a hard spend ceiling and the gate would read it as "no cap" (fail-open). Keys whose
   // default is intentionally null (e.g. an optional rate ceiling) resolve to null either way.
   const clean = {};
   for (const [k, v] of Object.entries(stored)) if (v != null) clean[k] = v;
-  return { ...(DEFAULTS[ns] || {}), ...clean };
+  const base = DEFAULTS[ns] || {};
+  const perAlgo = scope === GLOBAL ? {} : algos.defaultsFor(scope, ns);
+  return { ...base, ...perAlgo, ...clean };
 }
 
-function getKey(conn, ns, key) {
-  return get(conn, ns)[key];
+function getKey(conn, ns, key, algo) {
+  return get(conn, ns, algo)[key];
 }
 
 /** Merge `patch` into the stored overrides for `ns` (defaults are never persisted). */
-function set(conn, ns, patch) {
-  const row = conn.prepare('SELECT json FROM config WHERE ns = ?').get(ns);
-  const stored = row ? JSON.parse(row.json) : {};
+function set(conn, ns, patch, algo) {
+  const scope = algoFor(conn, ns, algo);
+  const stored = storedFor(conn, ns, scope);
   const overrides = { ...stored, ...patch };
   conn.prepare(
-    `INSERT INTO config (ns, json, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(ns) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
-  ).run(ns, JSON.stringify(overrides), nowSeconds());
-  return get(conn, ns);
+    `INSERT INTO config (ns, algo, json, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(ns, algo) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`,
+  ).run(ns, scope, JSON.stringify(overrides), nowSeconds());
+  return get(conn, ns, algo);
 }
 
-/** Every namespace's effective config (the canonical knob list). */
+/** Every namespace's effective config for the active algorithm (the canonical knob list). */
 function all(conn) {
   const out = {};
   for (const ns of Object.keys(DEFAULTS)) out[ns] = get(conn, ns);
@@ -173,4 +240,7 @@ function validatePatch(ns, patch) {
   return { ok: true, patch: out };
 }
 
-module.exports = { DEFAULTS, get, getKey, set, all, SETTINGS, validatePatch };
+module.exports = {
+  DEFAULTS, get, getKey, set, all, SETTINGS, validatePatch,
+  activeAlgo, SCOPED_NS, GLOBAL,
+};

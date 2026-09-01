@@ -49,12 +49,24 @@ function runMigrations(database) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+    const record = () => database
+      .prepare('INSERT OR IGNORE INTO schema_migrations (filename, applied_at) VALUES (?, ?)')
+      .run(file, nowSeconds());
     // Wrap each migration in a transaction so it applies all-or-nothing: a real
     // failure rolls back cleanly (retried next boot) instead of leaving a partially
     // applied file that a later "already exists" pass would wrongly stamp as done.
+    //
+    // The record of having applied it goes inside that same transaction. Recording
+    // afterwards leaves a window: if the process dies between the commit and the
+    // record, the next boot sees the migration as pending and runs it again on an
+    // already-migrated database. For an ordinary ALTER that is harmless, but a
+    // migration that rebuilds a table (009, 010) re-derives its new column from the
+    // old rows, so a second run would flatten a dimension it had already populated.
+    // Committing the fact and the effect together removes the window entirely.
     try {
       database.exec('BEGIN');
       database.exec(sql);
+      record();
       database.exec('COMMIT');
     } catch (err) {
       try { database.exec('ROLLBACK'); } catch { /* no active transaction */ }
@@ -69,9 +81,10 @@ function runMigrations(database) {
       for (const stmt of bare.split(';').map((s) => s.trim()).filter(Boolean)) {
         try { database.exec(stmt); } catch (e2) { if (!isAlreadyExists(e2)) throw e2; }
       }
+      // This path is not transactional — the statements were applied one at a time
+      // outside a transaction — so the record can only be written after the fact.
+      record();
     }
-    database.prepare('INSERT OR IGNORE INTO schema_migrations (filename, applied_at) VALUES (?, ?)')
-      .run(file, nowSeconds());
   }
 }
 

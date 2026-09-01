@@ -30,14 +30,20 @@ ALTER TABLE applied_refunds ADD COLUMN algo TEXT NOT NULL DEFAULT 'sha256ab';
 -- would replace the first rather than sit beside it. SQLite cannot alter a primary
 -- key in place, so these are rebuilt.
 --
--- Renamed aside first rather than built-then-dropped, and that ordering is load
--- bearing. The migration runner rolls a failed batch back and then retries it one
--- statement at a time, skipping anything that already exists. Under the other
--- ordering a re-run on an already-migrated database would happily recreate the new
--- table, copy the migrated rows into it with algo forced back to 'sha256ab', drop
--- the real table and rename over it: every blake2b row silently relabelled, with no
--- error. This way the first statement fails instead, because the _pre009 name is
--- already taken, and a loud failure on a money database beats a quiet relabel.
+-- Renamed aside first rather than built-then-dropped. The runner rolls a failed
+-- batch back and then retries it one statement at a time, skipping anything that
+-- already exists, so a previous attempt can leave the _pre009 table behind; taking
+-- that name first makes the retry stop on the debris instead of building on top of
+-- it.
+--
+-- Be clear about what that does NOT protect, because an earlier version of this
+-- comment claimed more. If this migration is ever re-run against a database where
+-- it already completed cleanly, the _pre009 name is free again and every statement
+-- succeeds: the copy below forces algo to 'sha256ab', so any blake2b rows would be
+-- silently relabelled. Statement ordering cannot prevent that. What prevents it is
+-- that the runner records a migration as applied inside the same transaction that
+-- applies it, so there is no window where the effect survives without the record.
+-- See runMigrations in db.js.
 ALTER TABLE market_snapshots RENAME TO market_snapshots_pre009;
 CREATE TABLE market_snapshots (
   algo            TEXT NOT NULL DEFAULT 'sha256ab',

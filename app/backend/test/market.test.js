@@ -129,7 +129,7 @@ test('fetchAllRigs paginates and terminates (no infinite loop on the count field
   const port = await new Promise((r) => server.listen(0, () => r(server.address().port)));
   try {
     const c = new MrrClient({ key: 'K', secret: 'S', nonceStore: memoryNonceStore(), baseUrl: `http://127.0.0.1:${port}`, throttleMs: 0 });
-    const rigs = await market.fetchAllRigs(c);
+    const rigs = await market.fetchAllRigs(c, 'sha256ab');
     assert.equal(rigs.length, 2, 'returns exactly the fixture records, then stops');
     assert.ok(rigs.every((r) => r.id));
   } finally {
@@ -156,7 +156,7 @@ test('fetchAllRigs tolerates a non-numeric total (no under-fetch, no infinite lo
   const port = await new Promise((r) => server.listen(0, () => r(server.address().port)));
   try {
     const c = new MrrClient({ key: 'K', secret: 'S', nonceStore: memoryNonceStore(), baseUrl: `http://127.0.0.1:${port}`, throttleMs: 0 });
-    const rigs = await market.fetchAllRigs(c);
+    const rigs = await market.fetchAllRigs(c, 'sha256ab');
     assert.equal(rigs.length, 2, 'fetched both rigs then stopped at the empty page');
   } finally {
     server.closeAllConnections?.();

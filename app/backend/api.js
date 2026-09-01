@@ -211,7 +211,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     let mrrAdvisory = null;
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     if (client) {
-      try { mrrAdvisory = await client.put('/account/pool/test', { method: 'full', type: market.ALGO, host, port, user, pass }); }
+      try { mrrAdvisory = await client.put('/account/pool/test', { method: 'full', type: market.activeAlgo(conn), host, port, user, pass }); }
       catch (e) { mrrAdvisory = { error: e.name }; }
     }
 

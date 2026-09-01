@@ -68,7 +68,7 @@ async function runCycle(conn, client, snapshot, opts = {}) {
 
   // There IS a gap — fetch candidates and decide for real.
   let marketRigs;
-  try { marketRigs = await market.fetchAllRigs(client); }
+  try { marketRigs = await market.fetchAllRigs(client, market.activeAlgo(conn)); }
   catch { return { ran: false, reason: 'market_fetch_failed' }; }
 
   const plan = decide.decide(decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs));
