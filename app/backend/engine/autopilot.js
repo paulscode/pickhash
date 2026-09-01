@@ -81,8 +81,15 @@ async function runCycle(conn, client, snapshot, opts = {}) {
 
   const strat = config.get(conn, 'strategy');
   const guard = config.get(conn, 'guardrails');
-  const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE ts >= ?').get(nowSec - DAY).s;
-  const lastRentAt = conn.prepare('SELECT COALESCE(MAX(ts), 0) AS t FROM spend_events').get().t;
+  // Scoped. The daily ceiling is an amount of money, but the spending it bounds happens
+  // in one market: at the measured 2,425x price ratio a single blake2b rental would
+  // swamp a total sized for sha256ab, and a ceiling that never binds looks exactly like
+  // one that is working. Pacing likewise, or a rent on one algorithm would delay a rent
+  // on the other.
+  const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE algo = ? AND ts >= ?')
+    .get(market.activeAlgo(conn), nowSec - DAY).s;
+  const lastRentAt = conn.prepare('SELECT COALESCE(MAX(ts), 0) AS t FROM spend_events WHERE algo = ?')
+    .get(market.activeAlgo(conn)).t;
 
   const gateResult = gate.gate(plan.actions, {
     runMode: config.getKey(conn, 'run', 'mode') || 'dry-run',

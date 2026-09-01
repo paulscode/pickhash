@@ -84,7 +84,13 @@ function payRateSatsUnitDay(conn) {
     const live = rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ? AND ended = 0').all(active.id));
     if (live != null) return { rate: live, live: true };
   }
-  const recent = conn.prepare('SELECT session_id FROM rentals WHERE rate_btc_th_day IS NOT NULL AND advertised_th > 0 ORDER BY session_id DESC LIMIT 1').get();
+  // Scoped. This is the "you (last)" line drawn on the market chart, in the active
+  // algorithm's unit and against its price axis. The most recent priced session under
+  // the OTHER algorithm would be drawn there as though it were comparable, which at a
+  // 2,425x price ratio puts it somewhere off the chart or flat on the floor.
+  const recent = conn.prepare(
+    'SELECT session_id FROM rentals WHERE algo = ? AND rate_btc_th_day IS NOT NULL AND advertised_th > 0 ORDER BY session_id DESC LIMIT 1',
+  ).get(market.activeAlgo(conn));
   if (!recent) return { rate: null, live: false };
   return { rate: rateFrom(conn.prepare('SELECT rate_btc_th_day, advertised_th, avg_percent FROM rentals WHERE session_id = ?').all(recent.session_id)), live: false };
 }
@@ -377,6 +383,10 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (live) return sendJson(res, 409, { error: 'session_active', session_id: live.id });
 
     config.set(conn, 'algorithm', { active: want });
+    // Everything cached is priced against the market just left: the 30-second rig cache,
+    // and any held quote, which names rig ids that cannot be rented under the new one.
+    quoteService.invalidateMarket();
+    quoteService.invalidateQuotes();
     conn.prepare('INSERT INTO decisions (algo, ts, dry_run, note, executed_json) VALUES (?, ?, 0, ?, ?)')
       .run(want, Math.floor(Date.now() / 1000), `algorithm switched from ${current} to ${want}`,
         JSON.stringify({ from: current, to: want }));
@@ -416,13 +426,21 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // cannot drift apart in the browser.
       algorithm: algorithmBlock(conn),
       price_unit: algos.priceUnit(market.activeAlgo(conn)),
+      // The saved display unit, so the dashboard starts in the one chosen for this
+      // algorithm. Per-algorithm because PH is natural for a 36,674 PH market and
+      // absurd for a 136 TH one.
+      hashrate_unit: config.getKey(conn, 'ui', 'hashrate_unit'),
       hash_value: hashValueFor(conn), alerts: alerts.listActive(conn),
     });
   }
 
   // Chart models for the dashboard (built server-side, pure). ?range=6h|24h|7d|all.
   if (p === '/api/metrics' && method === 'GET') {
-    const latest = conn.prepare('SELECT * FROM sessions ORDER BY id DESC LIMIT 1').get() || null;
+    // Scoped: the metrics chart reads this session's ticks and labels them in the active
+    // algorithm's unit, so the other algorithm's session would render its numbers under
+    // the wrong unit and a scale they are nowhere near.
+    const latest = conn.prepare('SELECT * FROM sessions WHERE algo = ? ORDER BY id DESC LIMIT 1')
+      .get(market.activeAlgo(conn)) || null;
     const RANGES = { '6h': 6 * 3600, '24h': 24 * 3600, '7d': 7 * 86400, '30d': 30 * 86400 };
     const range = url.searchParams.get('range') || 'all';
     const nowSec = Math.floor(Date.now() / 1000);
@@ -490,8 +508,13 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // Per-rig learned score + manual-blacklist status, for the rig-breakdown scorecard.
     const blacklist = new Set((config.getKey(conn, 'strategy', 'blacklist_rig_ids') || []).map(String));
     const scores = {};
-    for (const sr of conn.prepare('SELECT rig_id, rentals, mean_percent FROM rig_scores').all()) scores[String(sr.rig_id)] = sr;
-    const sessions = conn.prepare("SELECT * FROM sessions WHERE state = 'ended' ORDER BY COALESCE(ended_at, created_at) DESC LIMIT 50").all();
+    for (const sr of conn.prepare('SELECT rig_id, rentals, mean_percent FROM rig_scores WHERE algo = ?').all(market.activeAlgo(conn))) scores[String(sr.rig_id)] = sr;
+    // Scoped, like the impact chart it sits beside. History shows spend and delivered
+    // hashrate; mixing two markets whose scales differ by orders of magnitude makes the
+    // list unreadable rather than merely wrong.
+    const sessions = conn.prepare(
+      "SELECT * FROM sessions WHERE algo = ? AND state = 'ended' ORDER BY COALESCE(ended_at, created_at) DESC LIMIT 50",
+    ).all(market.activeAlgo(conn));
     const out = sessions.map((s) => {
       const summary = tryParse(s.summary_json);
       if (summary && summary.dry_run) return null;   // rehearsals aren't real history
@@ -584,7 +607,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     } catch (e) {
       if (e instanceof session.SessionError) {
         const status = (e.code === 'session_in_progress' || e.code === 'session_active' || e.code === 'no_rigs_available' || e.code === 'endpoint_down') ? 409
-          : e.code === 'quote_expired' ? 410
+          : (e.code === 'quote_expired' || e.code === 'algorithm_changed') ? 410
             : e.code === 'insufficient_balance' ? 402
               : e.code === 'balance_unavailable' ? 502 : 400;
         return sendJson(res, status, { error: e.code });

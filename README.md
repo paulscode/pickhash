@@ -6,7 +6,7 @@
 
 **Rent Bitcoin hashrate on your own terms.**
 
-Pickhash rents SHA256 AsicBoost hashrate from [miningrigrentals.com](https://www.miningrigrentals.com) and
+Pickhash rents SHA256 AsicBoost or Blake2B Siacoin hashrate from [miningrigrentals.com](https://www.miningrigrentals.com) and
 points it at *your* stratum endpoint — typically your own Bitcoin node behind a Datum Gateway — so the
 hashrate you pay for mines *your* block templates.
 

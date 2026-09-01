@@ -102,40 +102,80 @@ test('the market history query excludes the other algorithm', () => {
   for (const row of scoped) assert.notEqual(row.lowest, 9999.0, 'a foreign snapshot is in the history');
 });
 
-test('every set-based read that was scoped is still scoped', () => {
-  // A source assertion, deliberately, and it earns its place: the behavioural tests
-  // above only reach reads that surface in an API response. The daily-spend total
-  // sits inside executeSession behind a client and a session, so dropping its filter
-  // changes a spending guardrail while every other test still passes. That was
-  // verified by removing it: nothing else in the suite noticed.
-  //
-  // Each entry is a distinctive fragment of a query that aggregates or lists across
-  // rows rather than fetching one by a unique id. Those are the ones that blend.
-  // Reads keyed by rental id or session id are omitted on purpose: an id is already
-  // unique across algorithms, so filtering them would be noise.
-  const files = {
-    'api.js': fs.readFileSync(path.join(__dirname, '..', 'api.js'), 'utf8'),
-    'session.js': fs.readFileSync(path.join(__dirname, '..', 'session.js'), 'utf8'),
-  };
-  const mustBeScoped = [
-    ['session.js', 'SUM(sats), 0) AS s FROM spend_events', 'the rolling 24h spend guardrail'],
-    ['api.js', 'SELECT lowest, last10 FROM market_snapshots', 'the market rate on the hash-value card'],
-    ['api.js', 'FROM tick_metrics WHERE', 'the latest engine-observed balance'],
-    ['api.js', 'SELECT ts, lowest, last10 FROM market_snapshots', 'the market overlay on the metrics chart'],
-    ['api.js', 'SELECT * FROM market_snapshots', 'the latest market summary'],
-    ['api.js', 'SELECT ts, lowest, last10, last FROM market_snapshots', 'the 30-day price history'],
-    ['api.js', 'SELECT MAX(ts) AS t FROM tick_metrics', 'health freshness'],
-    ['api.js', 'SELECT COUNT(*) AS n FROM tick_metrics', 'the tick rate'],
-    ['api.js', 'summary_json FROM sessions', 'the cumulative impact chart'],
+test('every set-based read of a scoped table filters on the algorithm', () => {
+  /*
+   * Derived, not a list someone remembers to update. The previous version of this test
+   * WAS such a list, and it missed the daily-spend read in the two autopilot paths —
+   * the ones that spend without a human present — because those were written after the
+   * list was.
+   *
+   * The rule: a query against a scoped table either picks a single row by an id that is
+   * unique across algorithms, or filters on the algorithm, or appears below with a
+   * reason. Nothing else.
+   */
+  const SCOPED_TABLES = ['rentals', 'sessions', 'pool_endpoints', 'alerts', 'tick_metrics',
+    'spend_events', 'market_snapshots', 'decisions', 'rig_scores', 'rental_samples', 'applied_refunds'];
+
+  // Predicates that already identify one row. MRR ids and our own row ids are unique
+  // across algorithms, so a lookup by one cannot return the other algorithm's data.
+  const BY_ID = /\b(mrr_id|session_id|rig_id|rental_id|tx_id|note)\s*(=|IS)\s*\?|\b(r|s|rs)\.(mrr_id|session_id|id)\s*=|\bid\s*=\s*\?/i;
+
+  /*
+   * Deliberately unscoped, each for a reason that would not survive being "fixed".
+   */
+  const ALLOWED = [
+    // The engine must manage whatever session is actually live. Switching algorithms is
+    // refused while one is active or winding down, so the live session always belongs to
+    // the active algorithm; and if that were ever violated, scoping here would leave a
+    // real session with real rentals unmanaged, which is worse than managing it.
+    [/FROM sessions WHERE (mode = 'autopilot' AND )?state (IN \('active'|= 'active')/i, 'the live session'],
+    // Alerts are addressed by kind and key, and the key embeds the id it is about.
+    [/FROM alerts WHERE kind/i, 'alerts are addressed by kind + key'],
+    [/UPDATE alerts SET .* WHERE kind/i, 'alerts are addressed by kind + key'],
+    // The halt checks are global on purpose: losing track of money under one algorithm
+    // should stop spending under both.
+    [/SELECT 1 FROM alerts WHERE kind = '(endpoint_down|needs_reconcile)'/i, 'halts apply everywhere'],
+    // Stale-alert sweeping compares fired alerts against every rental we have ever had.
+    [/SELECT mrr_id FROM rentals WHERE ended = 1/i, 'stale-alert sweep spans all rentals'],
+    [/SELECT kind, key FROM alerts WHERE state = 'fired' AND kind IN/i, 'stale-alert sweep'],
+    // Stray detection compares the marketplace's account-wide rental list against every
+    // rental we know of. Scoped, the other algorithm's rentals would look untracked and
+    // be adopted into the current session.
+    [/SELECT mrr_id FROM rentals$/i, 'stray detection must see every rental we own'],
+    // Evidence and refunds are about money already spent, fetched by mrr_id from the
+    // marketplace. Which algorithm bought the rental does not change either.
+    [/FROM rentals WHERE ended = 1 AND evidence_json IS NULL/i, 'evidence is fetched per rental'],
+    [/rentals SET refund_watch_until/i, 'refunds are per rental'],
+    [/FROM rentals WHERE ended = 1 AND refund_watch_until/i, 'refunds are per rental'],
+    [/SELECT tx_id FROM applied_refunds/i, 'refund dedupe is by transaction id'],
+    // Retention bounds the database. Scoping it would let the inactive algorithm's raw
+    // rows grow without limit, since prune only runs on the active one's cadence.
+    [/DELETE FROM (tick_metrics|rental_samples|market_snapshots) WHERE ts </i, 'retention, see prune.js'],
+    // Extend dedupe: the note embeds the rental id.
+    [/FROM decisions WHERE ts >= \? AND note LIKE/i, 'the note embeds the rental id'],
   ];
-  for (const [file, fragment, why] of mustBeScoped) {
-    const src = files[file];
-    const at = src.indexOf(fragment);
-    assert.notEqual(at, -1, `${file}: query moved or was rewritten (${why}); update this list`);
-    // The filter has to be inside the same statement, so look only as far as the quote ends.
-    const stmt = src.slice(at, src.indexOf('\'', at) === -1 ? at + 400 : src.indexOf('\'', at) + 1);
-    assert.ok(stmt.includes('algo = ?'), `${file}: ${why} is no longer scoped by algorithm`);
+
+  const dir = path.join(__dirname, '..');
+  const files = [];
+  for (const d of [dir, path.join(dir, 'engine')]) {
+    for (const f of fs.readdirSync(d)) if (f.endsWith('.js')) files.push(path.join(d, f));
   }
+  const problems = [];
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/(?:prepare|exec)\(\s*(`[^`]*`|'[^']*'|"[^"]*")/g)) {
+      const q = m[1].slice(1, -1).split(/\s+/).join(' ').trim();
+      if (!/^(SELECT|UPDATE|DELETE)/i.test(q)) continue;
+      if (!SCOPED_TABLES.some((t) => new RegExp(`\\b(FROM|UPDATE|JOIN)\\s+${t}\\b`, 'i').test(q))) continue;
+      if (/\balgo\s*=/i.test(q)) continue;
+      if (BY_ID.test(q)) continue;
+      if (ALLOWED.some(([re]) => re.test(q))) continue;
+      const line = src.slice(0, m.index).split('\n').length;
+      problems.push(`${path.relative(dir, file)}:${line}  ${q.slice(0, 100)}`);
+    }
+  }
+  assert.deepEqual(problems, [],
+    `unscoped set-based read of a scoped table. Add "algo = ?", or add it to ALLOWED with a reason:\n${problems.join('\n')}`);
 });
 
 test('the latest balance comes from our ticks, not the newer foreign one', async () => {

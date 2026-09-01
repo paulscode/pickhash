@@ -52,6 +52,9 @@ document.addEventListener('alpine:init', () => {
 
     // --- Quote card ---
     unit: 'ph',                 // hashrate display unit: 'ph' | 'th'
+    // Whether the saved unit has been adopted yet. Cleared on an algorithm switch so
+    // the new algorithm's choice is picked up instead of the old one persisting.
+    unitKnown: false,
     compute: 'duration',        // which field is solved for: 'spend' | 'hashrate' | 'duration'
     isSpendOut: false, isHashOut: false, isDurationOut: true,
     notSpendOut: true, notHashOut: true, notDurationOut: false,
@@ -191,14 +194,20 @@ document.addEventListener('alpine:init', () => {
     qHasBlocking: false, qHasNotes: false,
 
     // Plain-language explainers for the (i) icons.
-    INFO: {
-      spend: 'How many sats you want to spend — the 3% MiningRigRentals fee is already included. Pickhash packs the cheapest reliable rigs to fit.',
-      hashrate: 'The total mining power to rent, in PH/s (1 PH/s = 1,000 TH/s). Use the PH/s ⇄ TH/s toggle for sub-PH amounts.',
-      duration: 'How long the rented rigs run. MRR rentals are a fixed length and paid up front — this is the actual length Pickhash will buy.',
-      lock: 'Choose which field to solve for. Fill the other two and Pickhash computes this one from the live order book.',
-      blended: 'The average price across the packed rigs, in sats per PH per day — what you are effectively paying for hashrate.',
-      market: 'How your blended price compares to the last 10 rentals on the market — a quick read on whether hashrate is cheap right now.',
-      balance: 'Your confirmed MiningRigRentals balance — what you can spend now. Deposits need 3 confirmations before they clear.',
+    // Plain-language explainers for the (i) icons. A getter, because two of them name a
+    // unit and the unit is the algorithm's: a tooltip reading "sats per PH per day"
+    // beside a per-TH number is worse than no tooltip, since it is what the user
+    // consults when they are unsure.
+    get INFO() {
+      return {
+        spend: 'How many sats you want to spend — the 3% MiningRigRentals fee is already included. Pickhash packs the cheapest reliable rigs to fit.',
+        hashrate: `The total mining power to rent, shown in ${this.unitLabelText} (1 PH/s = 1,000 TH/s). Use the PH/s ⇄ TH/s toggle to switch.`,
+        duration: 'How long the rented rigs run. MRR rentals are a fixed length and paid up front — this is the actual length Pickhash will buy.',
+        lock: 'Choose which field to solve for. Fill the other two and Pickhash computes this one from the live order book.',
+        blended: `The average price across the packed rigs, in ${this.rateUnit} — what you are effectively paying for hashrate.`,
+        market: 'How your blended price compares to the last 10 rentals on the market — a quick read on whether hashrate is cheap right now.',
+        balance: 'Your confirmed MiningRigRentals balance — what you can spend now. Deposits need 3 confirmations before they clear.',
+      };
     },
 
     async init() {
@@ -590,6 +599,19 @@ document.addEventListener('alpine:init', () => {
       this.unitThClass = this.unit === 'th' ? on : off;
     },
     setCompute(mode) { this.compute = mode; this.setComputeFlags(); this.scheduleQuote(0); },
+    // Adopt the saved unit on load and after a switch. Deliberately not setUnit: that
+    // converts the hashrate inputs so a typed number keeps meaning the same rate, and
+    // nothing here was typed against the old unit — converting would rescale the
+    // defaults by a thousand.
+    applyHashrateUnit(u) {
+      if (u !== 'ph' && u !== 'th') return;
+      if (this.unitKnown) return;
+      this.unitKnown = true;
+      if (u === this.unit) return;
+      this.unit = u;
+      this.unitLabelText = u === 'ph' ? 'PH/s' : 'TH/s';
+      this.setUnitClasses();
+    },
     setUnit(u) {
       if (u === this.unit) return;
       // Convert BOTH editable hashrate fields (Quick's inHash and Autopilot's apTarget) so the
@@ -606,6 +628,9 @@ document.addEventListener('alpine:init', () => {
       this.unit = u;
       this.unitLabelText = u === 'ph' ? 'PH/s' : 'TH/s';
       this.setUnitClasses();
+      // Persist it: the status poll reads the saved value back, so without this the
+      // toggle would snap back on the next tick.
+      this.send('POST', '/api/config', { ns: 'ui', patch: { hashrate_unit: u } });
       this.scheduleQuote(0);
     },
     preset(sats) { this.inSpend = String(sats); this.scheduleQuote(0); },
@@ -965,6 +990,7 @@ document.addEventListener('alpine:init', () => {
         return;
       }
       this.applyAlgorithm(r.json.algorithm);
+      this.unitKnown = false;   // adopt the new algorithm's display unit
       this.algoNoteClass = 'text-neon-green';
       this.algoNote = `Now renting ${this.algoDisplay}. Guardrails, endpoint and display unit have followed.`;
       // Everything on screen was priced against the other market.
@@ -1362,6 +1388,7 @@ document.addEventListener('alpine:init', () => {
       if (!s || !s.ok) return;   // a dropped/failed poll must leave the last good state intact, not blank the card
       // The header badge rides the poll the dashboard already makes.
       this.applyAlgorithm(s.algorithm);
+      this.applyHashrateUnit(s.hashrate_unit);
       if (s && s.mode) {
         this.setModeBadge(s.mode);
         this.modeIsLive = s.mode === 'live';
@@ -1453,6 +1480,7 @@ document.addEventListener('alpine:init', () => {
         this.reviewError = e === 'insufficient_balance' ? 'Your confirmed balance can’t cover this — deposit more or lower the spend.'
           : (e === 'session_active' || e === 'session_in_progress') ? 'A session is already running — stop it in the “Active rentals” card above before starting another.'
           : e === 'quote_expired' ? 'This quote expired — close this and get a fresh one.'
+          : e === 'algorithm_changed' ? 'The algorithm changed while this quote was open — close this and get a fresh one.'
           : e === 'endpoint_down' ? 'Your pool endpoint is unreachable right now — renting would pay for hashrate that can’t reach it. Wait for the connection to recover, then try again.'
           : 'Could not start the session — try again in a moment.';
         return;

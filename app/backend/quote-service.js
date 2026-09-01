@@ -31,6 +31,14 @@ const quotes = new Map();       // id -> stored quote
 
 function nowMs() { return Date.now(); }
 function invalidateMarket() { marketCache = null; }
+/*
+ * Drop every held quote.
+ *
+ * A quote is a priced plan against one marketplace: specific rig ids, a blended rate,
+ * a rate cap in that algorithm's unit. After an algorithm switch none of that means
+ * anything, and the rigs it names cannot be rented at all.
+ */
+function invalidateQuotes() { quotes.clear(); }
 
 async function freshMarket(client, algo, force = false) {
   if (!force && marketCache && marketCache.algo === algo && nowMs() - marketCache.at < MARKET_TTL_MS) {
@@ -261,7 +269,7 @@ function getStoredQuote(id) {
 }
 
 module.exports = {
-  buildQuote, getStoredQuote, publicQuote, invalidateMarket,
+  buildQuote, getStoredQuote, publicQuote, invalidateMarket, invalidateQuotes,
   // pure helpers, exported for tests
   toPackerParams, clampBudget, parseAlgo, marketContext, engineOpts,
   MARKET_TTL_MS, QUOTE_TTL_MS,

@@ -66,7 +66,11 @@ function recordRentalScore(conn, rental, finalPercent, nowSec) {
 function backfillScores(conn, nowSec) {
   // mrr_id IS NOT NULL matches the marker recordRentalScore sets (scored=1 keyed by mrr_id): without
   // it, a row with rig_id but no mrr_id would fold every tick forever, never getting marked.
-  const pending = conn.prepare('SELECT * FROM rentals WHERE ended = 1 AND scored = 0 AND rig_id IS NOT NULL AND mrr_id IS NOT NULL ORDER BY end_ts, id').all();
+  // Scoped so the fold and the row it writes agree: recordRentalScore stamps the ACTIVE
+  // algorithm, so folding another algorithm's rental would file its delivery record under
+  // this one. The other algorithm's rentals stay scored = 0 until it is active again.
+  const pending = conn.prepare('SELECT * FROM rentals WHERE algo = ? AND ended = 1 AND scored = 0 AND rig_id IS NOT NULL AND mrr_id IS NOT NULL ORDER BY end_ts, id')
+    .all(market.activeAlgo(conn));
   for (const r of pending) recordRentalScore(conn, r, r.avg_percent, nowSec);
   return pending.length;
 }
@@ -78,7 +82,7 @@ function backfillScores(conn, nowSec) {
  */
 function loadRigScores(conn) {
   const out = {};
-  for (const r of conn.prepare('SELECT rig_id, mean_percent FROM rig_scores').all()) {
+  for (const r of conn.prepare('SELECT rig_id, mean_percent FROM rig_scores WHERE algo = ?').all(market.activeAlgo(conn))) {
     if (r.mean_percent != null) out[String(r.rig_id)] = Math.max(0, Math.min(1, r.mean_percent / 100));
   }
   return out;

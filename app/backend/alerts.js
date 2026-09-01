@@ -208,7 +208,11 @@ function resolveEndedRentalAlerts(conn, now = Date.now()) {
 }
 
 function listActive(conn) {
-  return conn.prepare("SELECT id, kind, key, severity, state, armed_at, fired_at, context_json FROM alerts WHERE state = 'fired' ORDER BY id DESC").all()
+  // Scoped: this is what the dashboard shows. An alert about the other algorithm's
+  // rental names an mrr_id nothing on screen refers to. The HALT checks above stay
+  // unscoped on purpose, because losing track of money anywhere should stop spending
+  // everywhere.
+  return conn.prepare("SELECT id, kind, key, severity, state, armed_at, fired_at, context_json FROM alerts WHERE algo = ? AND state = 'fired' ORDER BY id DESC").all(market.activeAlgo(conn))
     .map((a) => ({ ...a, context: a.context_json ? JSON.parse(a.context_json) : {} }));
 }
 

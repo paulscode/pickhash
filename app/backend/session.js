@@ -229,6 +229,14 @@ async function startSession(conn, client, quoteId, opts = {}) {
     const confirmed = quoteService.getStoredQuote(quoteId);
     if (!confirmed) throw new SessionError('quote_expired');
 
+    // A quote priced against the other marketplace cannot be executed here: its rigs
+    // belong to that algorithm and its rate cap is in that algorithm's unit. The switch
+    // clears held quotes, so reaching this means one survived somehow; refusing by name
+    // beats the re-price below reporting a 2,425x move as a price change.
+    if (confirmed.algo && confirmed.algo !== market.activeAlgo(conn)) {
+      throw new SessionError('algorithm_changed');
+    }
+
     // Re-price over fresh market data; execute the *current* plan if the move is small.
     // Compare the blended per-PH·day price, which reflects market movement in every lock
     // mode (in duration-lock the total always tracks the budget, so a total-delta would

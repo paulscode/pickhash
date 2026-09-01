@@ -195,8 +195,15 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
     const plan = planExtend({ rental, sim, tolerancePct: strat.auto_extend_price_tolerance_pct, budgetRemainingSats: budgetRemaining, windowRemainingH });
     if (!plan.extend) { mark(rental.mrr_id, `declined:${plan.reason}`, simInfo); return { ran: true, decided: plan.reason, sim: simInfo }; }
 
-    const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE ts >= ?').get(nowSec - DAY).s;
-    const lastRentAt = conn.prepare('SELECT COALESCE(MAX(ts), 0) AS t FROM spend_events').get().t;
+    // Scoped. The daily ceiling is an amount of money, but the spending it bounds happens
+    // in one market: at the measured 2,425x price ratio a single blake2b rental would
+    // swamp a total sized for sha256ab, and a ceiling that never binds looks exactly like
+    // one that is working. Pacing likewise, or a rent on one algorithm would delay a rent
+    // on the other.
+    const dailySpent = conn.prepare('SELECT COALESCE(SUM(sats), 0) AS s FROM spend_events WHERE algo = ? AND ts >= ?')
+      .get(market.activeAlgo(conn), nowSec - DAY).s;
+    const lastRentAt = conn.prepare('SELECT COALESCE(MAX(ts), 0) AS t FROM spend_events WHERE algo = ?')
+      .get(market.activeAlgo(conn)).t;
     // Split the fee-inclusive extend cost into base + 3% fee, matching how a fresh rent's cost is
     // expressed — so the gate's optional rate ceiling rates an extend the same way it rates a
     // top-up. (A fee-inclusive paidSats would over-rate it ~3% and wrongly block an extend sitting

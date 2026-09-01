@@ -386,3 +386,34 @@ test('a >2% price move at confirm returns a re-confirm instead of executing', as
   assert.equal(client.state.puts.length, 0, 'nothing executed');
   assert.equal(db.get().prepare('SELECT COUNT(*) n FROM sessions').get().n, 0, 'no session opened');
 });
+
+test('a quote priced on one algorithm cannot be executed on the other', async () => {
+  // The rigs a quote names belong to one marketplace and its rate cap is in that
+  // algorithm's unit. Without this the re-price path would compare a blended price
+  // across two markets 2,425x apart and report "the price moved", which is true but
+  // useless and invites the user to accept it.
+  const config = require('../config');
+  const client = mockClient();
+  const q = await makeQuote(client);
+  config.set(db.get(), 'algorithm', { active: 'blake2b' });
+  try {
+    await assert.rejects(
+      () => session.startSession(db.get(), client, q.id, { dryRun: true }),
+      (e) => e instanceof session.SessionError && e.code === 'algorithm_changed',
+    );
+  } finally {
+    config.set(db.get(), 'algorithm', { active: 'sha256ab' });
+  }
+});
+
+test('switching algorithms drops held quotes, so none can survive to be executed', async () => {
+  const config = require('../config');
+  const client = mockClient();
+  const q = await makeQuote(client);
+  assert.ok(qs.getStoredQuote(q.id), 'held before the switch');
+  // The API route calls this alongside the config write; asserting the mechanism here
+  // keeps the guard above as the second line rather than the only one.
+  qs.invalidateQuotes();
+  assert.ok(!qs.getStoredQuote(q.id), 'gone after');
+  config.set(db.get(), 'algorithm', { active: 'sha256ab' });
+});
