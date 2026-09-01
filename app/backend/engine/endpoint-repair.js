@@ -13,6 +13,7 @@
  */
 const alerts = require('../alerts');
 const endpointUtil = require('../endpoint');
+const market = require('../market');
 
 /**
  * Pure: decide whether to repair, and to what. Returns { from, to } or null.
@@ -62,7 +63,10 @@ async function repair(conn, client, { plan, runMode, now }) {
   // so planRepair re-triggers next tick and retries the straggler — otherwise idempotency
   // short-circuits and that rental stays stranded on the dead endpoint for its paid duration.
   if (failed === 0) {
-    conn.prepare('UPDATE pool_endpoints SET host = ?, port = ? WHERE active = 1').run(plan.to.host, plan.to.port);
+    // Scoped like every other endpoint write: a repair belongs to one algorithm's
+      // endpoint, not to whichever rows happen to be flagged active.
+      conn.prepare('UPDATE pool_endpoints SET host = ?, port = ? WHERE active = 1 AND algo = ?')
+        .run(plan.to.host, plan.to.port, market.activeAlgo(conn));
   }
   alerts.fireOnce(conn, {
     kind: 'endpoint_repaired', key: `${plan.to.host}:${plan.to.port}`, now,

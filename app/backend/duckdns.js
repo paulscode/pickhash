@@ -14,6 +14,7 @@ const dns = require('node:dns').promises;
 const net = require('node:net');
 const { createSecrets } = require('./secrets');
 const config = require('./config');
+const endpoints = require('./endpoints');
 
 const KEEPALIVE_SEC = 24 * 3600;   // re-push at least daily so DuckDNS never reclaims the name for inactivity
 
@@ -112,7 +113,7 @@ async function applyName(conn, dataDir, client, { subdomain, token, runMode, upd
   const sub = normalizeSubdomain(subdomain);
   if (!validSubdomain(sub)) return { ok: false, error: 'invalid_subdomain' };
   if (!token) return { ok: false, error: 'token_required' };
-  const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+  const ep = endpoints.active(conn);
   if (!ep) return { ok: false, error: 'no_endpoint' };
   if (!(net.isIP(ep.host) > 0)) return { ok: false, error: 'endpoint_not_ip' };
   const ip = ep.host;
@@ -157,7 +158,7 @@ function disableState(conn) {
 async function removeName(conn, dataDir, client, { runMode } = {}) {
   const cfg = config.get(conn, 'duckdns');
   const ip = cfg.ip;
-  const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+  const ep = endpoints.active(conn);
   disableState(conn);
   if (ep && ip) {
     conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(ip, ep.id);

@@ -18,6 +18,7 @@ const deposit = require('./deposit');
 const scoring = require('./engine/scoring');
 const algos = require('./algos');
 const units = require('./units');
+const endpoints = require('./endpoints');
 
 const MARKET_TTL_MS = 30_000;   // rigs get rented; a quote shouldn't be built on stale depth
 const QUOTE_TTL_MS = 60_000;    // a quote id is honored this long, then re-priced at confirm
@@ -43,7 +44,7 @@ async function freshMarket(client, algo, force = false) {
 /** Engine options from config + the active endpoint + local rig scores. */
 function engineOpts(conn) {
   const strat = config.get(conn, 'strategy');
-  const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  const ep = endpoints.active(conn);
   const rigScores = scoring.loadRigScores(conn);   // learned per-rig delivery -> 0..1 expected-delivery factor
   return {
     mode: 'quick',

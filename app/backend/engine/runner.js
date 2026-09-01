@@ -24,6 +24,7 @@ const ledgerFetch = require('./ledger');
 const config = require('../config');
 const duckdns = require('../duckdns');
 const mrr = require('../mrr');
+const endpoints = require('../endpoints');
 
 /** Close a session whose rentals have all ended; prompt disputes for under-delivered rigs. */
 async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
@@ -135,7 +136,7 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
   const strayAlerts = [...(recon.unattributable || [])];
   if ((recon.adopt || []).length && snapshot.session) {
     try {
-      const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+      const ep = endpoints.active(conn);
       if (ep) {
         const res = await adopt.adoptStrays(conn, client, { sessionId: snapshot.session.id, endpoint: ep, adopt: recon.adopt, nowSec: Math.floor(now / 1000), dryRun: (config.getKey(conn, 'run', 'mode') || 'dry-run') !== 'live' });
         adoptedCount = res.adopted.length;

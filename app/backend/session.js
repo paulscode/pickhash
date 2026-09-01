@@ -32,6 +32,7 @@ const decide = require('./engine/decide');
 const { MrrAmbiguousError } = require('./mrr-client');
 const algos = require('./algos');
 const units = require('./units');
+const endpoints = require('./endpoints');
 
 const REPRICE_TOLERANCE = 0.02;   // >2% move at confirm -> re-confirm instead of executing
 const RATE_CAP_HEADROOM = 1.01;   // protective rate.price cap: quoted price +1%
@@ -488,7 +489,7 @@ async function startAutopilotSession(conn, client, params = {}) {
     const cap = config.getKey(conn, 'guardrails', 'max_session_budget_sats');
     if (cap != null && budgetSats > cap) throw new SessionError('exceeds_guardrail');
 
-    const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+    const endpoint = endpoints.active(conn);
     if (!endpoint || !endpoint.mrr_profile_id) throw new SessionError('no_endpoint');
 
     const estimate = await estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });

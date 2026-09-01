@@ -18,6 +18,7 @@ const config = require('../config');
 const market = require('../market');
 const alerts = require('../alerts');
 const session = require('../session');   // fallback pool resolution, shared with rent-time setup
+const endpoints = require('../endpoints');
 
 /**
  * The owner notice (plain text; MRR renders it, the rig owner is the recipient). Every factual claim
@@ -58,7 +59,7 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
   // would be exactly wrong.
   if (alerts.newRentsHalted(conn)) return { ran: false, reason: 'endpoint_down' };
 
-  const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+  const endpoint = endpoints.active(conn);
   if (!endpoint) return { ran: false, reason: 'no_endpoint' };
 
   const offline = conn.prepare("SELECT DISTINCT key FROM alerts WHERE kind = 'rental_offline' AND state = 'fired'").all().map((a) => String(a.key));

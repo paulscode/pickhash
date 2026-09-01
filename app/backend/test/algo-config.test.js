@@ -138,3 +138,46 @@ test('every migration on disk is recorded as applied, in the same transaction', 
     );
   });
 });
+
+test('the saved endpoint belongs to its algorithm, so a switch cannot cross the wires', () => {
+  withDb((conn) => {
+    const endpoints = require('../endpoints');
+    const save = (algo, host) => {
+      config.set(conn, 'algorithm', { active: algo });
+      endpoints.deactivateAll(conn);
+      conn.prepare(
+        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, active)
+           VALUES (?, ?, 'manual', ?, 3333, 'bc1q.phash', 1)`,
+      ).run(algo, `endpoint:${host}`, host);
+    };
+
+    save('sha256ab', 'sha.example');
+    save('blake2b', 'b2.example');
+
+    // Saving the blake2b endpoint must not have stood the sha256ab one down. A user who
+    // sets up the second algorithm and goes back to the first should find their endpoint
+    // where they left it, not silently inactive.
+    config.set(conn, 'algorithm', { active: 'sha256ab' });
+    assert.equal(endpoints.active(conn).host, 'sha.example');
+    config.set(conn, 'algorithm', { active: 'blake2b' });
+    assert.equal(endpoints.active(conn).host, 'b2.example');
+
+    // And the read is scoped, so an endpoint from the other algorithm is never visible
+    // rather than being deactivated on a switch. Nothing to mutate, nothing to get out
+    // of step, and no window where a rental could be aimed at the wrong stratum.
+    assert.equal(endpoints.active(conn, 'sha256ab').host, 'sha.example');
+  });
+});
+
+test('an algorithm with no endpoint saved yet reads as none, not as the other one\'s', () => {
+  withDb((conn) => {
+    conn.prepare(
+      `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, active)
+         VALUES ('sha256ab', 'e', 'manual', 'sha.example', 3333, 'bc1q.phash', 1)`,
+    ).run();
+    config.set(conn, 'algorithm', { active: 'blake2b' });
+    assert.equal(endpointsActive(conn), null, 'no endpoint, rather than a SHA256 one');
+  });
+});
+
+function endpointsActive(conn) { return require('../endpoints').active(conn); }

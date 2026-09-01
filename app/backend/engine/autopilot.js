@@ -15,6 +15,7 @@ const config = require('../config');
 const alerts = require('../alerts');
 const scoring = require('./scoring');
 const algos = require('../algos');
+const endpoints = require('../endpoints');
 
 const DAY = 86400;
 
@@ -59,7 +60,7 @@ async function runCycle(conn, client, snapshot, opts = {}) {
   // decide() can't see it, so it would rent to fill a gap that's already covered (double-spend).
   if (alerts.reconcileHalted(conn)) return { ran: false, reason: 'needs_reconcile' };
 
-  const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+  const endpoint = endpoints.active(conn);
   if (!endpoint || !endpoint.mrr_profile_id) return { ran: false, reason: 'no_endpoint' };
 
   // Learned per-rig delivery scores feed the rank key (a proven-reliable rig outranks a slightly

@@ -31,6 +31,7 @@ const market = require('./market');
 const messaging = require('./messaging');
 const alerts = require('./alerts');
 const dispute = require('./engine/dispute');
+const endpoints = require('./endpoints');
 
 // Throttle for the authenticated endpoint-probe route (blunts use as an internal scanner).
 // Overridable so tests can disable the spacing between rapid consecutive probes.
@@ -222,7 +223,8 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // must not deactivate a previously-working endpoint. worker_base is the FULL entered
     // username (per-rental workers append "-r<rentalid>" to it, so it needs the address).
     if (probe.gotWork) {
-      conn.prepare('UPDATE pool_endpoints SET active = 0').run();
+      // Scoped: saving an endpoint for one algorithm must not stand the other's down.
+      endpoints.deactivateAll(conn);
       conn.prepare(
         `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, last_test_json, active)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
@@ -265,7 +267,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
   // Ensure the MRR saved pool + profile for the active algorithm exist for the endpoint.
   if (p === '/api/setup/bootstrap' && method === 'POST') {
     if (!isConfigured(conn)) return sendJson(res, 400, { error: 'mrr_not_configured' });
-    const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+    const ep = endpoints.active(conn);
     if (!ep) return sendJson(res, 400, { error: 'no_endpoint' });
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     try {
@@ -280,7 +282,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (!isConfigured(conn)) return sendJson(res, 400, { error: 'mrr_not_configured' });
     // Require an active endpoint whose pool/profile bootstrap succeeded (mrr_profile_id
     // set), so setup can't complete with no usable pool for the engine to rent against.
-    const ep = conn.prepare('SELECT mrr_profile_id FROM pool_endpoints WHERE active = 1').get();
+    const ep = endpoints.active(conn);
     if (!ep || !ep.mrr_profile_id) return sendJson(res, 400, { error: 'setup_incomplete' });
     config.set(conn, 'setup', { completed: true, completed_at: Math.floor(Date.now() / 1000) });
     return sendJson(res, 200, { completed: true });
@@ -588,7 +590,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const lastTick = conn.prepare('SELECT MAX(ts) AS t FROM tick_metrics WHERE algo = ?').get(market.activeAlgo(conn)).t || null;
     const ticksHour = conn.prepare('SELECT COUNT(*) AS n FROM tick_metrics WHERE algo = ? AND ts >= ?').get(market.activeAlgo(conn), nowSec - 3600).n;
     const session = conn.prepare("SELECT id, mode, state, started_at FROM sessions WHERE state IN ('active','winding_down') ORDER BY id DESC LIMIT 1").get() || null;
-    const ep = conn.prepare('SELECT host, port, worker_base, source FROM pool_endpoints WHERE active = 1').get() || null;
+    const ep = endpoints.active(conn);
     return sendJson(res, 200, {
       mrr: { configured: isConfigured(conn), userid: mrrCfg.userid || null, username: mrrCfg.username || null, withdraw_capable: mrrCfg.withdraw_capable === true },
       run_mode: config.getKey(conn, 'run', 'mode') || 'dry-run',
@@ -679,7 +681,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const targetTh = Number(url.searchParams.get('target_th'));
     const budgetSats = Number(url.searchParams.get('budget_sats'));
     if (!(targetTh > 0) || !(budgetSats > 0)) return sendJson(res, 400, { error: 'bad_params' });
-    const endpoint = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1 ORDER BY id DESC LIMIT 1').get();
+    const endpoint = endpoints.active(conn);
     if (!endpoint || !endpoint.mrr_profile_id) return sendJson(res, 400, { error: 'no_endpoint' });
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });

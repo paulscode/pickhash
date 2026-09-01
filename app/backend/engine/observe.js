@@ -29,6 +29,7 @@ const refunds = require('./refunds');
 const dispute = require('./dispute');
 const prune = require('./prune');
 const scoring = require('./scoring');
+const endpoints = require('../endpoints');
 
 const MARKET_CADENCE_MS = 5 * 60 * 1000;   // market snapshot every 5 min, not every tick
 const ADOPT_WINDOW_SEC = 15 * 60;          // a rental starting within 15 min of an intent
@@ -226,7 +227,7 @@ async function observe(conn, client, ctx = {}) {
   }
 
   // --- Endpoint stratum probe (authoritative endpoint health) ---
-  const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE active = 1').get() || null;
+  const ep = endpoints.active(conn);
   let endpoint = prev.endpoint || null;
   if (ep) {
     try {
