@@ -7,10 +7,13 @@ export const inputSpec = InputSpec.of({
   dashboardPassword: Value.text({
     name: 'Dashboard Password',
     description:
-      'The password to log in to the Pickhash dashboard. Copy it to log in, or change it here. Treat it like a hot-wallet key — it protects controls that spend Bitcoin.',
+      'The password to log in to the Pickhash dashboard. Use "Dashboard Password" under Actions to copy it, or set your own here. Treat it like a hot-wallet key — it protects controls that spend Bitcoin.',
     required: true,
-    default: null,
+    // Generated rather than blank, so the dashboard is never briefly unprotected if this is
+    // submitted before init has seeded one.
+    default: { charset: 'a-z,A-Z,0-9', len: 24 },
     masked: true,
+    generate: { charset: 'a-z,A-Z,0-9', len: 24 },
   }),
 })
 
