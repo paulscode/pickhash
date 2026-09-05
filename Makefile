@@ -25,7 +25,11 @@ PKG_VERSION := $(shell yq -r ".version" manifest.yaml)
 BUILD_DIR := builds/$(PKG_VERSION)
 # App sources baked into the image; named so make rebuilds the image tar when any change.
 APP_FILES := $(shell find app/backend app/frontend -type f -not -path '*/test/*')
-IMAGE_DEPS := Dockerfile docker_entrypoint.sh check-web.sh check-mrr.sh tailwind.config.js $(APP_FILES) icon.png
+# manifest.yaml belongs here even though it is not baked into the image: the tars are TAGGED
+# start9/$(PKG_ID)/main:$(PKG_VERSION), so a version-only bump must rebuild them. Without it,
+# `start-sdk pack` reuses tars tagged with the PREVIOUS version and emits an s9pk that fails
+# `start-sdk verify` with "Contains image with incorrect version".
+IMAGE_DEPS := Dockerfile docker_entrypoint.sh check-web.sh check-mrr.sh tailwind.config.js $(APP_FILES) icon.png manifest.yaml
 
 # Empty by default -> both arch image tars build and the 0.3.5.1 package is universal
 # (multi-arch). The single-arch convenience targets set ARCH=x86_64|aarch64 to skip one.
