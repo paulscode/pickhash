@@ -240,6 +240,37 @@ async function handleApi(req, res, url, body, ctx = {}) {
     });
   }
 
+  // The pools already saved on the MRR account, for the active algorithm, so the wizard
+  // and Settings can prefill the endpoint from one instead of retyping it. Read-only and
+  // deliberately not a shortcut past pool-test: the fields it fills still go through the
+  // endpoint test, which is where the rental-worker check and the raw-IP/DuckDNS offer live.
+  if (p === '/api/setup/mrr-pools' && method === 'GET') {
+    if (!auth.passwordEnabled(conn) && !auth.isManaged()) return sendJson(res, 403, { error: 'password_required' });
+    const client = mrr.clientFromStore(conn, ctx.dataDir);
+    if (!client) return sendJson(res, 400, { error: 'mrr_not_configured' });
+    const algo = market.activeAlgo(conn);
+    let saved;
+    try {
+      saved = await client.get('/account/pool');
+    } catch (e) {
+      return sendJson(res, 502, { error: 'mrr_unreachable', message: String((e && e.message) || e) });
+    }
+    // MRR's `type` is its algorithm slug, the same one this app uses (algos.js), so the
+    // filter is a plain comparison. A pool for the other market is not offered: filling the
+    // endpoint from it would point rentals on this chain at a gateway serving the other.
+    const pools = (Array.isArray(saved) ? saved : [])
+      .filter((pl) => String(pl.type || '').toLowerCase() === algo)
+      .map((pl) => ({
+        id: String(pl.id),
+        name: String(pl.name || ''),
+        host: String(pl.host || '').trim(),
+        port: Number(pl.port) || null,
+        user: String(pl.user || '').trim(),
+      }))
+      .filter((pl) => pl.host && pl.port && pl.user);
+    return sendJson(res, 200, { algo, pools });
+  }
+
   // Validate a stratum endpoint. Our own AsicBoost-aware probe is authoritative; MRR's
   // pool test is run too but shown only as advisory (it false-negatives on Datum).
   if (p === '/api/setup/pool-test' && method === 'POST') {
