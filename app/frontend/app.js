@@ -369,6 +369,7 @@ document.addEventListener('alpine:init', () => {
       this.bareIp = !!r.json.bare_ip;   // a raw IP -> surface the DuckDNS naming option
       this.duckdnsReport = '';
       this.showDuckdns = this.poolOk && this.bareIp && !this.duckdnsEnabled;
+      if (this.showDuckdns && !this.duckdnsSub) this.suggestDuckdnsSub();   // offer a name before the user has to think of one
       const pr = r.json.probe || {};
       // Distinguish the two failures. A username that works as typed but not in the form
       // rentals send reads as a working endpoint otherwise, and costs money later rather
@@ -1208,6 +1209,7 @@ document.addEventListener('alpine:init', () => {
       this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
       if (d.duckdns && d.duckdns.subdomain) this.duckdnsSub = d.duckdns.subdomain;
       this.seShowDuckdns = this.seIsIp && !this.duckdnsEnabled;   // settings gate (plain bool for the CSP build)
+      if (this.seShowDuckdns && !this.duckdnsSub) this.suggestDuckdnsSub();
       // Derive the bare-IP warning from the CURRENT endpoint state so it reflects reality on every load
       // (and reappears after reverting DuckDNS), not only right after a pool test.
       this.seWarning = this.seShowDuckdns ? 'Bare-IP endpoint — MiningRigRentals won’t refund rentals pointed at an IP. Name it below.' : '';
@@ -1336,6 +1338,18 @@ document.addEventListener('alpine:init', () => {
       await this.saveStrategy({ dead_rig_reroute_enabled: this.rerouteDeadRigs });
     },
     // --- DuckDNS: give a raw-IP endpoint a stable name ---
+    // A fresh random name to register on duckdns.org. Random on purpose: the name is public
+    // (rig owners see it as the pool host, anyone can resolve it), so it should carry nothing
+    // about the user. A suggestion only; DuckDNS cannot be asked to create it, so the user
+    // still types it into duckdns.org themselves. Ten chars, a letter first, [a-z0-9] after,
+    // which the backend's validSubdomain accepts.
+    suggestDuckdnsSub() {
+      const letters = 'abcdefghijklmnopqrstuvwxyz';
+      const all = letters + '0123456789';
+      const bytes = new Uint8Array(10);
+      crypto.getRandomValues(bytes);
+      this.duckdnsSub = letters[bytes[0] % letters.length] + Array.from(bytes.slice(1), (b) => all[b % all.length]).join('');
+    },
     async setupDuckdns() {
       if (!this.duckdnsSub || !this.duckdnsToken) { this.duckdnsReport = 'Enter a DuckDNS subdomain and token.'; this.duckdnsReportClass = 'text-neon-pink'; return; }
       this.duckdnsBusy = true; this.duckdnsReport = '';

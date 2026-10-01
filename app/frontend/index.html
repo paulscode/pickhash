@@ -190,9 +190,19 @@
           </span>
         </label>
         <div x-show="duckdnsWant" x-cloak class="space-y-2 ml-6">
+          <!-- DuckDNS cannot create the name for us: its token only updates names that already
+               exist in an account, and the account itself needs a social login. So the name has to
+               be made on duckdns.org by hand; walk the user through it, and suggest a random name,
+               because the name is public (every rig owner sees it as the pool host, and anyone can
+               resolve it) and so should say nothing about them. -->
+          <div class="text-xs font-mono text-gray-400 leading-relaxed space-y-0.5">
+            <p>1. Sign in at <a href="https://www.duckdns.org" target="_blank" rel="noopener" class="text-neon-flame underline">duckdns.org</a> (it offers only Google, GitHub, Reddit or X logins).</p>
+            <p>2. In its <span class="text-gray-300">add domain</span> box type the name below, then <span class="text-gray-300">add domain</span>. The name is public, so a random one that says nothing about you is best.</p>
+            <p>3. Copy the <span class="text-gray-300">token</span> shown at the top of that page and paste it here. If it will not select, open the site's <span class="text-gray-300">install</span> page and pick <span class="text-gray-300">linux cron</span>: the example script there contains your token as plain text.</p>
+          </div>
           <div class="grid grid-cols-3 gap-2 items-center">
             <input type="text" x-model="duckdnsSub" placeholder="subdomain" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
-            <span class="text-gray-500 font-mono text-xs">.duckdns.org</span>
+            <span class="text-gray-500 font-mono text-xs">.duckdns.org <button type="button" @click="suggestDuckdnsSub()" class="ml-2 text-neon-flame underline">random</button></span>
           </div>
           <input type="password" x-model="duckdnsToken" placeholder="DuckDNS token" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
           <button type="button" @click="setupDuckdns()" :disabled="duckdnsBusy" class="bg-neon-ember/10 border border-neon-ember/30 text-neon-ember font-mono text-sm rounded px-4 py-2 hover:bg-neon-ember/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"><span x-show="duckdnsBusy" x-cloak class="animate-pulse-neon">● </span>Set up name</button>
@@ -1008,9 +1018,19 @@
           <a href="https://www.duckdns.org" target="_blank" rel="noopener" class="text-neon-flame underline">DuckDNS</a>
           subdomain + token; we point it at your endpoint and keep it in sync.
         </p>
+        <!-- DuckDNS cannot create the name for us: its token only updates names that already
+             exist in an account, and the account itself needs a social login. So the name has to
+             be made on duckdns.org by hand; walk the user through it, and suggest a random name,
+             because the name is public (every rig owner sees it as the pool host, and anyone can
+             resolve it) and so should say nothing about them. -->
+        <div class="text-xs font-mono text-gray-400 leading-relaxed space-y-0.5">
+          <p>1. Sign in at <a href="https://www.duckdns.org" target="_blank" rel="noopener" class="text-neon-flame underline">duckdns.org</a> (it offers only Google, GitHub, Reddit or X logins).</p>
+          <p>2. In its <span class="text-gray-300">add domain</span> box type the name below, then <span class="text-gray-300">add domain</span>. The name is public, so a random one that says nothing about you is best.</p>
+          <p>3. Copy the <span class="text-gray-300">token</span> shown at the top of that page and paste it here. If it will not select, open the site's <span class="text-gray-300">install</span> page and pick <span class="text-gray-300">linux cron</span>: the example script there contains your token as plain text.</p>
+        </div>
         <div class="grid grid-cols-3 gap-2 items-center">
           <input type="text" x-model="duckdnsSub" placeholder="subdomain" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
-          <span class="text-gray-500 font-mono text-xs">.duckdns.org</span>
+          <span class="text-gray-500 font-mono text-xs">.duckdns.org <button type="button" @click="suggestDuckdnsSub()" class="ml-2 text-neon-flame underline">random</button></span>
         </div>
         <input type="password" x-model="duckdnsToken" placeholder="DuckDNS token" class="w-full bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
         <div class="flex items-center gap-3">
