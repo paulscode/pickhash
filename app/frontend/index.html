@@ -447,6 +447,29 @@
         </table>
       </div>
       <div x-show="!hasRentals" x-cloak class="font-mono text-xs text-gray-500" x-text="emptyRentalsNote"></div>
+      <!-- DRY-RUN: what autopilot would have rented on its latest tick. Without this a rehearsal
+           shows nothing at all, and "0 rentals" reads as "not working" rather than "not spending". -->
+      <div x-show="apRehearsal" x-cloak class="bg-navy-800/50 border border-neon-yellow/25 rounded-lg p-3 space-y-2">
+        <div class="font-mono text-xs text-neon-yellow" x-text="apRehearsalBanner"></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left font-mono text-xs">
+            <thead class="text-gray-600"><tr><th class="py-1 pr-3 font-normal">Rig</th><th class="py-1 pr-3 font-normal">Region</th><th class="py-1 pr-3 font-normal">Hashrate</th><th class="py-1 pr-3 font-normal">Hours</th><th class="py-1 font-normal">Cost</th></tr></thead>
+            <tbody class="text-gray-300">
+              <!-- Rig name/region are untrusted third-party strings: x-text only. -->
+              <template x-for="row in apRehearsalRows" :key="row.id">
+                <tr class="border-t border-navy-800">
+                  <td class="py-1 pr-3 text-white truncate max-w-[12rem]" x-text="row.name"></td>
+                  <td class="py-1 pr-3" x-text="row.region"></td>
+                  <td class="py-1 pr-3 tabular-nums" x-text="row.hash"></td>
+                  <td class="py-1 pr-3 tabular-nums" x-text="row.hours"></td>
+                  <td class="py-1 tabular-nums" x-text="row.cost"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <p class="font-mono text-[10px] text-gray-500 leading-relaxed">Nothing is rented in DRY-RUN. The set changes as rigs are taken and prices move; in LIVE, autopilot rents one rig per tick from a plan like this.</p>
+      </div>
     </div>
 
     <!-- Quote card: three linked fields (fill any two, the locked one is solved for) -->

@@ -33,7 +33,7 @@ async function execute(conn, client, ctx) {
   for (const a of gateResult.wouldDo || []) {
     insertDecision(conn, sessionId, true, {
       proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_unit_day: a.rateCapUnitDay, price_unit: a.priceUnit },
-      executed: { would_rent: true, rig: a.rigId, length: a.lengthHours, cost_sats: cost(a) },
+      executed: { would_rent: true, rig: a.rigId, name: a.rigName, region: a.region, advertised_th: a.advertisedTh, length: a.lengthHours, cost_sats: cost(a) },
       note: `AUTOPILOT DRY-RUN would rent rig #${a.rigId} (${a.rigName}) for ${a.lengthHours}h at ${cost(a)} sats`,
     });
     rehearsed.push(a);

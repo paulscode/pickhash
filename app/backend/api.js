@@ -119,6 +119,35 @@ function isSetupComplete(conn) {
   return config.getKey(conn, 'setup', 'completed') === true;
 }
 
+/**
+ * What an autopilot DRY-RUN would have rented on its latest tick, for the session card.
+ *
+ * A rehearsal buys nothing, so the session shows "0 rentals" for its whole life and the
+ * only trace of the engine working is the decisions table execute.js writes to. Reading
+ * that back here is what lets a rehearsal be judged from the dashboard rather than from
+ * the database. Rows are grouped by the tick that wrote them (one ts per cycle); the
+ * tick count says how long autopilot has been deciding. Null when the session has no
+ * rehearsed rows, which is every LIVE session.
+ */
+function rehearsalFor(conn, sessionId) {
+  const latest = conn.prepare(
+    "SELECT MAX(ts) AS ts FROM decisions WHERE session_id = ? AND dry_run = 1 AND executed_json LIKE '%\"would_rent\":true%'",
+  ).get(sessionId);
+  if (!latest || !latest.ts) return null;
+  const rows = conn.prepare(
+    "SELECT executed_json FROM decisions WHERE session_id = ? AND dry_run = 1 AND ts = ? AND executed_json LIKE '%\"would_rent\":true%' ORDER BY id",
+  ).all(sessionId, latest.ts).map((r) => {
+    let e = {};
+    try { e = JSON.parse(r.executed_json) || {}; } catch { e = {}; }
+    // Rig name/region are third-party strings — passed raw for the client to render via x-text.
+    return { rig_id: e.rig, rig_name: e.name || `rig #${e.rig}`, region: e.region || '', advertised_th: e.advertised_th || null, length_hours: e.length, cost_sats: e.cost_sats || 0 };
+  });
+  const ticks = conn.prepare(
+    "SELECT COUNT(DISTINCT ts) AS n FROM decisions WHERE session_id = ? AND dry_run = 1 AND executed_json LIKE '%\"would_rent\":true%'",
+  ).get(sessionId).n;
+  return { ts: latest.ts, ticks, rows, total_sats: rows.reduce((a, r) => a + (r.cost_sats || 0), 0) };
+}
+
 async function handleApi(req, res, url, body, ctx = {}) {
   const conn = db.get();
   const method = req.method;
@@ -483,6 +512,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const s = conn.prepare("SELECT * FROM sessions WHERE state IN ('active', 'winding_down') ORDER BY id DESC LIMIT 1").get();
     let sessionOut = null;
     let rentals = [];
+    let rehearsal = null;
     if (s) {
       sessionOut = {
         id: s.id, mode: s.mode, state: s.state, target_th: s.target_th, budget_sats: s.budget_sats,
@@ -493,6 +523,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
         `SELECT mrr_id, rig_id, rig_name, region, advertised_th, length_hours, paid_sats, fee_sats,
                 start_ts, end_ts, health, avg_percent FROM rentals WHERE session_id = ? ORDER BY id`,
       ).all(s.id);
+      rehearsal = rehearsalFor(conn, s.id);
     }
     // Latest engine-observed balance (already polled each tick) so the dashboard balance
     // card updates live off /api/status without an extra per-poll MRR call.
@@ -501,7 +532,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     ).get(market.activeAlgo(conn));
     const balance = bal ? { confirmed_sats: bal.c, unconfirmed_sats: bal.u } : null;
     return sendJson(res, 200, {
-      ok: true, mode, session: sessionOut, rentals, balance,
+      ok: true, mode, session: sessionOut, rentals, balance, rehearsal,
       // The UI labels money in the active algorithm's unit, so it needs both on the
       // one call it already polls. Sending the label with the numbers means they
       // cannot drift apart in the browser.

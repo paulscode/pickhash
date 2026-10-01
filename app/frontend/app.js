@@ -106,6 +106,7 @@ document.addEventListener('alpine:init', () => {
     reconfirm: false, reconfirmText: '',
     showRehearsal: false, rehearsalBanner: '', rehearsalRows: [],
     hasSession: false, sessionSummary: '', rentals: [], hasRentals: false, emptyRentalsNote: '', stopNote: '',
+    apRehearsal: false, apRehearsalBanner: '', apRehearsalRows: [],   // DRY-RUN: latest would-rent plan (plain bool for the CSP build)
     sessionState: '', sessionWinding: false, stopConfirm: false, stopBusy: false, stopBtnShow: true,
     // Run-mode switch (DRY-RUN <-> LIVE).
     modeIsLive: false, showModeModal: false, modeBusy: false, modeError: '', modeTyped: '', modeNeedsTyped: false,
@@ -1533,6 +1534,16 @@ document.addEventListener('alpine:init', () => {
       this.fmtHashValue(s.hash_value);   // "am I paying over/under market?" readout
       this.rentals = this.mapRentals(s && s.rentals);
       this.hasRentals = this.rentals.length > 0;
+      // A rehearsal's only output is its plan; show the latest one so the session reads as working.
+      const rh = s && s.rehearsal;
+      this.apRehearsal = !!(rh && rh.rows && rh.rows.length);
+      if (this.apRehearsal) {
+        const at = new Date(rh.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        this.apRehearsalBanner = `Rehearsal — on its latest tick (${at}, tick ${rh.ticks}) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
+        this.apRehearsalRows = rh.rows.map((r) => ({
+          id: r.rig_id, name: r.rig_name, region: r.region, hash: r.advertised_th != null ? this.fmtHashRig(r.advertised_th) : '', hours: `${r.length_hours}h`, cost: `${this.fmtSats(r.cost_sats)} sats`,
+        }));
+      } else { this.apRehearsalBanner = ''; this.apRehearsalRows = []; }
       // A rehearsal (DRY-RUN, 0 rentals) reads as "active" but nothing was rented or spent —
       // say so plainly, and reassure it's safe to stop. In LIVE it's just filling in.
       this.emptyRentalsNote = this.heroChip === 'LIVE'

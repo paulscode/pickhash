@@ -195,6 +195,7 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       // paced, budget, market_fetch_failed, needs_reconcile) — reasons the DB tables don't record.
       if (r) log({ event: 'autopilot', ran: !!r.ran, reason: r.reason || null,
                    executed: ((r.outcome && r.outcome.executed) || []).length,
+                   rehearsed: ((r.outcome && r.outcome.rehearsed) || []).length,
                    blocked: ((r.gateResult && r.gateResult.blocked) || []).map((b) => b.reason) });
       // The top-up wanted hashrate but couldn't afford even the cheapest rig (decide's
       // 'no_affordable_candidate'). If we're also holding nothing, the session can't make progress —
