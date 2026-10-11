@@ -11,7 +11,7 @@ export const configJson = FileHelper.json(
     base: sdk.volumes.main,
     subpath: '/config.json',
   },
-  z.object({
+  z.looseObject({
     dashboardPassword: z.string().catch(''),
   }),
 )

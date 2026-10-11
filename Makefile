@@ -124,9 +124,21 @@ node_modules: package-lock.json
 package-lock.json: package.json
 	npm i
 
-# ncc-bundle the startos/ tree to a single JS entrypoint that start-cli evaluates.
+# ncc-bundle the startos/ tree to a single JS entrypoint that start-cli evaluates, behind
+# the same gate as the SDK's s9pk.mk (which this Makefile does not include): type check,
+# the SDK's lint rules and a prettier check. The SDK supplies typescript, prettier and ncc.
+SDK_DIR := node_modules/@start9labs/start-sdk
+PRETTIER_CONFIG := $(SDK_DIR)/prettier.config.json
+
 javascript/index.js: $(shell find startos -type f 2>/dev/null) tsconfig.json package.json node_modules
-	npm run build
+	npx tsc --noEmit
+	node $(SDK_DIR)/lint.mjs
+	npx prettier --config $(PRETTIER_CONFIG) --check startos
+	rm -rf javascript && npx ncc build startos/index.ts -o javascript
+
+.PHONY: format
+format: | node_modules
+	npx prettier --config $(PRETTIER_CONFIG) --write startos
 
 # Universal (multi-arch) 0.4.0 package by default. `start-cli s9pk pack` with no --arch
 # builds every architecture the manifest declares into one s9pk. start-cli builds the

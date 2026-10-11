@@ -8,4 +8,5 @@ export { main } from './main'
 import { buildManifest } from '@start9labs/start-sdk'
 import { manifest as sdkManifest } from './manifest'
 import { versionGraph } from './versions'
-export const manifest = buildManifest(versionGraph, sdkManifest)
+import { dependencies } from './dependencies'
+export const manifest = buildManifest(versionGraph, sdkManifest, dependencies)
