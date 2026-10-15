@@ -11,9 +11,20 @@
  */
 const net = require('node:net');
 
+/*
+ * opts.awaitAuthDifficulty: report the difficulty in force AFTER the password was read,
+ * instead of stopping at the first work. A DATUM Gateway sends its first job with the
+ * subscribe reply, before it has seen the password at authorize, so a difficulty asked
+ * for in the password arrives later, as a fresh set_difficulty and job after the
+ * authorize reply. With this set, the probe waits for that job, or for AUTH_GRACE_MS
+ * after the authorize reply when none comes (the endpoint ignored the request).
+ */
+const AUTH_GRACE_MS = 1500;
+
 function probe(host, port, user, opts = {}) {
   const pass = opts.pass || 'x';
   const timeoutMs = opts.timeoutMs || 12000;
+  const awaitAuthDifficulty = !!opts.awaitAuthDifficulty;
   const t0 = Date.now();
   const el = () => Date.now() - t0;
 
@@ -33,10 +44,13 @@ function probe(host, port, user, opts = {}) {
     }
     let settled = false;
     let hardDeadline = null;
+    let authGrace = null;
+    let authReplied = false;
     const finish = () => {
       if (settled) return;
       settled = true;
       if (hardDeadline) clearTimeout(hardDeadline);
+      if (authGrace) clearTimeout(authGrace);
       try { sock.destroy(); } catch { /* already gone */ }
       resolve(result);
     };
@@ -68,9 +82,23 @@ function probe(host, port, user, opts = {}) {
         let m;
         try { m = JSON.parse(line); } catch { continue; }
         if (m.id === 1 && m.result !== undefined && m.error == null) { result.subscribed = true; result.msToSubscribe = el(); }
-        if (m.id === 2 && m.result === true) result.authorized = true;
+        if (m.id === 2) {
+          if (m.result === true) result.authorized = true;
+          authReplied = true;
+          if (awaitAuthDifficulty && result.gotWork && !authGrace) {
+            authGrace = setTimeout(finish, AUTH_GRACE_MS);
+            if (authGrace.unref) authGrace.unref();
+          }
+        }
         if (m.method === 'mining.set_difficulty' && Array.isArray(m.params)) result.difficulty = Number(m.params[0]);
-        if (m.method === 'mining.notify') { result.gotWork = true; result.msToFirstWork = el(); finish(); }
+        if (m.method === 'mining.notify') {
+          const first = !result.gotWork;
+          result.gotWork = true;
+          if (first) result.msToFirstWork = el();
+          if (!awaitAuthDifficulty || authReplied) { finish(); continue; }
+          // First work arrived before the authorize reply: wait for the reply, which
+          // starts the grace timer above, or for a job sent after it.
+        }
       }
     });
     sock.on('error', (e) => { if (!result.error) result.error = e.message; finish(); });

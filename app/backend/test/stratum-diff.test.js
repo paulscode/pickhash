@@ -420,3 +420,17 @@ test('both endpoint-test reports carry the note, so the two cannot drift apart',
   const calls = src.match(/diffSupportNote\(r\.json\.supports_password_diff\)/g) || [];
   assert.equal(calls.length, 2, 'the wizard and the settings screen both report it');
 });
+
+test('a reported difficulty matches the request within 1%, not exactly', () => {
+  // A BLAKE2b gateway answers d=256 with 255.996 and d=16384 with 16383.75. Comparing
+  // exactly called every such endpoint unsupported.
+  assert.equal(stratumDiff.diffMatches(255.99609375, 256), true);
+  assert.equal(stratumDiff.diffMatches(16383.75, 16384), true);
+  assert.equal(stratumDiff.diffMatches(1024, 1024), true);
+  // the endpoint's own default is not a match for a request four times larger
+  assert.equal(stratumDiff.diffMatches(64, 256), false);
+  assert.equal(stratumDiff.diffMatches(63.9990234375, 256), false);
+  assert.equal(stratumDiff.diffMatches(null, 256), false);
+  assert.equal(stratumDiff.diffMatches(256, 0), false);
+  assert.equal(stratumDiff.diffMatches(NaN, 256), false);
+});

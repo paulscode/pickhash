@@ -91,4 +91,16 @@ function probeDiff(observedDiff) {
   return raised > MAX_DIFF ? null : raised;
 }
 
-module.exports = { powerOfTwoAtLeast, chooseDiff, password, passwordForRig, probeDiff, MAX_DIFF };
+/**
+ * Whether the difficulty an endpoint reports is the one asked for. Within 1%, not
+ * exact: a gateway may report a value just under the power of two it applied (a
+ * BLAKE2b gateway answers d=256 with 255.996, for instance), and that is a yes.
+ */
+function diffMatches(reported, wanted) {
+  const r = Number(reported);
+  const w = Number(wanted);
+  if (!Number.isFinite(r) || !Number.isFinite(w) || r <= 0 || w <= 0) return false;
+  return Math.abs(r - w) / w < 0.01;
+}
+
+module.exports = { powerOfTwoAtLeast, chooseDiff, password, passwordForRig, probeDiff, diffMatches, MAX_DIFF };

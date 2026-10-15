@@ -314,9 +314,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const wantDiff = (probe.gotWork && rentalWorkerOk) ? diff.probeDiff(probe.difficulty) : null;
     if (wantDiff != null) {
       try {
-        const diffProbe = await stratum.probe(connectIp, port, user, { pass: diff.password(wantDiff), timeoutMs: 12000 });
+        const diffProbe = await stratum.probe(connectIp, port, user, { pass: diff.password(wantDiff), timeoutMs: 12000, awaitAuthDifficulty: true });
         if (diffProbe && diffProbe.gotWork && diffProbe.difficulty != null) {
-          supportsPasswordDiff = Number(diffProbe.difficulty) === wantDiff;
+          supportsPasswordDiff = diff.diffMatches(diffProbe.difficulty, wantDiff);
         }
       } catch { /* leave unknown */ }
     }
