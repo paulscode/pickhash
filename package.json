@@ -17,6 +17,6 @@
     "test": "node --disable-warning=ExperimentalWarning --test 'app/backend/test/**/*.test.js'"
   },
   "dependencies": {
-    "@start9labs/start-sdk": "3.0.4"
+    "@start9labs/start-sdk": "3.0.6"
   }
 }

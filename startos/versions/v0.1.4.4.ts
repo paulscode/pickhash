@@ -1,7 +1,7 @@
 import { VersionInfo } from '@start9labs/start-sdk'
 
-export const v_0_1_4_3 = VersionInfo.of({
-  version: '0.1.4:3',
+export const v_0_1_4_4 = VersionInfo.of({
+  version: '0.1.4:4',
   releaseNotes: {
     en_US:
       'Rebuilt on version 3 of the StartOS packaging SDK, which needs StartOS ' +
@@ -10,7 +10,9 @@ export const v_0_1_4_3 = VersionInfo.of({
       'difficulty request in the Stratum password. It used to report BLAKE2b ' +
       'gateways as unsupported, so rented BLAKE2b rigs were never given a ' +
       'difficulty suited to their size. An endpoint saved before this update ' +
-      'keeps its old result until you save it again.',
+      'keeps its old result until you save it again. ' +
+      'Uses version 3.0.6 of the packaging SDK, which stops a restart during ' +
+      'startup from leaving the previous run still going.',
   },
   migrations: {
     up: async ({ effects }) => {},
