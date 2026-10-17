@@ -1,12 +1,7 @@
 id: pickhash
 title: "Pickhash"
-version: 0.1.4.2
-release-notes: >-
-  Fixes a stratum username that some pools cannot credit. Rentals used to connect as your-address-r<rental-id>. Ocean accepts that form, but Convoy — the main BLAKE2b pool — serves work for it and cannot read an address out of it, so hashrate you had paid for was mined and credited to nobody. Nothing showed it: MiningRigRentals sees a fully-delivering rental, so there is no underdelivery to detect and no refund to claim, and the only symptom is hashrate missing from your pool dashboard. Rentals now connect as your-address.r<rental-id> — one period, no dash — which every pool tested accepts.
-
-  Rentals already running are corrected in place, so you do not have to wait for them to expire. On the first tick after updating, any active rental whose username is stale is re-pointed to the corrected one, carrying its per-rig difficulty through untouched, and you get a notice saying it happened. Remaining hours are attributed from that point. Rentals that have already ended cannot be recovered.
-
-  Your endpoint's worker field is simpler as a result. A bare Bitcoin address is now a complete answer — Pickhash adds the worker name itself — so the old advice to enter it as address.worker is no longer needed, though typing it that way still works. The endpoint test now checks the exact username rentals will send.
+version: 0.1.4.4
+release-notes: "No change on StartOS 0.3.5.x. This build keeps the version number in step with the StartOS 0.4.0 release, which moves to the current packaging SDK."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/pickhash"
 upstream-repo: "https://github.com/paulscode/pickhash"

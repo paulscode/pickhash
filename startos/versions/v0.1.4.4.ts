@@ -7,9 +7,10 @@ export const v_0_1_4_4 = VersionInfo.of({
       'Rebuilt on version 3 of the StartOS packaging SDK, which needs StartOS ' +
       '0.4.0.2. Nothing you have set changes. ' +
       'Saving a pool endpoint now correctly detects whether it honours a ' +
-      'difficulty request in the Stratum password. It used to report BLAKE2b ' +
-      'gateways as unsupported, so rented BLAKE2b rigs were never given a ' +
-      'difficulty suited to their size. An endpoint saved before this update ' +
+      'difficulty request in the Stratum password. It could miss the reply ' +
+      'on any DATUM Gateway, and always reported BLAKE2b gateways as ' +
+      'unsupported, so rented rigs there were never given a difficulty ' +
+      'suited to their size. An endpoint saved before this update ' +
       'keeps its old result until you save it again. ' +
       'Uses version 3.0.6 of the packaging SDK.',
   },
