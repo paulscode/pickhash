@@ -11,8 +11,7 @@ export const v_0_1_4_4 = VersionInfo.of({
       'gateways as unsupported, so rented BLAKE2b rigs were never given a ' +
       'difficulty suited to their size. An endpoint saved before this update ' +
       'keeps its old result until you save it again. ' +
-      'Uses version 3.0.6 of the packaging SDK, which stops a restart during ' +
-      'startup from leaving the previous run still going.',
+      'Uses version 3.0.6 of the packaging SDK.',
   },
   migrations: {
     up: async ({ effects }) => {},
