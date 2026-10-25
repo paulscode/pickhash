@@ -1,7 +1,7 @@
 id: pickhash
 title: "Pickhash"
-version: 0.1.4.4
-release-notes: "No change on StartOS 0.3.5.x. This build keeps the version number in step with the StartOS 0.4.0 release, which moves to the current packaging SDK."
+version: 0.1.4.5
+release-notes: "Moves to Node.js 24.22.1, which fixes security flaws in TLS hostname checks and Brotli decompression. The image carries current CA certificates."
 license: MIT
 wrapper-repo: "https://github.com/paulscode/pickhash"
 upstream-repo: "https://github.com/paulscode/pickhash"
