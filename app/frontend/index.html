@@ -165,6 +165,20 @@
         </template>
       </div>
       <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
+      <!-- Prefill from a pool already saved on the MRR account (same algorithm only).
+           Only fills the fields; the endpoint test below still decides. -->
+      <template x-if="mrrPools.length">
+        <div class="space-y-1">
+          <p class="font-mono text-xs text-gray-400">Fill from a saved MRR pool</p>
+          <select x-model="mrrPoolPick" @change="pickMrrPool('wizard')"
+                  class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1.5 font-mono text-xs text-white disabled:opacity-50">
+            <option value="">choose…</option>
+            <template x-for="pl in mrrPools" :key="pl.id">
+              <option :value="pl.id" x-text="pl.label"></option>
+            </template>
+          </select>
+        </div>
+      </template>
       <form @submit.prevent="testPool()" class="space-y-3">
         <div class="grid grid-cols-3 gap-2">
           <input type="text" x-model="poolHost" @change="normalizeHost()" placeholder="host  (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
@@ -990,6 +1004,20 @@
       <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the payout address (a bare btcaddress is fine; btcaddress.worker also works). Each rig reports as btcaddress.r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving; new rentals use the saved endpoint.</p>
       <button type="button" x-show="seHashggAvail" x-cloak @click="seDetect()" :disabled="seBusy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
       <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
+      <!-- Prefill from a pool already saved on the MRR account (same algorithm only).
+           Only fills the fields; the endpoint test below still decides. -->
+      <template x-if="mrrPools.length">
+        <div class="space-y-1">
+          <p class="font-mono text-xs text-gray-400">Fill from a saved MRR pool</p>
+          <select x-model="seMrrPoolPick" @change="pickMrrPool('settings')"
+                  class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1.5 font-mono text-xs text-white disabled:opacity-50">
+            <option value="">choose…</option>
+            <template x-for="pl in mrrPools" :key="pl.id">
+              <option :value="pl.id" x-text="pl.label"></option>
+            </template>
+          </select>
+        </div>
+      </template>
       <div class="grid grid-cols-3 gap-2">
         <input type="text" x-model="seHost" placeholder="host (or stratum+tcp://host:port)" class="col-span-2 bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">
         <input type="text" x-model="sePort" placeholder="port" class="no-spinner bg-navy-800 border border-navy-600 rounded px-3 py-2 text-white font-mono text-sm placeholder-gray-600 focus:border-neon-ember/50 focus:outline-none">

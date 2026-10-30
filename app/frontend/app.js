@@ -29,6 +29,7 @@ document.addEventListener('alpine:init', () => {
     password: '',
     mrrKey: '', mrrSecret: '',
     poolHost: '', poolPort: '', poolUser: '',
+    mrrPools: [], mrrPoolPick: '', seMrrPoolPick: '',
 
     // Status / results.
     busy: false,
@@ -257,6 +258,7 @@ document.addEventListener('alpine:init', () => {
       this.s0 = n === 0; this.s1 = n === 1; this.s2 = n === 2; this.s3 = n === 3;
       this.stepLabel = ['Password', 'Connect', 'Pool', 'Fund'][n] || '';
       this.error = '';
+      if (n === 2) this.loadMrrPools();   // offer the account's saved pools as a prefill
     },
 
     // The session expired mid-use (a gated call returned 401/403). Drop to the login screen and
@@ -331,6 +333,43 @@ document.addEventListener('alpine:init', () => {
       else { const hp = host.match(/^([^:]+):(\d+)$/); if (hp) { host = hp[1]; port = Number(hp[2]); } }
       this.poolHost = host;
       if (port) this.poolPort = String(port);
+    },
+
+    // --- Saved MRR pools: prefill the endpoint from one already on the account ---
+    // A convenience only. Picking one fills host, port and worker; Test endpoint still
+    // runs, because that is where the rental-worker check and the raw-IP/DuckDNS offer
+    // live, and the per-rental username is derived from the address either way.
+    async loadMrrPools() {
+      let r = null;
+      try { r = await this.getJson('/api/setup/mrr-pools'); } catch { r = null; }
+      const pools = r && Array.isArray(r.pools) ? r.pools : [];
+      // Keep the option text short: a native <select> list sizes itself to its longest option and
+      // spills past the card otherwise. The address is abbreviated (the full worker lands in the
+      // field anyway), host:port is not repeated when the pool's name already carries it (the
+      // pools this app creates are named that way), and a raw IP is called out so an endpoint
+      // and the name later given to it read as two different things, which on MRR they are.
+      const brief = (u) => (u.length > 22 ? `${u.slice(0, 10)}…${u.slice(-8)}` : u);
+      const isIp = (h) => /^[0-9.]+$/.test(h) || h.includes(':');
+      this.mrrPools = pools.map((pl) => {
+        const hp = `${pl.host}:${pl.port}`;
+        const head = /^pickhash:/.test(pl.name) ? `${hp} (Pickhash's own)` : `${(pl.name || pl.id).slice(0, 24)} · ${hp}${isIp(pl.host) ? ' (raw IP)' : ''}`;
+        return { ...pl, label: `${head} · ${brief(pl.user)}` };
+      });
+      // The <select>s bind to these; reset them only once the new options are rendered.
+      this.$nextTick(() => { this.mrrPoolPick = ''; this.seMrrPoolPick = ''; });
+    },
+    pickMrrPool(target) {
+      const id = target === 'settings' ? this.seMrrPoolPick : this.mrrPoolPick;
+      const pl = this.mrrPools.find((x) => x.id === id);
+      if (!pl) return;
+      if (target === 'settings') {
+        this.seHost = pl.host; this.sePort = String(pl.port || ''); this.seWorker = pl.user;
+        this.seReport = ''; this.seWarning = '';
+      } else {
+        this.poolHost = pl.host; this.poolPort = String(pl.port || ''); this.poolUser = pl.user;
+        this.poolReport = null; this.poolOk = false; this.poolFailed = false; this.poolWarning = '';
+        this.detectNote = `Filled from your saved MRR pool “${pl.name || pl.id}”. Test it before continuing.`;
+      }
     },
 
     async detect() {
@@ -1097,6 +1136,7 @@ document.addEventListener('alpine:init', () => {
         return;
       }
       this.applyAlgorithm(r.json.algorithm);
+      this.loadMrrPools();      // the saved-pool prefill is per algorithm
       this.unitKnown = false;   // adopt the new algorithm's display unit
       this.algoNoteClass = 'text-neon-green';
       // The wizard cannot reload any of this. Only the algorithm route sits above the
@@ -1208,6 +1248,7 @@ document.addEventListener('alpine:init', () => {
       this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
       if (d.duckdns && d.duckdns.subdomain) this.duckdnsSub = d.duckdns.subdomain;
       this.seShowDuckdns = this.seIsIp && !this.duckdnsEnabled;   // settings gate (plain bool for the CSP build)
+      await this.loadMrrPools();
       // Derive the bare-IP warning from the CURRENT endpoint state so it reflects reality on every load
       // (and reappears after reverting DuckDNS), not only right after a pool test.
       this.seWarning = this.seShowDuckdns ? 'Bare-IP endpoint — MiningRigRentals won’t refund rentals pointed at an IP. Name it below.' : '';
