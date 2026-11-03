@@ -218,21 +218,20 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
         // on it — snapshot.session is stale-but-truthy; only a STILL-active session can be genuinely
         // held. A closed session sends bad=false, which resolves (idempotently) rather than re-arms.
         const stillActive = conn.prepare("SELECT 1 FROM sessions WHERE id = ? AND state = 'active'").get(snapshot.session.id);
-        const heldByCeiling = !!(stillActive && plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
-        alerts.runTransition(conn, {
-          kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
-          thresholdMs: 10 * 60 * 1000,
-          context: heldByCeiling ? { active_th: Math.round(plan.activeTh), target_th: Math.round(plan.targetTh), shortfall_th: Math.round(plan.shortfallTh) } : {},
-        });
-        /*
-         * The same for the market price limit, with decide() having already decided whether the
-         * limit is the actual cause (a counterfactual re-pack) and whether the hold is material
-         * (projected fill below the tolerance band). A tick that couldn't see the market or our own
-         * rentals is no evidence either way, so it neither arms nor resolves; anything else that
-         * yields no hold (filled, within tolerance, time cap, session closed) resolves it.
-         */
+        // A tick that couldn't see the market or our own rentals is no evidence either way, so it
+        // neither arms nor resolves either hold; anything else that yields no hold (filled, within
+        // tolerance, time cap, session closed) resolves it. A session that closes mid-blindness is
+        // still cleaned up: runLifecycle and stopSession resolve both holds directly.
         const unknown = !r || (!r.ran && UNKNOWN_CYCLE_REASONS.has(r.reason));
         if (!unknown) {
+          const heldByCeiling = !!(stillActive && plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
+          alerts.runTransition(conn, {
+            kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
+            thresholdMs: 10 * 60 * 1000,
+            context: heldByCeiling ? { active_th: Math.round(plan.activeTh), target_th: Math.round(plan.targetTh), shortfall_th: Math.round(plan.shortfallTh) } : {},
+          });
+          // The same for the market price limit, with decide() having already decided whether the
+          // limit is the actual cause (a counterfactual re-pack) and whether the hold is material.
           const hold = stillActive && plan && plan.priceLimitHold && (plan.notes || []).includes('price_limit')
             ? plan.priceLimitHold : null;
           alerts.runTransition(conn, {

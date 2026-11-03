@@ -350,6 +350,12 @@ test('tickOnce arms then fires a rate_ceiling_hold when the blend ceiling pins a
     const fired = holdRow();
     assert.equal(fired.state, 'fired', 'a sustained ceiling hold fires after the threshold');
     assert.equal(JSON.parse(fired.context_json).shortfall_th, 276, 'fired context carries the shortfall for the alert copy');
+    // Ticks that couldn't see the market or our rentals are no evidence the hold is over.
+    for (const reason of ['market_fetch_failed', 'fetch_not_ok']) {
+      autopilot.runCycle = spy({ ran: false, reason });
+      await tickOnce(c, DATA, snap(), { now: T + 10 * 60 * 1000 + 2, client: {} });
+      assert.equal(holdRow().state, 'fired', `a blind tick (${reason}) leaves a fired hold standing`);
+    }
     // Heal: the fill recovers -> decide returns within_tolerance (no plan) -> the hold resolves.
     autopilot.runCycle = spy({ ran: false, reason: 'within_tolerance' });
     await tickOnce(c, DATA, snap(), { now: T + 11 * 60 * 1000, client: {} });
