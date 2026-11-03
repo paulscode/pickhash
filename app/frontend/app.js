@@ -8,7 +8,110 @@
  * calls, x-model, and x-text — never inline expressions with operators.
  */
 
-document.addEventListener('alpine:init', () => {
+/*
+ * Header converter math (pure; exported for tests at the bottom of this file).
+ *
+ * Three fields: SHA256 sats ('sha'), BLAKE2b sats ('b2'), fiat ('fiat'). Whichever the
+ * user last typed in is the ANCHOR: its value is kept exactly as typed, and the other
+ * two are derived from it, so a rate refresh never rewrites what the user entered.
+ * Sats convert to each other through fiat, the same way the backend prices them, so
+ * the three always agree.
+ */
+const FX_MAX = 1e21;   // past this a number stops being an amount anyone means
+
+/**
+ * A typed amount -> number, or null if it isn't one. Accepts 1,000,000 / 1 000 / 2.5k / 3m /
+ * 1e6 / $10, and a decimal comma where it can't be grouping: 1,5 and 1.000,50 read as
+ * one and a half and a thousand and a half (a 100x misreading otherwise), while 1,000 stays
+ * a thousand, matching how the converter itself writes numbers.
+ */
+function fxParse(text) {
+  let t = String(text == null ? '' : text).trim().toLowerCase().replace(/[\s_']/g, '').replace(/^[$€£¥₹₩₽₺₿]+/, '');
+  if (!t) return null;
+  const lastComma = t.lastIndexOf(',');
+  const lastDot = t.lastIndexOf('.');
+  // Grouping is only accepted in groups of three, so a typo like 1,2,3 is refused rather
+  // than silently read as 123.
+  const grouped = (s, sep) => s.split(sep).every((g, i) => (i === 0 ? /^\d{1,3}$/ : /^\d{3}$/).test(g));
+  if (lastComma >= 0 && lastDot >= 0) {
+    // Both present: whichever comes last is the decimal mark, the other is grouping.
+    const [dec, grp] = lastComma > lastDot ? [',', '.'] : ['.', ','];
+    const whole = t.slice(0, t.lastIndexOf(dec));
+    if (!grouped(whole, grp)) return null;
+    t = whole.split(grp).join('') + '.' + t.slice(t.lastIndexOf(dec) + 1);
+  } else if (lastComma >= 0) {
+    const commas = t.split(',').length - 1;
+    const after = t.slice(lastComma + 1).replace(/[km]$/, '');
+    if (commas === 1 && after.length !== 3) t = t.replace(',', '.');
+    else {
+      const body = t.replace(/[km]$/, '');
+      if (!grouped(body, ',')) return null;
+      t = t.replace(/,/g, '');
+    }
+  } else if (lastDot >= 0 && t.split('.').length > 2) {
+    // 1.000.000: with more than one dot they can only be grouping.
+    if (!grouped(t.replace(/[km]$/, ''), '.')) return null;
+    t = t.replace(/\./g, '');
+  }
+  let mult = 1;
+  if (t.endsWith('k')) { mult = 1e3; t = t.slice(0, -1); } else if (t.endsWith('m')) { mult = 1e6; t = t.slice(0, -1); }
+  if (!/^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/.test(t)) return null;
+  const n = Number(t) * mult;
+  return Number.isFinite(n) && n >= 0 && n <= FX_MAX ? n : null;
+}
+
+/** Decimal places a currency is normally written with (JPY 0, KWD 3, most 2). */
+function fxMinorDigits(code) {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: String(code).toUpperCase() }).resolvedOptions().maximumFractionDigits;
+  } catch { return 2; }
+}
+
+/**
+ * A derived amount for display. Whole sats and normal currency precision for ordinary
+ * amounts; three significant digits below 1, where rounding would show a misleading 0
+ * (one SHA256 sat is a fraction of a cent; one BLAKE2b sat is a fraction of a SHA256 sat).
+ */
+function fxFormat(v, digits) {
+  if (v == null || !Number.isFinite(v)) return '';
+  if (v === 0) return '0';
+  if (v < 1) return v.toLocaleString('en-US', { maximumSignificantDigits: 3 });
+  return v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/**
+ * All three amounts from the anchor's. `row` is the selected currency's prices
+ * ({ btc, btcb2 }: one coin in that fiat); a field whose price is missing comes out null.
+ */
+function fxConvert(anchor, value, row) {
+  const out = { sha: null, b2: null, fiat: null };
+  if (value == null || !row) return out;
+  out[anchor] = value;
+  let fiat = null;
+  if (anchor === 'fiat') fiat = value;
+  else if (anchor === 'sha' && row.btc != null) fiat = (value / 1e8) * row.btc;
+  else if (anchor === 'b2' && row.btcb2 != null) fiat = (value / 1e8) * row.btcb2;
+  if (fiat == null) return out;
+  if (anchor !== 'fiat') out.fiat = fiat;
+  if (anchor !== 'sha' && row.btc != null) out.sha = (fiat / row.btc) * 1e8;
+  if (anchor !== 'b2' && row.btcb2 != null) out.b2 = (fiat / row.btcb2) * 1e8;
+  return out;
+}
+
+/** "just now" / "40s ago" / "3 min ago" / "2 h ago". */
+function fxAgeText(sec) {
+  if (sec == null || !Number.isFinite(sec)) return '';
+  if (sec < 10) return 'just now';
+  if (sec < 60) return `${Math.floor(sec)}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} min ago`;
+  return `${Math.floor(sec / 3600)} h ago`;
+}
+
+const FX_REASON = {
+  unreachable: 'unreachable', rate_limited: 'rate-limited', bad_response: 'unexpected response', no_price: 'no recent trades',
+};
+
+if (typeof document !== 'undefined') document.addEventListener('alpine:init', () => {
   Alpine.data('app', () => ({
     // Views (bare booleans so templates never need operators).
     onStyleguide: false,
@@ -94,6 +197,14 @@ document.addEventListener('alpine:init', () => {
     apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false, apPriceLimitText: '',
     apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '', apRateCeilTouched: false, apRateCeilAuto: true,
     apStarted: false, apStartedText: '',
+    // Header converter. fxSaved is the remembered currency; fxSel mirrors the select (which
+    // shows the saved one, or a stand-in while the feed can't price it). fxAnchor/fxAnchorVal
+    // are the field the user last typed in and its exact value.
+    fxReady: false, fxOpen: false, fxLoaded: false, fxFailed: false, fxSavedKnown: false,
+    fxRates: [], fxSources: null, fxSaved: 'usd', fxSel: 'usd',
+    fxServerNow: 0, fxFetchedAtMs: 0, fxNowMs: 0,
+    fxAnchor: null, fxAnchorVal: null, fxBad: '', fxFlash: false,
+    fxShaText: '', fxB2Text: '', fxFiatText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
     skKey: '', skSecret: '', skBusy: false, skReport: '', skReportClass: '', skUser: '',
     seHost: '', sePort: '', seWorker: '', seBusy: false, seReport: '', seReportClass: '', seWarning: '',
@@ -232,6 +343,7 @@ document.addEventListener('alpine:init', () => {
       this.csrf = auth.csrf || null;
       // Password set but no valid session -> show the login screen.
       if (this.passwordEnabled && !auth.authed) { this.showLogin = true; return; }
+      this.fxStart();   // the header converter works from here on, wizard included
       const setup = await this.getJson('/api/setup/state');
       if (setup.completed) { this.appReady = true; this.showApp = true; this.initApp(); return; }
       this.showWizard = true;
@@ -264,6 +376,7 @@ document.addEventListener('alpine:init', () => {
     // leaving a stale page up. A manual refresh should not be the only way back to login.
     handleAuthLost() {
       if (this.showLogin) return;   // already there (e.g. a wrong-password login attempt)
+      this.fxStop();
       this.showApp = false; this.showHistory = false; this.showSettings = false; this.showMarket = false; this.appReady = false;
       this.passwordEnabled = true; this.showLogin = true;
     },
@@ -882,6 +995,299 @@ document.addEventListener('alpine:init', () => {
     fmtSats(n) {
       if (n == null || !Number.isFinite(Number(n))) return '—';
       return Math.round(Number(n)).toLocaleString('en-US');
+    },
+
+    // ---- Header converter ----
+    // Rates are polled once when the app becomes reachable (so the header dot can report a
+    // problem), then every minute only while the panel is open, and immediately on opening
+    // if what's held is over 30s old. The backend shares one upstream fetch per minute.
+    fxStart() {
+      if (this.fxReady) return;
+      this.fxReady = true;
+      this.fxLoad();
+      // Slow background poll while closed, so the header dot tracks sources going down or
+      // coming back instead of reporting how things stood at page load.
+      clearInterval(this._fxIdle);
+      this._fxIdle = setInterval(() => { if (!this.fxOpen) this.fxLoad(); }, 5 * 60 * 1000);
+    },
+    fxStop() {
+      this.fxReady = false;
+      this.fxClose();
+      clearInterval(this._fxIdle); this._fxIdle = null;
+    },
+    async fxLoad() {
+      const r = await this.getJson('/api/fx');
+      this.fxLoaded = true;
+      if (!r || !r.ok) {
+        // Pickhash itself didn't answer. Keep what we had for as long as the server would
+        // have (15 min), so a dropped poll doesn't blank amounts someone is reading.
+        this.fxFailed = true;
+        if (!this.fxFetchedAtMs || Date.now() - this.fxFetchedAtMs > 15 * 60 * 1000) this.fxRates = [];
+        this.fxRecompute();
+        return;
+      }
+      const prev = this.fxRow();
+      this.fxFailed = false;
+      this.fxRates = (r.currencies || []).map((c) => ({ ...c, label: String(c.code).toUpperCase() }));
+      this.fxSources = r.sources || null;
+      this.fxServerNow = r.server_now || 0;
+      this.fxFetchedAtMs = Date.now();
+      this.fxNowMs = this.fxFetchedAtMs;
+      // The server's saved choice is taken once. After that this page is the authority, so a
+      // poll that left before a pick landed can't flip the select back.
+      if (!this.fxSavedKnown && r.fiat) { this.fxSaved = r.fiat; this.fxSavedKnown = true; }
+      // A pick whose save didn't land is retried, or it would quietly revert on reload.
+      if (this._fxUnsaved) this.fxSave(this._fxUnsaved);
+      const row = this.fxRow();
+      const moved = !!(prev && row && prev.code === row.code && (prev.btc !== row.btc || prev.btcb2 !== row.btcb2));
+      this.fxRecompute();
+      // A live rate change re-derives the amounts the user didn't type: flash them so the
+      // change is noticed rather than silently swapped in.
+      if (moved && this.fxAnchor && this.fxAnchorVal != null) {
+        this.fxFlash = true;
+        setTimeout(() => { this.fxFlash = false; }, 900);
+      }
+    },
+    fxRow() {
+      return this.fxRates.find((c) => c.code === this.fxCode) || null;
+    },
+    // The remembered currency if the feed prices it now; otherwise dollars (BTCB2 needs only
+    // Neoxa for those), otherwise whatever is left. The preference itself is never overwritten.
+    get fxCode() {
+      const has = (code) => this.fxRates.some((c) => c.code === code);
+      if (has(this.fxSaved)) return this.fxSaved;
+      if (has('usd')) return 'usd';
+      return this.fxRates.length ? this.fxRates[0].code : this.fxSaved;
+    },
+    fxToggle() { if (this.fxOpen) this.fxClose(); else this.fxOpenPanel(); },
+    fxOpenPanel() {
+      this.fxOpen = true;
+      this.fxNowMs = Date.now();
+      if (!this.fxFetchedAtMs || Date.now() - this.fxFetchedAtMs > 30 * 1000) this.fxLoad();
+      clearInterval(this._fxPoll); clearInterval(this._fxClock);
+      this._fxPoll = setInterval(() => this.fxLoad(), 60 * 1000);
+      this._fxClock = setInterval(() => { this.fxNowMs = Date.now(); }, 5 * 1000);   // ticks the "updated …" age
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons();
+        // Not on touch screens, where focusing raises a keyboard over the panel just opened.
+        const fine = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+        const el = this.$refs.fxSha;
+        if (fine && el && !el.disabled && !this.fxHasValue) el.focus();
+      });
+    },
+    fxClose() {
+      if (!this.fxOpen) return;
+      this.fxOpen = false;
+      clearInterval(this._fxPoll); clearInterval(this._fxClock);
+      this._fxPoll = null; this._fxClock = null;
+    },
+    fxText(field) { return field === 'sha' ? this.fxShaText : field === 'b2' ? this.fxB2Text : this.fxFiatText; },
+    fxSetText(field, t) {
+      if (field === 'sha') this.fxShaText = t; else if (field === 'b2') this.fxB2Text = t; else this.fxFiatText = t;
+    },
+    fxDigits(field) { return field === 'fiat' ? fxMinorDigits(this.fxCode) : 0; },
+    fxInput(field, ev) {
+      const text = ev && ev.target ? ev.target.value : '';
+      this.fxSetText(field, text);
+      this.fxAnchor = field;
+      if (text.trim() === '') { this.fxAnchorVal = null; this.fxBad = ''; }
+      else {
+        const n = fxParse(text);
+        this.fxAnchorVal = n;
+        this.fxBad = n == null ? field : '';
+      }
+      this.fxRecompute();
+    },
+    // Re-derive the two fields the user didn't type from the one they did.
+    fxRecompute() {
+      const a = this.fxAnchor;
+      const v = this.fxBad ? null : this.fxAnchorVal;
+      const vals = a ? fxConvert(a, v, this.fxRow()) : { sha: null, b2: null, fiat: null };
+      for (const f of ['sha', 'b2', 'fiat']) {
+        if (f === a) continue;
+        this.fxSetText(f, fxFormat(vals[f], this.fxDigits(f)));
+      }
+      this._fxVals = vals;
+      this.$nextTick(() => { this.fxSel = this.fxCode; });
+    },
+    // On leaving the typed field, tidy it (1000000 -> 1,000,000) only if that loses nothing.
+    fxTidy(field) {
+      if (field !== this.fxAnchor || this.fxBad || this.fxAnchorVal == null) return;
+      const t = fxFormat(this.fxAnchorVal, this.fxDigits(field));
+      if (t && fxParse(t) === this.fxAnchorVal) this.fxSetText(field, t);
+    },
+    fxPickCurrency() {
+      const code = this.fxSel;
+      // Compared with the SAVED currency, not the displayed one: while the saved one can't be
+      // priced the select shows a stand-in, and picking that stand-in must still be saved.
+      if (!code || code === this.fxSaved) return;
+      // A currency switch is a change of units, not of amount: if the fiat field was the one
+      // typed in, hand the anchor to a sats amount so the value carries across converted.
+      const vals = this._fxVals || {};
+      if (this.fxAnchor === 'fiat' && !this.fxBad) {
+        const keep = vals.sha != null ? 'sha' : vals.b2 != null ? 'b2' : null;
+        if (keep) { this.fxAnchor = keep; this.fxAnchorVal = vals[keep]; }
+      }
+      this.fxSaved = code;
+      this.fxSavedKnown = true;
+      this.fxRecompute();
+      this.fxSave(code);
+    },
+    async fxSave(code) {
+      this._fxUnsaved = code;
+      const r = await this.send('POST', '/api/fx/currency', { code });
+      if (r.ok && this._fxUnsaved === code) this._fxUnsaved = null;
+    },
+    fxClear() {
+      this.fxAnchor = null; this.fxAnchorVal = null; this.fxBad = '';
+      this.fxShaText = ''; this.fxB2Text = ''; this.fxFiatText = '';
+      this._fxVals = null;
+      this.$nextTick(() => { const el = this.$refs.fxSha; if (el && !el.disabled) el.focus(); });
+    },
+
+    // Overall state: loading | ok | stale (a source failed; showing its last good value) |
+    // partial (one side has no price; the other still converts) | down (nothing converts).
+    get fxState() {
+      if (!this.fxLoaded) return 'loading';
+      const row = this.fxRow();
+      if (!row || (row.btc == null && row.btcb2 == null)) return 'down';
+      if (row.btc == null || row.btcb2 == null) return 'partial';
+      const s = this.fxSources;
+      if (this.fxFailed || (s && ((s.btc && s.btc.stale) || (s.btcb2 && s.btcb2.stale)))) return 'stale';
+      return 'ok';
+    },
+    // Seconds since the OLDER of the two prices in use was fetched, on the server's clock
+    // (so a skewed browser clock can't misreport it) plus time elapsed here since.
+    get fxAgeSec() {
+      const s = this.fxSources;
+      if (!s || !this.fxServerNow) return null;
+      const ats = [s.btc, s.btcb2].filter((x) => x && x.at && (x.ok || x.stale)).map((x) => x.at);
+      if (!ats.length) return null;
+      return Math.max(0, this.fxServerNow - Math.min(...ats) + (this.fxNowMs - this.fxFetchedAtMs) / 1000);
+    },
+    fxWhy(side) {
+      const s = this.fxSources && this.fxSources[side];
+      if (!s) return 'unreachable';
+      return FX_REASON[s.error] || s.error || 'unreachable';
+    },
+    get fxBanner() {
+      const st = this.fxState;
+      const row = this.fxRow();
+      // A failed BTC side means CoinGecko AND its mempool.space fallback both failed.
+      const btcHeld = this.fxSources && this.fxSources.btc ? this.fxSources.btc.source : 'CoinGecko';
+      const btcSrc = btcHeld === 'CoinGecko' ? 'CoinGecko/mempool.space' : btcHeld;
+      const retry = ' Retrying every minute.';
+      let msg = '';
+      if (st === 'down') {
+        msg = this.fxFailed && !this.fxRates.length
+          ? 'Converter unavailable — Pickhash couldn’t be reached for rates.'
+          : `Converter unavailable — no BTC price (${btcSrc}: ${this.fxWhy('btc')}) and no BLAKE2b price (Neoxa: ${this.fxWhy('btcb2')}).`;
+        return msg + retry;
+      }
+      if (st === 'partial') {
+        msg = row.btcb2 == null
+          ? `BLAKE2b price unavailable (Neoxa: ${this.fxWhy('btcb2')}) — SHA256 sats ↔ ${row.label} still works.`
+          : `BTC price unavailable (${btcSrc}: ${this.fxWhy('btc')}) — BLAKE2b sats ↔ ${row.label} still works.`;
+        msg += retry;
+      } else if (st === 'stale') {
+        const who = [];
+        if (this.fxSources && this.fxSources.btc && this.fxSources.btc.stale) who.push(`${btcSrc} ${this.fxWhy('btc')}`);
+        if (this.fxSources && this.fxSources.btcb2 && this.fxSources.btcb2.stale) who.push(`Neoxa ${this.fxWhy('btcb2')}`);
+        if (this.fxFailed) who.push('Pickhash unreachable');
+        msg = `Showing rates from ${fxAgeText(this.fxAgeSec) || 'earlier'} — ${who.join(', ')}.` + retry;
+      }
+      // The remembered currency can't be priced right now; say so rather than silently
+      // showing another one. The preference is kept for when it comes back.
+      if (this.fxLoaded && this.fxRates.length && this.fxCode !== this.fxSaved) {
+        msg = `${this.fxSaved.toUpperCase()} isn’t available right now — showing ${this.fxCode.toUpperCase()}.${msg ? ' ' + msg : ''}`;
+      }
+      return msg;
+    },
+    get fxBannerClass() {
+      return this.fxState === 'down'
+        ? 'bg-neon-pink/10 border border-neon-pink/30 text-neon-pink'
+        : 'bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow';
+    },
+    get fxLiveText() {
+      const st = this.fxState;
+      if (st === 'loading') return 'Loading rates…';
+      if (st === 'down') return 'Rates unavailable';
+      const age = fxAgeText(this.fxAgeSec);
+      if (st === 'stale') return `Stale · ${age}`;
+      return age ? `Live · updated ${age}` : 'Live';
+    },
+    get fxLiveTitle() { return 'Rates refresh every minute while this is open.'; },
+    get fxLiveClass() {
+      const st = this.fxState;
+      return st === 'ok' ? 'text-neon-green' : st === 'down' ? 'text-neon-pink' : st === 'loading' ? 'text-gray-500' : 'text-neon-yellow';
+    },
+    get fxLiveDotClass() {
+      const st = this.fxState;
+      return st === 'ok' ? 'bg-neon-green animate-pulse-neon' : st === 'down' ? 'bg-neon-pink' : st === 'loading' ? 'bg-gray-500' : 'bg-neon-yellow';
+    },
+    get fxDotShow() { return ['down', 'partial', 'stale'].includes(this.fxState); },
+    get fxDotClass() { return this.fxState === 'down' ? 'bg-neon-pink' : 'bg-neon-yellow'; },
+    get fxBtnClass() { return this.fxOpen ? 'text-neon-ember' : 'hover:text-white'; },
+    get fxBtnTitle() {
+      const st = this.fxState;
+      if (st === 'down') return 'Converter — rates unavailable right now';
+      if (st === 'partial' || st === 'stale') return 'Converter — some rates are unavailable or stale';
+      return 'Convert between SHA256 sats, BLAKE2b sats and fiat';
+    },
+    get fxExpanded() { return this.fxOpen ? 'true' : 'false'; },
+    get fxHasValue() { return !!(this.fxShaText || this.fxB2Text || this.fxFiatText); },
+    get fxNoCurrencies() { return !this.fxRates.length; },
+    // With nothing priced the select would be blank; show the remembered currency, disabled.
+    get fxOptions() {
+      return this.fxRates.length ? this.fxRates : [{ code: this.fxSaved, name: '', label: this.fxSaved.toUpperCase() }];
+    },
+    get fxShaOff() { const r = this.fxRow(); return !r || r.btc == null; },
+    get fxB2Off() { const r = this.fxRow(); return !r || r.btcb2 == null; },
+    get fxFiatOff() { const r = this.fxRow(); return !r || (r.btc == null && r.btcb2 == null); },
+    get fxShaPh() { return this.fxShaOff ? 'unavailable' : '0'; },
+    get fxB2Ph() { return this.fxB2Off ? 'unavailable' : '0'; },
+    get fxFiatPh() { return this.fxFiatOff ? 'unavailable' : (0).toFixed(fxMinorDigits(this.fxCode)); },
+    get fxFiatAria() { return `Amount in ${this.fxCode.toUpperCase()}`; },
+    fxFieldClass(field) {
+      if (this.fxBad === field) return 'border-neon-pink/60 text-neon-pink';
+      if (this.fxAnchor === field) return 'border-neon-ember/50 text-white';
+      return this.fxFlash ? 'border-navy-600 text-neon-yellow' : 'border-navy-600 text-white focus:border-neon-ember/50';
+    },
+    get fxShaClass() { return this.fxFieldClass('sha'); },
+    get fxB2Class() { return this.fxFieldClass('b2'); },
+    get fxFiatClass() { return this.fxFieldClass('fiat'); },
+    // One shared width so the three columns line up, grown to the longest amount: a sats
+    // figure on the BLAKE2b side runs ~200x the SHA256 one, and neither may be cut off.
+    get fxWidth() {
+      const len = Math.max(this.fxShaText.length, this.fxB2Text.length, this.fxFiatText.length, 11);
+      return `width: ${Math.min(len + 3, 34)}ch`;
+    },
+    fxMoney(v) {
+      if (v == null) return '—';
+      const code = this.fxCode.toUpperCase();
+      const digits = v < 1 ? 6 : fxMinorDigits(code);
+      try {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol', maximumFractionDigits: digits, minimumFractionDigits: Math.min(digits, fxMinorDigits(code)) }).format(v);
+      } catch { return `${fxFormat(v, 2)} ${code}`; }
+    },
+    get fxRateLine() {
+      const r = this.fxRow();
+      if (!r || this.fxState === 'down') return '';
+      return `1 BTC = ${this.fxMoney(r.btc)} · 1 BTCB2 = ${this.fxMoney(r.btcb2)}`;
+    },
+    get fxCrossLine() {
+      const r = this.fxRow();
+      if (!r || r.btc == null || r.btcb2 == null) return '';
+      return `1 BTC ≈ ${(r.btc / r.btcb2).toLocaleString('en-US', { maximumFractionDigits: 2 })} BTCB2`;
+    },
+    get fxSourceLine() {
+      const s = this.fxSources;
+      if (!s) return '';
+      return `via ${s.btc ? s.btc.source : 'CoinGecko'} · Neoxa ${s.btcb2 ? s.btcb2.pair : 'BTCB2/USDC'}`;
+    },
+    get fxSourceTitle() {
+      const src = this.fxSources && this.fxSources.btc ? this.fxSources.btc.source : 'CoinGecko';
+      return `BTCB2 is priced on Neoxa's BTCB2/USDC market (USDC taken as a dollar) and carried into other currencies with ${src}'s exchange rates, which also price BTC. The two sats amounts convert through fiat, so all three always agree. Tip: type 2.5k, 3m or 1e6.`;
     },
     fmtDurationHours(h) {
       if (h == null || !(h > 0)) return '—';
@@ -1663,3 +2069,7 @@ document.addEventListener('alpine:init', () => {
     },
   }));
 });
+
+if (typeof module === 'object' && module.exports) {
+  module.exports = { fxParse, fxFormat, fxConvert, fxMinorDigits, fxAgeText };
+}

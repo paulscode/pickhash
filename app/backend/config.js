@@ -76,6 +76,11 @@ const DEFAULTS = {
   ui: {
     hashrate_unit: 'ph',            // primary display unit (PH/s); sub-PH toggles to TH/s
   },
+  // Shared across algorithms: which fiat the header converter shows. Not in SETTINGS; it is
+  // chosen in the converter itself, from a list only the rate feed knows.
+  display: {
+    fiat_currency: 'usd',
+  },
   // DuckDNS: give a raw-IP stratum endpoint a stable DNS name (MRR won't refund IP-pointed rentals).
   // Not in SETTINGS -> surfaced on the endpoint card, not the generic settings list; the token is a
   // secret (secrets table), never here. `ip` is the address the name currently points at.

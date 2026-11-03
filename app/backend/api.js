@@ -33,6 +33,7 @@ const alerts = require('./alerts');
 const dispute = require('./engine/dispute');
 const endpoints = require('./endpoints');
 const diff = require('./diff');
+const fx = require('./fx');
 
 // Throttle for the authenticated endpoint-probe route (blunts use as an internal scanner).
 // Overridable so tests can disable the spacing between rapid consecutive probes.
@@ -472,6 +473,28 @@ async function handleApi(req, res, url, body, ctx = {}) {
       .run(want, Math.floor(Date.now() / 1000), `algorithm switched from ${current} to ${want}`,
         JSON.stringify({ from: current, to: want }));
     return sendJson(res, 200, { ok: true, algorithm: algorithmBlock(conn) });
+  }
+
+  /*
+   * The header converter's rates (sats on each chain <-> fiat) and the preferred fiat.
+   * Ahead of the setup gate: it needs no marketplace account, and the header that
+   * offers it is on every screen, the wizard included. It exposes only public prices.
+   */
+  if (p === '/api/fx' && method === 'GET') {
+    const rates = await fx.getRates();
+    return sendJson(res, 200, {
+      ok: true, ...rates, fiat: config.getKey(conn, 'display', 'fiat_currency'),
+      server_now: Math.floor(Date.now() / 1000),   // ages are computed on this clock, not the browser's
+    });
+  }
+  if (p === '/api/fx/currency' && method === 'POST') {
+    // Validated for shape only, not against today's list: during a CoinGecko outage the
+    // list shrinks to dollars, and choosing one then must not be refused, nor should the
+    // outage be able to overwrite a preference saved before it.
+    const code = fx.normalizeCode(body.code);
+    if (!code) return sendJson(res, 400, { error: 'bad_currency' });
+    config.set(conn, 'display', { fiat_currency: code });
+    return sendJson(res, 200, { ok: true, fiat: code });
   }
 
   // --- Setup gate: the rest of the API is closed until the wizard completes ---

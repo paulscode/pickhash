@@ -55,7 +55,7 @@
 
   <!-- Header -->
   <header class="bg-navy-900 border-b border-navy-700 px-4 py-3">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <div class="flex items-center gap-2">
         <i data-lucide="pickaxe" class="w-5 h-5 text-neon-ember"></i>
         <span class="font-mono text-lg text-neon-ember">Pickhash</span>
@@ -68,11 +68,66 @@
               class="ml-1 px-2 py-0.5 rounded border font-mono text-xs tracking-wide"
               :title="algoDisplay" x-text="algoShort"></span>
       </div>
-      <nav class="flex items-center gap-6 text-sm font-mono text-gray-400">
+      <nav class="flex items-center gap-4 sm:gap-6 text-sm font-mono text-gray-400">
         <a href="#" @click.prevent="goDashboard()" :class="navDashClass">Dashboard</a>
         <a href="#" @click.prevent="goMarket()" :class="navMktClass">Market</a>
         <a href="#" @click.prevent="goHistory()" :class="navHistClass">History</a>
         <a href="#" @click.prevent="goSettings()" :class="navSetClass">Settings</a>
+        <!-- Converter: sats on either chain <-> fiat. In the header because the question it
+             answers ("what is this in dollars? in the other chain's sats?") comes up on every
+             screen. The dot reports a rate problem without having to open it. -->
+        <div x-show="fxReady" x-cloak class="relative" @keydown.escape.window="fxClose()" @click.outside="fxClose()">
+          <button type="button" @click="fxToggle()" :class="fxBtnClass" :title="fxBtnTitle" aria-label="Convert between SHA256 sats, BLAKE2b sats and fiat" :aria-expanded="fxExpanded"
+                  class="relative flex items-center gap-1.5 pl-3 border-l border-navy-700 transition-colors">
+            <i data-lucide="calculator" class="w-4 h-4"></i><span class="hidden sm:inline">Convert</span>
+            <span x-show="fxDotShow" x-cloak :class="fxDotClass" class="absolute -top-1 -right-1.5 w-2 h-2 rounded-full"></span>
+          </button>
+          <div x-show="fxOpen" x-cloak x-transition.opacity.duration.150ms role="dialog" aria-label="Converter"
+               class="absolute right-0 top-full mt-3 z-40 w-max max-w-[94vw] bg-navy-900 border border-navy-600 rounded-lg p-4 space-y-3 shadow-2xl font-mono normal-case">
+            <div class="flex items-center justify-between gap-4 text-[11px]">
+              <span class="flex items-center gap-1.5" :class="fxLiveClass" :title="fxLiveTitle">
+                <span class="w-1.5 h-1.5 rounded-full" :class="fxLiveDotClass"></span><span x-text="fxLiveText"></span>
+              </span>
+              <span class="flex items-center gap-3">
+                <button type="button" @click="fxClear()" x-show="fxHasValue" x-cloak class="text-gray-500 hover:text-white transition-colors">Clear</button>
+                <button type="button" @click="fxClose()" class="text-gray-500 hover:text-white transition-colors" aria-label="Close"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+              </span>
+            </div>
+            <div x-show="fxBanner" x-cloak :class="fxBannerClass" class="rounded p-2 text-[11px] leading-relaxed max-w-[22rem]" x-text="fxBanner"></div>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2">
+                <input x-ref="fxSha" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Amount in SHA256 sats"
+                       :value="fxShaText" @input="fxInput('sha', $event)" @blur="fxTidy('sha')" :disabled="fxShaOff" :placeholder="fxShaPh" :style="fxWidth" :class="fxShaClass"
+                       class="min-w-0 bg-navy-800 border rounded px-2 py-1.5 text-right tabular-nums text-sm focus:outline-none transition-colors duration-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="w-[6.5rem] shrink-0 flex items-center gap-1.5 text-xs text-gray-500">sats <span class="px-1.5 py-0.5 rounded border text-[10px] text-neon-ember border-neon-ember/40 bg-neon-ember/10">SHA256</span></span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Amount in BLAKE2b sats"
+                       :value="fxB2Text" @input="fxInput('b2', $event)" @blur="fxTidy('b2')" :disabled="fxB2Off" :placeholder="fxB2Ph" :style="fxWidth" :class="fxB2Class"
+                       class="min-w-0 bg-navy-800 border rounded px-2 py-1.5 text-right tabular-nums text-sm focus:outline-none transition-colors duration-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="w-[6.5rem] shrink-0 flex items-center gap-1.5 text-xs text-gray-500">sats <span class="px-1.5 py-0.5 rounded border text-[10px] text-neon-green border-neon-green/40 bg-neon-green/10">BLAKE2b</span></span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" :aria-label="fxFiatAria"
+                       :value="fxFiatText" @input="fxInput('fiat', $event)" @blur="fxTidy('fiat')" :disabled="fxFiatOff" :placeholder="fxFiatPh" :style="fxWidth" :class="fxFiatClass"
+                       class="min-w-0 bg-navy-800 border rounded px-2 py-1.5 text-right tabular-nums text-sm focus:outline-none transition-colors duration-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="w-[6.5rem] shrink-0">
+                  <select x-model="fxSel" @change="fxPickCurrency()" :disabled="fxNoCurrencies" aria-label="Fiat currency" title="Fiat currency (remembered)"
+                          class="w-full bg-navy-800 border border-navy-600 rounded px-1.5 py-1.5 text-white text-xs disabled:opacity-40">
+                    <template x-for="c in fxOptions" :key="c.code">
+                      <option :value="c.code" :title="c.name" x-text="c.label"></option>
+                    </template>
+                  </select>
+                </span>
+              </label>
+            </div>
+            <div x-show="fxRateLine" x-cloak class="border-t border-navy-700 pt-2 space-y-0.5 text-[11px] text-gray-500 tabular-nums">
+              <div x-text="fxRateLine"></div>
+              <div x-show="fxCrossLine" x-text="fxCrossLine"></div>
+              <div class="text-gray-600" :title="fxSourceTitle" x-text="fxSourceLine"></div>
+            </div>
+          </div>
+        </div>
       </nav>
     </div>
   </header>
