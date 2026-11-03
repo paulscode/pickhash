@@ -298,8 +298,14 @@ function coerce(spec, raw) {
     if (!arr) return { ok: false, reason: 'expected a list' };
     return { ok: true, value: arr.map((s) => String(s).trim()).filter(Boolean) };
   }
-  if (spec.type === 'floatOrNull' && (raw === null || raw === '' || raw === undefined)) return { ok: true, value: null };
-  const n = Number(raw);
+  // Number(''), Number('  ') and Number(null) are all 0, which passes min: 0, so a
+  // cleared box used to save as 0: a 0 budget, or a 0 ceiling where blank meant off.
+  // Blank means off where a setting can be off, and is refused where it cannot.
+  const s = typeof raw === 'string' ? raw.trim() : raw;
+  const blank = s === null || s === '' || s === undefined;
+  if (spec.type === 'floatOrNull' && blank) return { ok: true, value: null };
+  if (blank) return { ok: false, reason: 'enter a number' };
+  const n = Number(s);
   if (!Number.isFinite(n)) return { ok: false, reason: 'expected a number' };
   if (spec.type === 'int' && !Number.isInteger(n)) return { ok: false, reason: 'expected a whole number' };
   if (spec.min != null && n < spec.min) return { ok: false, reason: `must be ≥ ${spec.min}` };

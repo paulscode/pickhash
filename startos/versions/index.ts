@@ -12,9 +12,10 @@ import { v_0_1_4_2 } from './v0.1.4.2'
 import { v_0_1_4_4 } from './v0.1.4.4'
 import { v_0_1_4_5 } from './v0.1.4.5'
 import { v_0_1_5_0 } from './v0.1.5.0'
+import { v_0_1_5_1 } from './v0.1.5.1'
 
 export const versionGraph = VersionGraph.of({
-  current: v_0_1_5_0,
+  current: v_0_1_5_1,
   other: [
     v_0_1_0_0,
     v_0_1_0_1,
@@ -28,5 +29,6 @@ export const versionGraph = VersionGraph.of({
     v_0_1_4_2,
     v_0_1_4_4,
     v_0_1_4_5,
+    v_0_1_5_0,
   ],
 })

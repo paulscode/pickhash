@@ -48,6 +48,23 @@ test('no <template x-for> inside <svg> (the Alpine CSP build cannot scope a loop
   assert.equal(offending.length, 0, 'x-for inside <svg> throws "Undefined variable" at runtime — build the geometry server-side and render axis labels as HTML');
 });
 
+test('no x-model writes through a dotted path (the Alpine CSP build drops the write)', () => {
+  // The CSP build evaluates expressions without eval and cannot assign to a member
+  // expression such as f.value. Reading still works, so the input shows what was typed
+  // while the model keeps its old value, and a save posts that old value. This is how
+  // every Settings row silently failed to save (issues #1, #17). Bind with :value and
+  // call a component method on @input/@change instead (setField in app.js).
+  const raw = fs.readFileSync(path.join(__dirname, '../../frontend/index.html'), 'utf8');
+  const html = raw.replace(/<!--[\s\S]*?-->/g, '');
+  // Any quoting, any modifiers (x-model.debounce.500ms), and bracket access too.
+  const dotted = html.match(/x-model[\w.-]*\s*=\s*(["'])(?:(?!\1).)*[.[](?:(?!\1).)*\1/g) || [];
+  assert.deepEqual(dotted, [], 'dotted x-model bindings never write under the Alpine CSP build');
+  // The same fault written by hand in a handler: a property assignment or ++/--.
+  const handlers = [...html.matchAll(/(?:@[\w.:-]+|x-on:[\w.:-]+|x-init|x-effect)\s*=\s*(["'])((?:(?!\1).)*)\1/g)].map((m) => m[2]);
+  const assigning = handlers.filter((h) => /[\w$\]]\s*(?:\.[\w$]+|\[[^\]]*\])\s*(?:[-+*/%]?=)(?!=)|\+\+|--/.test(h));
+  assert.deepEqual(assigning, [], 'property assignments in handlers throw under the Alpine CSP build; call a component method');
+});
+
 test('the owner-message thread binds the untrusted username + message via x-text', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../frontend/index.html'), 'utf8');
   // The two attacker-authored fields render via x-text; the global no-x-html guard above forbids

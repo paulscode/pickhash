@@ -1700,6 +1700,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
           if (isBool) value = !!val;
           else if (isText) value = Array.isArray(val) ? val.join(', ') : (val || '');
           else value = (val == null ? '' : String(val));
+          // A select marks the matching option :selected, so a value that is not among
+          // its options would show the first option while holding (and saving) another.
+          if (isEnum && Array.isArray(spec.values) && !spec.values.includes(value)) value = spec.values[0];
           // `unavailable` means the active algorithm cannot use this setting at all.
           // The control is disabled rather than hidden: it is on by default for the
           // other algorithm, and a silently missing row reads as a feature that has
@@ -1711,6 +1714,15 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
           };
         }),
       }));
+    },
+    // The Settings rows bind with :value plus @input/@change calling this, not x-model.
+    // The page runs Alpine's CSP build, which evaluates expressions without eval and
+    // refuses any property assignment (a.b = c): x-model="f.value" read the value for
+    // display but dropped every write, so the inputs showed what was typed while
+    // saveGroup() posted the values loaded from the server, and "Saved ✓" confirmed
+    // a save of the old settings (issues #1, #17). The assignment happens here instead.
+    setField(f, value) {
+      f.value = value;
     },
     async saveGroup(group) {
       const patch = {};

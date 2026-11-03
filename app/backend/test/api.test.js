@@ -297,6 +297,32 @@ test('POST /api/rig/blacklist toggles the strategy blacklist; history reflects b
   assert.equal((await call('POST', '/api/rig/blacklist', { rig_id: 'nope' })).status, 400, 'bad rig_id -> 400');
 });
 
+test('a cleared number box is "off" where a setting can be off, and refused where it cannot', () => {
+  // Number('') is 0, which used to save a cleared budget as a 0 cap.
+  assert.deepEqual(config.validatePatch('guardrails', { blended_ceiling_sats_unit_day: '   ' }), { ok: true, patch: { blended_ceiling_sats_unit_day: null } });
+  assert.deepEqual(config.validatePatch('guardrails', { rate_ceiling_sats_th_hour: '' }), { ok: true, patch: { rate_ceiling_sats_th_hour: null } });
+  for (const blank of ['', '  ', null]) {
+    const r = config.validatePatch('guardrails', { max_session_budget_sats: blank });
+    assert.equal(r.ok, false, `blank budget ${JSON.stringify(blank)} is refused`);
+    assert.equal(r.field, 'max_session_budget_sats');
+  }
+  assert.deepEqual(config.validatePatch('guardrails', { max_session_budget_sats: ' 100000 ' }), { ok: true, patch: { max_session_budget_sats: 100000 } });
+});
+
+test('a blended ceiling saved from Settings is deliberate, and re-saving it unchanged keeps an auto one auto', async () => {
+  // An accepted auto-suggestion, as /api/autopilot/start stores it.
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 7000, blended_ceiling_auto: true });
+  // The Settings form sends every field; the ceiling unchanged leaves it auto.
+  let r = await call('POST', '/api/config', { ns: 'guardrails', patch: { max_session_budget_sats: '100000', blended_ceiling_sats_unit_day: '7000' } });
+  assert.equal(r.status, 200);
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), true, 'unchanged ceiling stays an auto-suggestion');
+  // A new value typed in Settings is deliberate, so the preview keeps it.
+  r = await call('POST', '/api/config', { ns: 'guardrails', patch: { blended_ceiling_sats_unit_day: '5000' } });
+  assert.equal(r.status, 200);
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 5000);
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), false, 'a typed ceiling is deliberate');
+});
+
 test('GET /api/config returns schema + values with NO secrets; POST round-trips a validated patch', async () => {
   const g = await call('GET', '/api/config');
   assert.equal(g.status, 200);

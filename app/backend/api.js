@@ -787,6 +787,15 @@ async function handleApi(req, res, url, body, ctx = {}) {
     }
     const v = config.validatePatch(ns, body.patch || {});
     if (!v.ok) return sendJson(res, 400, { error: 'invalid_setting', field: v.field, reason: v.reason });
+    // A blended ceiling typed into Settings is deliberate, so mark it so: the Autopilot
+    // preview keeps only a ceiling with blended_ceiling_auto === false and otherwise
+    // re-suggests, which then replaces it when a session starts. Only on a change,
+    // because the form sends every field: saving the budgets must not turn an accepted
+    // auto-suggestion into a deliberate one.
+    if (ns === 'guardrails' && Object.prototype.hasOwnProperty.call(v.patch, 'blended_ceiling_sats_unit_day')
+      && v.patch.blended_ceiling_sats_unit_day !== config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day')) {
+      v.patch.blended_ceiling_auto = false;
+    }
     config.set(conn, ns, v.patch);
     const values = {};
     for (const key of Object.keys(config.settings(conn)[ns])) values[key] = config.getKey(conn, ns, key);
