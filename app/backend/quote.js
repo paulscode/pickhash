@@ -146,6 +146,58 @@ function candidates(rigs, opts = {}) {
   return eligible;
 }
 
+/*
+ * Market price limit: the most autopilot will pay per TH for any single rig.
+ *
+ * The packer chases the cheapest way to close a gap, and when the gap left over is
+ * small the only rigs small enough to fill it can be absurdly priced. Seen live on
+ * blake2b: five never-rented 0.02-0.05 TH listings at 2.9M sats/TH·day (600x the
+ * market) were taken to fill the last 0.2 TH of a 9 TH target, multiplying the burn
+ * tenfold. Their share of the hashrate was tiny, so nothing weighted by hashrate
+ * noticed them.
+ *
+ * So each rig is judged against the market on its own. The reference is the LOWER
+ * of two independent signals, because each one alone can be skewed, and in opposite
+ * ways that the other resists:
+ *   - last-10: what renters actually paid recently. Hard to game (it takes paid
+ *     rentals), but it lags, and a single overpriced rental can lift an average.
+ *   - the median listed price of the rigs we could rent, counted per rig rather than
+ *     per TH. Weighting by TH was measured and rejected: one unproven sha256 listing
+ *     claiming ~28 EH set the weighted median alone, and on blake2b turning on
+ *     unproven rigs doubled it. Per rig, a handful of junk listings moves it little.
+ * Taking the lower errs toward a shortfall rather than overpaying, which is the
+ * direction a spend limit should fail in.
+ *
+ * Only the top is limited. A rig far BELOW the market is a good deal, not a warning.
+ * Returns null (no limit) when off or when there is nothing to judge against.
+ */
+function marketPriceLimit(cands, { last10BtcThDay = null, overMarketPct = null } = {}) {
+  if (overMarketPct == null || !(Number(overMarketPct) >= 0)) return null;
+  const prices = cands.map((r) => r.priceBtcThDay).filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
+  const mid = prices.length >> 1;
+  const listedMedian = !prices.length ? null : prices.length % 2 ? prices[mid] : (prices[mid - 1] + prices[mid]) / 2;
+  const last10 = Number.isFinite(last10BtcThDay) && last10BtcThDay > 0 ? last10BtcThDay : null;
+  const refs = [last10, listedMedian].filter((v) => v != null);
+  if (!refs.length) return null;
+  const refBtcThDay = Math.min(...refs);
+  return {
+    refBtcThDay,
+    limitBtcThDay: refBtcThDay * (1 + Number(overMarketPct) / 100),
+    last10BtcThDay: last10,
+    listedMedianBtcThDay: listedMedian,
+    overMarketPct: Number(overMarketPct),
+  };
+}
+
+/** Split candidates by a marketPriceLimit result. A null limit keeps everything. */
+function applyPriceLimit(cands, limit) {
+  if (!limit) return { kept: cands, overpriced: [] };
+  const kept = [];
+  const overpriced = [];
+  for (const r of cands) (r.priceBtcThDay > limit.limitBtcThDay ? overpriced : kept).push(r);
+  return { kept, overpriced };
+}
+
 // ---------------------------------------------------------------------------------
 // Packer (pure). Given ranked candidates and two of {budget, target, duration}, pack
 // the cheapest reliable rigs and compute the third. Every total is fee-inclusive and
@@ -288,4 +340,4 @@ function pack(cands, params) {
   throw new Error(`unknown compute mode: ${params.compute}`);
 }
 
-module.exports = { FEE_RATE, derive, eligibility, candidates, pack, packDuration, packTarget, packBudget, finalize };
+module.exports = { FEE_RATE, derive, eligibility, candidates, marketPriceLimit, applyPriceLimit, pack, packDuration, packTarget, packBudget, finalize };

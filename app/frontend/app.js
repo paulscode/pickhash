@@ -91,7 +91,7 @@ document.addEventListener('alpine:init', () => {
     rentMode: 'autopilot', modeQuick: false, modeAutopilot: true,
     mqClass: 'text-gray-500 hover:text-white', maClass: 'bg-neon-ember/15 text-neon-ember',
     apTarget: '3', apDays: '7', apBudget: '1000000',
-    apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false,
+    apBusy: false, apBusyText: '', apMaxBusy: false, apError: '', apHasEstimate: false, apShortfall: false, apPriceLimitText: '',
     apRigsText: '', apRateText: '', apBurnText: '', apRunwayText: '', apShortfallText: '', apSpendText: '', apRateCeil: '', apRateCeilTouched: false, apRateCeilAuto: true,
     apStarted: false, apStartedText: '',
     // Settings > Connection cards (API credentials + stratum endpoint).
@@ -721,6 +721,11 @@ document.addEventListener('alpine:init', () => {
       this.apHasEstimate = true;
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsUnitDay != null ? `${this.fmtSats(est.blendedSatsUnitDay)} ${this.rateUnit}` : '—';
+      // The line autopilot won't cross for any single rig, and what it's judged against.
+      const pl = est.priceLimit;
+      this.apPriceLimitText = pl && pl.limitSatsUnitDay != null
+        ? `≤ ${this.fmtSats(pl.limitSatsUnitDay)} ${this.rateUnit} · ${pl.refSource === 'last10' ? 'last-10' : 'median listed'} + ${pl.overMarketPct}%${pl.skippedRigs ? ` · ${pl.skippedRigs} skipped` : ''}`
+        : '';
       // Pre-fill the blended rate ceiling. A deliberate standing setting wins (the API returns it only
       // when it was NOT an auto-suggestion); otherwise the suggested cap (estimated blend + headroom,
       // so the fill isn't strangled hugging the estimate), falling back to the bare blend. apRateCeilAuto
@@ -1054,6 +1059,7 @@ document.addEventListener('alpine:init', () => {
           no_hashrate: 'no hashrate advertised',
           blacklisted: 'blacklisted by you',
           diff_mismatch: 'outside your pool difficulty',
+          overpriced: 'priced too far over the market (Max price over market in Settings)',
         };
         /*
          * Rigs were eligible but none was taken, so the binding constraint is size, not

@@ -40,6 +40,8 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     supportsPasswordDiff: !!endpoint.supports_password_diff,
     fitTolerancePct: strat.fit_tolerance_pct,
     maxOvershootPct: strat.max_overshoot_pct,
+    maxOverMarketPct: strat.max_over_market_pct,
+    last10BtcThDay: market.recentLast10(conn, nowSec),
     replaceLeadSec: (strat.replace_lead_minutes || 0) * 60,
     rigScores: rigScores || {},
     marketRigs: marketRigs || [],

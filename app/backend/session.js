@@ -461,7 +461,13 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     allowUnproven: strat.allow_unproven_rigs === true,
     endpointDiff: endpoint ? endpoint.stratum_diff : null,
   };
-  const cands = quote.candidates(rigs, candOpts);
+  const eligible = quote.candidates(rigs, candOpts);
+  // The same per-rig market price limit the live loop applies (decide.js), from the same
+  // stored last-10, so the preview never prices in a rig autopilot would refuse to rent.
+  const priceLimit = quote.marketPriceLimit(eligible, {
+    last10BtcThDay: market.recentLast10(conn, nowSec()), overMarketPct: strat.max_over_market_pct,
+  });
+  const { kept: cands, overpriced } = quote.applyPriceLimit(eligible, priceLimit);
   // Pack to the target with the SAME overshoot-bounded packer the live decide loop uses, so the
   // preview reflects what execution will actually rent — a small target is never "held" by a giant
   // rig (which inflated rigCount/coveredTh/burn/runway ~6x before this). costOf uses each rig's
@@ -482,6 +488,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     if (e.ok) continue;
     for (const reason of e.reasons) passedOver[reason] = (passedOver[reason] || 0) + 1;
   }
+  if (overpriced.length) passedOver.overpriced = overpriced.length;
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
   const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50) / 100;
   // Pack to the target WITHOUT a budget constraint. The cost to HOLD a target is a market property,
@@ -500,10 +507,20 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   const advTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
   const costRateBtcDay = selection.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0);
   const priceUnit = algos.priceUnit(market.activeAlgo(conn));
+  const toUnitDay = (v) => (v != null ? Math.round(units.satsPerUnitDay(v, priceUnit)) : null);
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
     eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    // The per-rig price limit and what it was judged against, so the preview can show the
+    // line it holds (null when off or when there was no market to judge against).
+    priceLimit: priceLimit ? {
+      limitSatsUnitDay: toUnitDay(priceLimit.limitBtcThDay),
+      refSatsUnitDay: toUnitDay(priceLimit.refBtcThDay),
+      refSource: priceLimit.refBtcThDay === priceLimit.last10BtcThDay ? 'last10' : 'listed_median',
+      overMarketPct: priceLimit.overMarketPct,
+      skippedRigs: overpriced.length,
+    } : null,
     listedRigs: listed,
     // The other way a target goes uncovered: rigs are eligible but too big to buy for
     // a hole this size. The packer refuses to overshoot beyond max_overshoot_pct, which

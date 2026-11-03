@@ -156,6 +156,7 @@ function contributionTh(r, opts = {}) {
  *   marketRigs: normalized market rigs (market.normalizeRig shape) for candidate selection
  *   now: unix seconds; fetchOk: did the rentals/market fetch succeed this tick (dup-rent guard)
  *   hashrateTolerancePct, minRpi, stabilityTolerancePct, allowUnproven, blacklist, endpointDiff, strictDiff, rigScores
+ *   maxOverMarketPct, last10BtcThDay: the per-rig market price limit (null pct = off)
  * @returns { actions, activeTh, targetTh, neededTh, shortfallTh, windowRemainingH, budgetRemainingSats, notes }
  */
 function decide(ctx = {}) {
@@ -209,7 +210,14 @@ function decide(ctx = {}) {
     allowUnproven: ctx.allowUnproven,
     endpointDiff: ctx.endpointDiff, strictDiff: ctx.strictDiff, rigScores: ctx.rigScores,
   });
-  const feasible = ranked.filter((r) => {
+  // Never pay far over the market for any one rig, however small the gap it would fill
+  // (see quote.marketPriceLimit). Judged against the whole eligible market, not just the
+  // feasible slice, so the reference is the same one the pre-session estimate showed.
+  const priceLimit = quote.marketPriceLimit(ranked, {
+    last10BtcThDay: ctx.last10BtcThDay, overMarketPct: ctx.maxOverMarketPct,
+  });
+  const { kept: priced, overpriced } = quote.applyPriceLimit(ranked, priceLimit);
+  const feasible = priced.filter((r) => {
     if (heldRigIds.has(String(r.id))) return false;
     const minH = r.minHours || r.minRentalLength || 0;
     if (!(minH > 0)) return false;                       // can't rent a zero-length rig
@@ -248,11 +256,16 @@ function decide(ctx = {}) {
     // overshot the small gap beyond the ceiling (no_fit) — distinct so a soak can tell them apart.
     notes.push(anyAffordable ? 'no_fit' : 'no_affordable_candidate');
     if (blendBlocked) notes.push('blend_ceiling');   // the cap specifically rejected an affordable rig
+    if (overpriced.length) notes.push('price_limit');   // rigs over the market price limit were skipped
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes };
   }
 
   const shortfallTh = Math.max(0, neededTh - coveredTh);
-  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (blendBlocked) notes.push('blend_ceiling'); }
+  if (shortfallTh > 1e-9) {
+    notes.push('shortfall');
+    if (blendBlocked) notes.push('blend_ceiling');
+    if (overpriced.length) notes.push('price_limit');
+  }
 
   const actions = selection.map((x) => {
     const { base: paidSats, fee: feeSats } = rentCostSats(x.rig.hourBtc, x.hours);

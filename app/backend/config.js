@@ -44,6 +44,7 @@ const DEFAULTS = {
     auto_extend_price_tolerance_pct: 10,  // extend only if the new rate is within this of the original
     fit_tolerance_pct: 20,          // a top-up rig may overshoot the remaining gap by up to this % and still be chosen cheapest-rank-first
     max_overshoot_pct: 50,          // forced-close ceiling: beyond this % overshoot, leave a bounded shortfall and retry next tick rather than over-provision uncancellable capacity
+    max_over_market_pct: 100,       // autopilot skips any rig priced more than this % above the market reference (lower of last-10 and the median listed price); 100 = up to 2x
     replace_lead_minutes: 5,        // start renting a rig's replacement this long before it ends (it cliffs at end_ts) to overlap the ~2.5min ramp dead-time; 0 disables the lookahead
     fallback_pool_enabled: true,    // Ocean safety-net at rental priority 1 (same BTC address); engages only if your endpoint drops
     dead_rig_reroute_enabled: true, // reroute a rig that's offline-on-your-pool (while healthy peers mine fine) to Ocean + message its owner; depends on fallback_pool_enabled
@@ -185,6 +186,7 @@ const SETTINGS = {
     auto_extend_price_tolerance_pct: { type: 'int', min: 0, max: 200, unit: '%', label: 'Auto-extend price tolerance', help: 'Only extend if the new rate is within this of the original.' },
     fit_tolerance_pct: { type: 'int', min: 0, max: 500, unit: '%', label: 'Fit tolerance', help: 'A top-up rig may overshoot the gap by up to this and stay cheapest-first.' },
     max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot, hold a shortfall and retry rather than over-provision.' },
+    max_over_market_pct: { type: 'int', min: 0, max: 10000, unit: '%', label: 'Max price over market', help: 'Autopilot skips any rig priced more than this above the market rate — the lower of the last-10 rental average and the typical listed price. 100% allows up to 2×. Cheaper rigs are always fine; it leaves a shortfall rather than overpay.' },
     replace_lead_minutes: { type: 'int', min: 0, max: 60, unit: 'min', label: 'Replace lead', help: 'Rent a replacement this long before a rig ends (0 disables the lookahead).' },
     fallback_pool_enabled: {
       type: 'bool', label: 'Fallback pool',

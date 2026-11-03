@@ -147,6 +147,21 @@ function writeSnapshot(conn, snap) {
 }
 
 /**
+ * The newest recorded last-10 rental average for the active algorithm, in BTC per TH
+ * per day, or null if none was recorded within `maxAgeSec`.
+ *
+ * Read from the snapshots the observe loop writes every few minutes, rather than
+ * fetched, so the autopilot preview and the live loop judge prices against the same
+ * number. Scoped by algorithm, because the other one's figure is a thousandfold off.
+ */
+function recentLast10(conn, nowSec, maxAgeSec = 3600) {
+  const row = conn.prepare(
+    'SELECT last10 FROM market_snapshots WHERE algo = ? AND ts >= ? AND last10 IS NOT NULL ORDER BY ts DESC LIMIT 1',
+  ).get(activeAlgo(conn), nowSec - maxAgeSec);
+  return row && Number.isFinite(row.last10) && row.last10 > 0 ? row.last10 : null;
+}
+
+/**
  * Fetch every rig for one algorithm, paginating 100 at a time.
  *
  * `algo` is required and deliberately has no default. This is the call that decides
@@ -243,4 +258,4 @@ function hashValue(latest, rentals, priceUnit) {
   };
 }
 
-module.exports = { activeAlgo, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, fetchAllRigs, depthByRegion, cheapNow, hashValue };
+module.exports = { activeAlgo, normalizeRig, normalizeSearchPage, buildMarketSnapshot, writeSnapshot, recentLast10, fetchAllRigs, depthByRegion, cheapNow, hashValue };
