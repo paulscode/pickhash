@@ -357,6 +357,40 @@ test('tickOnce arms then fires a rate_ceiling_hold when the blend ceiling pins a
   } finally { restore.forEach((r) => r()); }
 });
 
+test('tickOnce arms/fires a price_limit_hold only on decide’s verdict, holds through blind ticks, resolves on heal', async () => {
+  const c = db.get();
+  const sid = seedAutopilot(c);
+  const hold = { heldBackTh: 20, limitSatsUnitDay: 9406, overMarketPct: 100, priceUnit: 'th' };
+  const heldPlan = { notes: ['no_fit', 'price_limit'], activeTh: 0, targetTh: 30, shortfallTh: 30, priceLimitHold: hold };
+  const restore = [
+    stub(autopilot, 'runCycle', spy({ ran: true, plan: heldPlan })),
+    stub(extend, 'runAutoExtend', spy({ ran: false })),
+  ];
+  const row = () => c.prepare("SELECT * FROM alerts WHERE kind='price_limit_hold' AND key=? ORDER BY id DESC LIMIT 1").get(String(sid));
+  try {
+    const snap = () => ({ session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid), rentals: [], fetch_ok: {}, reconciliation: { adopt: [], unattributable: [] } });
+    const T = 5_000_000;
+    await tickOnce(c, DATA, snap(), { now: T, client: {} });
+    assert.equal(row().state, 'armed');
+    // A tick that couldn't see the market is no evidence the hold is over: it must not resolve.
+    autopilot.runCycle = spy({ ran: false, reason: 'market_fetch_failed' });
+    await tickOnce(c, DATA, snap(), { now: T + 5 * 60 * 1000, client: {} });
+    assert.equal(row().state, 'armed', 'a blind tick leaves the hold as it was');
+    autopilot.runCycle = spy({ ran: true, plan: heldPlan });
+    await tickOnce(c, DATA, snap(), { now: T + 10 * 60 * 1000 + 1, client: {} });
+    const fired = row();
+    assert.equal(fired.state, 'fired');
+    const ctx = JSON.parse(fired.context_json);
+    assert.equal(ctx.limit_sats_unit_day, 9406);
+    assert.equal(ctx.price_unit, 'th');
+    // A shortfall decide did NOT attribute to the limit (no price_limit note) heals the alert.
+    autopilot.runCycle = spy({ ran: true, plan: { notes: ['shortfall'], activeTh: 20, targetTh: 30, shortfallTh: 10, priceLimitHold: null } });
+    await tickOnce(c, DATA, snap(), { now: T + 11 * 60 * 1000, client: {} });
+    assert.equal(row().state, 'resolved');
+    assert.equal(c.prepare("SELECT COUNT(*) AS n FROM alerts WHERE kind='rate_ceiling_hold'").get().n, 0, 'not confused with the blended-ceiling hold');
+  } finally { restore.forEach((r) => r()); }
+});
+
 test('tickOnce with no MRR client skips the spend cycle but still runs lifecycle/alerts', async () => {
   const c = db.get();
   const sid = seedSession([{ mrr_id: 1, ended: true, pct: 97 }]);   // all rentals ended -> lifecycle closes it

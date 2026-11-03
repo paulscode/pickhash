@@ -157,6 +157,7 @@ function contributionTh(r, opts = {}) {
  *   now: unix seconds; fetchOk: did the rentals/market fetch succeed this tick (dup-rent guard)
  *   hashrateTolerancePct, minRpi, stabilityTolerancePct, allowUnproven, blacklist, endpointDiff, strictDiff, rigScores
  *   maxOverMarketPct, last10BtcThDay: the per-rig market price limit (null pct = off)
+ *   rateCeilingSatsThHour: the gate's per-rig ceiling, so a price-limit hold isn't blamed for rigs the gate would block
  * @returns { actions, activeTh, targetTh, neededTh, shortfallTh, windowRemainingH, budgetRemainingSats, notes }
  */
 function decide(ctx = {}) {
@@ -217,14 +218,16 @@ function decide(ctx = {}) {
     last10BtcThDay: ctx.last10BtcThDay, overMarketPct: ctx.maxOverMarketPct,
   });
   const { kept: priced, overpriced } = quote.applyPriceLimit(ranked, priceLimit);
-  const feasible = priced.filter((r) => {
+  // Rentable this tick at all, budget aside.
+  const usable = (r) => {
     if (heldRigIds.has(String(r.id))) return false;
     const minH = r.minHours || r.minRentalLength || 0;
     if (!(minH > 0)) return false;                       // can't rent a zero-length rig
     if (minH > windowRemainingH) return false;           // min length won't fit the window
-    if (r.minCommitSats > budgetRemaining) return false; // min commit won't fit the budget
     return true;
-  });
+  };
+  const fits = (r) => usable(r) && !(r.minCommitSats > budgetRemaining);   // min commit must fit the budget
+  const feasible = priced.filter(fits);
 
   // Fill the gap with the shared packer (also used by the pre-session estimate): accumulate the
   // cheapest delivered-TH rigs and close with the cheapest rig that covers the gap without exceeding
@@ -234,7 +237,15 @@ function decide(ctx = {}) {
   const maxOvershoot = (ctx.maxOvershootPct != null ? ctx.maxOvershootPct : 50) / 100;
   const hoursOf = (r) => Math.min(r.minHours || r.minRentalLength || 0, windowRemainingH);
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
-  const anyAffordable = feasible.some((r) => costOf(r) <= budgetRemaining);
+  /*
+   * "Out of budget" means reasonably priced rigs are there to rent and none is affordable.
+   * The runner closes a session on it, so it must not be inferred from the price limit:
+   * when every usable rig under the limit is rented by someone else and only overpriced
+   * ones remain, that is a market condition to wait out (with budget to spare), not a
+   * spent budget. Only when nothing is usable at any price does the old reading stand.
+   */
+  const budgetBound = !feasible.some((r) => costOf(r) <= budgetRemaining)
+    && (priced.some(usable) || !overpriced.some(usable));
 
   // Blended rate ceiling ("you" rate). Held rentals are sunk, so a high held blend naturally restricts
   // what new rigs can be added (only ones cheap enough to keep the running average under the cap).
@@ -251,21 +262,56 @@ function decide(ctx = {}) {
   });
   const selection = picked.map((r) => ({ rig: r, hours: hoursOf(r) }));
 
-  if (!selection.length) {
-    // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
-    // overshot the small gap beyond the ceiling (no_fit) — distinct so a soak can tell them apart.
-    notes.push(anyAffordable ? 'no_fit' : 'no_affordable_candidate');
-    if (blendBlocked) notes.push('blend_ceiling');   // the cap specifically rejected an affordable rig
-    if (overpriced.length) notes.push('price_limit');   // rigs over the market price limit were skipped
-    return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes };
+  /*
+   * Is the market price limit what's holding autopilot below target? A real market almost
+   * always has rigs over the limit, so "some were skipped" proves nothing. Re-pack with
+   * them allowed back in, under every OTHER constraint, and blame the limit only if that
+   * covers strictly more. This rules out over-limit rigs that couldn't have helped anyway:
+   * too big for the gap, a min length past the time cap, a min commit past the budget,
+   * already held, rejected by the blended ceiling or its backstop, or over the gate's
+   * per-rig rate ceiling (which would block the rent after decide proposes it).
+   *
+   * Both sides must be MATERIAL, measured against the tolerance band:
+   *   - the hold: the projected fill stays below the band. A sliver short (the dust case
+   *     that motivated the limit) is not worth an alert, and autopilot wouldn't top up for
+   *     it either.
+   *   - the cause: lifting the limit would add at least a band's worth. Otherwise it is
+   *     only a bystander, e.g. a nearly spent budget whose only affordable rig is a speck
+   *     of overpriced dust: the budget is what binds, and "raise the limit" would be wrong.
+   */
+  let priceLimitHold = null;
+  const shortTh = Math.max(0, neededTh - coveredTh);
+  const tolFloorTh = targetTh * (1 - tol);
+  if (shortTh > 1e-9 && overpriced.length && activeTh + coveredTh < tolFloorTh - 1e-9) {
+    const gateCeil = ctx.rateCeilingSatsThHour != null ? ctx.rateCeilingSatsThHour : Infinity;
+    const underGate = (r) => r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil;
+    const unlimited = packToTarget(ranked.filter((r) => fits(r) && underGate(r)), neededTh, {
+      fitTol, maxOvershoot, budgetRemaining, costOf,
+      blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh,
+    });
+    const heldBackTh = unlimited.coveredTh - coveredTh;
+    if (heldBackTh > 1e-9 && heldBackTh >= targetTh * tol - 1e-9) {
+      notes.push('price_limit');
+      priceLimitHold = {
+        heldBackTh,
+        limitSatsUnitDay: ctx.priceUnit ? Math.round(units.satsPerUnitDay(priceLimit.limitBtcThDay, ctx.priceUnit)) : null,
+        overMarketPct: priceLimit.overMarketPct,
+        priceUnit: ctx.priceUnit || null,
+      };
+    }
   }
 
-  const shortfallTh = Math.max(0, neededTh - coveredTh);
-  if (shortfallTh > 1e-9) {
-    notes.push('shortfall');
-    if (blendBlocked) notes.push('blend_ceiling');
-    if (overpriced.length) notes.push('price_limit');
+  if (!selection.length) {
+    // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
+    // overshot the small gap beyond the ceiling, or sit over the price limit (no_fit) — distinct
+    // so a soak can tell them apart, and because the runner closes a session on the first.
+    notes.push(budgetBound ? 'no_affordable_candidate' : 'no_fit');
+    if (blendBlocked) notes.push('blend_ceiling');   // the cap specifically rejected an affordable rig
+    return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes, priceLimitHold };
   }
+
+  const shortfallTh = shortTh;
+  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (blendBlocked) notes.push('blend_ceiling'); }
 
   const actions = selection.map((x) => {
     const { base: paidSats, fee: feeSats } = rentCostSats(x.rig.hourBtc, x.hours);
@@ -286,7 +332,7 @@ function decide(ctx = {}) {
 
   return {
     actions, activeTh, targetTh, neededTh, shortfallTh,
-    windowRemainingH, budgetRemainingSats: budgetRemaining, notes,
+    windowRemainingH, budgetRemainingSats: budgetRemaining, notes, priceLimitHold,
   };
 }
 

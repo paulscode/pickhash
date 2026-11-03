@@ -42,6 +42,7 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     maxOvershootPct: strat.max_overshoot_pct,
     maxOverMarketPct: strat.max_over_market_pct,
     last10BtcThDay: market.recentLast10(conn, nowSec),
+    rateCeilingSatsThHour: guard.rate_ceiling_sats_th_hour,
     replaceLeadSec: (strat.replace_lead_minutes || 0) * 60,
     rigScores: rigScores || {},
     marketRigs: marketRigs || [],

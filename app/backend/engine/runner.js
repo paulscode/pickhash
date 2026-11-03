@@ -28,6 +28,10 @@ const duckdns = require('../duckdns');
 const mrr = require('../mrr');
 const endpoints = require('../endpoints');
 
+// runCycle reasons that mean this tick saw neither the market nor our own rentals reliably, so its
+// lack of a hold is no evidence the hold is over (and must not resolve a standing alert).
+const UNKNOWN_CYCLE_REASONS = new Set(['no_client', 'no_endpoint', 'needs_reconcile', 'fetch_not_ok', 'market_fetch_failed']);
+
 /** Close a session whose rentals have all ended; prompt disputes for under-delivered rigs. */
 async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
   const s = snapshot.session;
@@ -77,6 +81,7 @@ async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
       for (const r of rentals) alerts.resolveReconcile(conn, `xamb${r.mrr_id}`, nowMs);
       // A rate-ceiling hold is moot once the session closes — resolve it so it doesn't linger.
       alerts.runTransition(conn, { kind: 'rate_ceiling_hold', key: String(s.id), bad: false, now: nowMs });
+      alerts.runTransition(conn, { kind: 'price_limit_hold', key: String(s.id), bad: false, now: nowMs });
       alerts.fireOnce(conn, { kind: 'session_ended', key: String(s.id), now: nowMs, context: { summary } });
     }
   }
@@ -219,6 +224,27 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
           thresholdMs: 10 * 60 * 1000,
           context: heldByCeiling ? { active_th: Math.round(plan.activeTh), target_th: Math.round(plan.targetTh), shortfall_th: Math.round(plan.shortfallTh) } : {},
         });
+        /*
+         * The same for the market price limit, with decide() having already decided whether the
+         * limit is the actual cause (a counterfactual re-pack) and whether the hold is material
+         * (projected fill below the tolerance band). A tick that couldn't see the market or our own
+         * rentals is no evidence either way, so it neither arms nor resolves; anything else that
+         * yields no hold (filled, within tolerance, time cap, session closed) resolves it.
+         */
+        const unknown = !r || (!r.ran && UNKNOWN_CYCLE_REASONS.has(r.reason));
+        if (!unknown) {
+          const hold = stillActive && plan && plan.priceLimitHold && (plan.notes || []).includes('price_limit')
+            ? plan.priceLimitHold : null;
+          alerts.runTransition(conn, {
+            kind: 'price_limit_hold', key: String(snapshot.session.id), bad: !!hold, now,
+            thresholdMs: 10 * 60 * 1000,
+            context: hold ? {
+              active_th: plan.activeTh, target_th: plan.targetTh, shortfall_th: plan.shortfallTh,
+              held_back_th: hold.heldBackTh, limit_sats_unit_day: hold.limitSatsUnitDay,
+              over_market_pct: hold.overMarketPct, price_unit: hold.priceUnit,
+            } : {},
+          });
+        }
       }
     }
   } catch (e) { log({ event: 'autopilot_error', message: String(e && e.message) }); }

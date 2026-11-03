@@ -42,6 +42,7 @@ const SEVERITY = {
   rental_extended: 'info',
   rental_adopted: 'warning',
   rate_ceiling_hold: 'warning',
+  price_limit_hold: 'warning',
   rig_rerouted: 'warning',
   duckdns_update_failed: 'warning',
   worker_repaired: 'warning',

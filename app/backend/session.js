@@ -630,9 +630,10 @@ async function stopSession(conn, client = null) {
   conn.prepare("UPDATE sessions SET state = 'ended', ended_at = ?, summary_json = ?, spent_sats = ?, fee_sats = ? WHERE id = ?")
     .run(nowSec(), JSON.stringify(summary), summary.spent_sats, summary.fee_sats, s.id);
   // This immediate-end path bypasses runLifecycle, and observe never revisits an ended session — so a
-  // fired rate_ceiling_hold (plausible when the stop happens with zero live rentals) would linger in
-  // the UI. Resolve it directly here (avoids importing the alerts module into session.js).
-  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'rate_ceiling_hold' AND key = ? AND state IN ('armed','fired')").run(nowSec(), String(s.id));
+  // fired rate_ceiling_hold or price_limit_hold (plausible when the stop happens with zero live
+  // rentals) would linger in the UI. Resolve them directly here (avoids importing the alerts module
+  // into session.js).
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind IN ('rate_ceiling_hold', 'price_limit_hold') AND key = ? AND state IN ('armed','fired')").run(nowSec(), String(s.id));
   return { stopped: true, state: 'ended' };
 }
 

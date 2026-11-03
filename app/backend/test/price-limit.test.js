@@ -112,7 +112,7 @@ test('no limit when the setting is off or there is nothing to judge against', ()
   assert.equal(quote.applyPriceLimit(all, null).kept, all);
 });
 
-test('the live loop applies the limit: it never proposes a dust rig, and says why it fell short', () => {
+test('the live loop applies the limit: it never proposes a dust rig', () => {
   const plan = decide.decide({
     session: { mode: 'autopilot', state: 'active', target_th: 9, budget_sats: 1_000_000, time_cap_hours: 168, spent_sats: 0, started_at: 1000 },
     rentals: [], marketRigs: MARKET, now: 1000, fetchOk: true,
@@ -122,7 +122,6 @@ test('the live loop applies the limit: it never proposes a dust rig, and says wh
   });
   assert.ok(plan.actions.length > 0);
   assert.ok(!plan.actions.some((a) => a.rigId.startsWith('dust')), plan.actions.map((a) => a.rigId).join(','));
-  if (plan.shortfallTh > 1e-9) assert.ok(plan.notes.includes('price_limit'), plan.notes.join(','));
 });
 
 test('the setting defaults to 2x the market', () => {
@@ -148,4 +147,86 @@ test('recentLast10 reads the newest snapshot for the ACTIVE algorithm only, and 
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- Is the price limit actually what's holding autopilot back? (price_limit_hold) ----
+//
+// A real market nearly always has rigs over the limit, so the alert must only blame the
+// limit when lifting it would materially help. Each case below is a way the limit can
+// sit beside a shortfall without causing it.
+
+const LAST10 = BTC(4703);   // -> limit 9,406 sats/TH·day at the default 100%
+
+function plan(marketRigs, over = {}) {
+  const { session: sOver, ...rest } = over;
+  return decide.decide({
+    session: { mode: 'autopilot', state: 'active', target_th: 30, budget_sats: 1_000_000, time_cap_hours: 168, spent_sats: 0, started_at: 1000, ...sOver },
+    rentals: [], marketRigs, now: 1000, fetchOk: true,
+    hashrateTolerancePct: 5, minRpi: 90, priceUnit: 'th', fitTolerancePct: 20, maxOvershootPct: 50,
+    maxOverMarketPct: 100, last10BtcThDay: LAST10,
+    ...rest,
+  });
+}
+
+const CHEAP = [rig('c1', 2, 5000), rig('c2', 3, 5000)];   // 5 TH under the limit
+const DEAR = [rig('d1', 10, 20000), rig('d2', 15, 20000)]; // 25 TH over it
+
+test('hold: the limit is blamed when lifting it would fill the rest', () => {
+  const p = plan([...CHEAP, ...DEAR]);
+  assert.ok(p.notes.includes('price_limit'), p.notes.join(','));
+  assert.equal(Math.round(p.priceLimitHold.heldBackTh), 25);
+  assert.equal(p.priceLimitHold.limitSatsUnitDay, 9406);
+  assert.equal(p.priceLimitHold.priceUnit, 'th');
+  assert.ok(!p.actions.some((a) => a.rigId.startsWith('d')), 'and it still does not rent them');
+});
+
+test('not blamed: the over-limit rigs are too big for the gap anyway', () => {
+  const p = plan([...CHEAP, rig('huge', 400, 20000)]);
+  assert.ok(p.shortfallTh > 20, 'materially short');
+  assert.equal(p.priceLimitHold, null);
+  assert.ok(!p.notes.includes('price_limit'));
+});
+
+test('not blamed: their min rental is longer than the time left', () => {
+  const long = DEAR.map((r) => ({ ...r, minHours: 48, minRentalLength: 48 }));
+  const p = plan([...CHEAP, ...long], { session: { time_cap_hours: 24 } });
+  assert.equal(p.priceLimitHold, null);
+});
+
+test('not blamed: the blended ceiling’s backstop would reject them anyway', () => {
+  // A 6,000 blended cap puts the per-rig backstop at 12,000, below the dear rigs' 20,000.
+  const p = plan([...CHEAP, ...DEAR], { blendedCeilingSatsUnitDay: 6000 });
+  assert.equal(p.priceLimitHold, null);
+});
+
+test('not blamed: the gate’s per-rig rate ceiling would block the rent anyway', () => {
+  // 20,000 sats/TH·day is ~833 sats/TH/hr; a 500 ceiling blocks it after decide proposes it.
+  const p = plan([...CHEAP, ...DEAR], { rateCeilingSatsThHour: 500 });
+  assert.equal(p.priceLimitHold, null);
+});
+
+test('not blamed: the shortfall is a sliver inside the tolerance band (the original dust case)', () => {
+  const p = plan(MARKET, { session: { target_th: 9 } });
+  assert.ok(!p.actions.some((a) => a.rigId.startsWith('dust')));
+  assert.equal(p.priceLimitHold, null);
+  assert.ok(!p.notes.includes('price_limit'));
+});
+
+test('not blamed: a nearly spent budget whose only affordable rig is overpriced dust', () => {
+  // The sane rig's minimum commit is past the remaining budget; a speck of dust is not.
+  const p = plan([rig('sane', 40, 4000), rig('speck', 0.005, 2_900_000)],
+    { session: { target_th: 9, budget_sats: 3000 } });
+  assert.ok(p.notes.includes('no_affordable_candidate'), 'the budget is what binds: ' + p.notes.join(','));
+  assert.equal(p.priceLimitHold, null);
+});
+
+test('only over-limit rigs left is a market condition, not a spent budget', () => {
+  // Every under-limit rig is rented by someone else. The runner closes a session on
+  // no_affordable_candidate, so reading this as "out of budget" would end a session that
+  // has its whole budget left. It must hold, and say the limit is why.
+  const p = plan(DEAR);
+  assert.equal(p.actions.length, 0);
+  assert.ok(p.notes.includes('no_fit'), p.notes.join(','));
+  assert.ok(!p.notes.includes('no_affordable_candidate'));
+  assert.ok(p.priceLimitHold, 'and the hold is attributed to the limit');
 });
