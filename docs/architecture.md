@@ -159,14 +159,13 @@ Vendored, SRI-pinned third-party assets live in `app/frontend/vendor/`.
 
 ## Packaging
 
-The same image runs on three targets:
+The same image runs on two targets:
 
 - **Docker** — `docker compose up --build`, single-stage `Dockerfile` on a digest-pinned
   `node:24-slim`, runs as a non-root user.
-- **StartOS 0.3.5.1** — `manifest.yaml` + Deno embassy procedures under `scripts/`, packed with
-  `start-sdk`.
-- **StartOS 0.4.0** — the TypeScript SDK tree under `startos/`, packed with `start-cli`.
+- **StartOS 0.4** — the TypeScript SDK tree under `startos/`, packed with `start-cli` into one
+  universal `.s9pk` (x86_64 + aarch64).
 
-The `Makefile` wraps these: `make test-builds` produces both `.s9pk` files, and `make verify-0351` /
-`make verify-040` validate them. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full build and test
+The `Makefile` wraps these: `make release-builds` produces the `.s9pk`, and `make verify-040`
+validates it. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full build and test
 workflow.

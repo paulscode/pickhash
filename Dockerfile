@@ -40,14 +40,12 @@ COPY icon.png /usr/local/lib/pickhash/frontend/icon.png
 # Entrypoint + health-check scripts.
 COPY docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
 COPY check-web.sh /usr/local/bin/check-web.sh
-COPY check-mrr.sh /usr/local/bin/check-mrr.sh
 RUN chmod a+x /usr/local/bin/docker_entrypoint.sh \
-              /usr/local/bin/check-web.sh \
-              /usr/local/bin/check-mrr.sh
+              /usr/local/bin/check-web.sh
 
 # The server binds this port; compose / `docker run -p` decide host publishing.
 EXPOSE 3030
 
-# Plain-Docker entrypoint. StartOS uses manifest.yaml's main.entrypoint instead,
-# so this line does not affect the StartOS builds.
+# Plain-Docker entrypoint. StartOS names its own command in startos/main.ts,
+# so this line does not affect the StartOS build.
 ENTRYPOINT ["/usr/local/bin/docker_entrypoint.sh"]

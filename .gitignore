@@ -4,15 +4,9 @@
 /builds/
 
 # ── Build artifacts ──
-docker-images/
 *.s9pk
 node_modules/
 javascript/
-deno.lock
-# Generated StartOS 0.3.5.1 Deno bundle (source stays in scripts/*.ts).
-# NOTE: unlike the sibling packaging repo we do NOT ignore all scripts/*.js —
-# our scripts/ also holds hand-written Node tools (CLI, mock, seed) that must be tracked.
-/scripts/embassy.js
 
 # ── Local runtime data (docker-compose ./data mount) ──
 /data/
@@ -40,3 +34,6 @@ Thumbs.db
 # The compiled stylesheet IS committed (the image ships it; `make css` regenerates it).
 /app/frontend/icon.png
 tmp/
+
+# ── Claude Code personal settings ──
+.claude/settings.local.json

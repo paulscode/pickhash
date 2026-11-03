@@ -13,7 +13,7 @@ Before diving in, [docs/architecture.md](docs/architecture.md) explains how the 
   official `node:24-slim` container (commands below).
 - **Docker** — for running the app locally and (importantly) for running the test suite if your local
   Node is older than 24.
-- For building the StartOS packages: `start-cli` (0.4.0), `start-sdk` (0.3.5.1), `deno`, `yq`, `jq`.
+- For building the StartOS package: `start-cli` (0.4.0) and `jq`.
   These are only needed if you're working on the packaging.
 
 Runtime has **zero npm dependencies**. The few `devDependencies` exist only for building the StartOS
@@ -83,10 +83,10 @@ The `Makefile` wraps the build tooling:
 | --- | --- |
 | `make css` | Rebuild the committed Tailwind CSS bundle. |
 | `make icons` | Regenerate package icons from the master asset. |
-| `make pack-0351` | Build the StartOS 0.3.5.1 `.s9pk`. |
-| `make pack-040` | Build the StartOS 0.4.0 `.s9pk`. |
-| `make test-builds` | Build both `.s9pk` packages. |
-| `make verify-0351` / `make verify-040` | Validate the built packages. |
+| `make pack-040` | Build the StartOS 0.4.0 `.s9pk` (universal: x86_64 + aarch64). |
+| `make test-builds` | Fast x86_64-only build into `builds/<version>/`. |
+| `make release-builds` | Universal release build into `builds/<version>/`. |
+| `make verify-040` | Validate the built package. |
 | `make clean-builds` | Remove build artifacts. |
 
 ## Submitting changes

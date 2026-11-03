@@ -24,16 +24,15 @@ Pickhash runs on three platforms. Full setup instructions live in each section b
 
 ### StartOS
 
-Download the package for your StartOS version from the
-[Releases](https://github.com/paulscode/pickhash/releases) page:
-
-- **StartOS 0.3.5.x** → `pickhash-0351.s9pk`
-- **StartOS 0.4.x** → `pickhash-040.s9pk`
+Download `pickhash-040.s9pk` (StartOS 0.4.x) from the
+[Releases](https://github.com/paulscode/pickhash/releases) page.
 
 In your StartOS dashboard, use the **Sideload** feature to upload the `.s9pk`.
-Each package bundles both `x86_64` and `aarch64`, so one file works on any
+The package bundles both `x86_64` and `aarch64`, so one file works on any
 StartOS device. Once installed, open the Pickhash dashboard and follow the setup
 wizard — see [instructions.md](instructions.md) for the in-app setup notes.
+
+StartOS 0.3.5.x is no longer supported; Pickhash 0.1.5.0 was its last release.
 
 Optionally install [HashGG](https://github.com/paulscode/hashgg) as well, to
 auto-discover your public stratum endpoint.

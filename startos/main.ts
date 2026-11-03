@@ -47,7 +47,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
           // The dashboard is reached over StartOS's encrypted transport, so mark the cookie Secure.
           COOKIE_SECURE: '1',
           // Where to find/change the password in this platform's UI (shown on the
-          // login screen). 0.4.0: Actions → Configure. 0.3.5.1 sets its own path.
+          // login screen): Actions → Configure.
           DASHBOARD_PASSWORD_PATH:
             'Change it in the Pickhash service under Actions → Configure → Dashboard Password.',
         },

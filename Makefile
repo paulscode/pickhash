@@ -1,15 +1,15 @@
 # Pickhash — build orchestration.
 #
-# Two StartOS packages are produced from this one repo:
-#   * StartOS 0.3.5.1 — manifest.yaml + Deno embassy procedures, packed by `start-sdk`.
-#   * StartOS 0.4.0    — startos/ TypeScript SDK tree, packed by `start-cli`.
-# Both bake the same Docker image (shared Dockerfile / entrypoint / health checks).
-# A third artifact — a multi-arch image on Docker Hub — feeds the plain-Docker and
-# Umbrel paths (see the docker-buildx target).
+# One StartOS package is produced from this repo: the startos/ TypeScript SDK tree,
+# packed by `start-cli` for StartOS 0.4. It is universal: one s9pk carries both an
+# x86_64 and an aarch64 image (startos/manifest declares both arches). A second
+# artifact — a multi-arch image on Docker Hub — feeds the plain-Docker and Umbrel
+# paths (see the docker-buildx target). StartOS 0.3.5 packaging was retired after
+# 0.1.5.0.
 #
-# Fast x86_64 smoke build of BOTH StartOS packages -> builds/<version>/:
+# Fast x86_64 smoke build -> builds/<version>/:
 #   make test-builds
-# Full multi-arch (universal) release of BOTH StartOS packages -> builds/<version>/:
+# Full universal release -> builds/<version>/:
 #   make release-builds
 # Multi-arch Docker Hub image for the Umbrel / plain-Docker path:
 #   make docker-buildx           # builds linux/amd64 + linux/arm64 and pushes
@@ -18,22 +18,21 @@
 MAGICK ?= convert
 ICON_MASTER := assets/icon-master.png
 
-# -r (raw) is required: this yq (python-yq/jq) otherwise emits JSON-quoted strings
-# ("pickhash"), and the quotes leak into make target names and recursive make args.
-PKG_ID := $(shell yq -r ".id" manifest.yaml)
-PKG_VERSION := $(shell yq -r ".version" manifest.yaml)
+PKG_ID := $(shell sed -n "s/^  id: '\([a-z0-9-]*\)',$$/\1/p" startos/manifest/index.ts)
+# The release version is the version graph's `current` entry: v_0_1_5_0 -> 0.1.5.0.
+PKG_VERSION := $(shell sed -n 's/^  current: v_\([0-9_]*\),$$/\1/p' startos/versions/index.ts | tr _ .)
+# Refuse to run with either unresolved: the build targets `rm -rf $(BUILD_DIR)`, and an
+# empty version would make that the whole builds/ folder of signed releases.
+ifeq ($(PKG_ID),)
+$(error could not read the package id from startos/manifest/index.ts)
+endif
+ifeq ($(shell echo '$(PKG_VERSION)' | grep -Ex '[0-9]+(\.[0-9]+){3}'),)
+$(error could not read the current version from startos/versions/index.ts (got "$(PKG_VERSION)"))
+endif
 BUILD_DIR := builds/$(PKG_VERSION)
-# App sources baked into the image; named so make rebuilds the image tar when any change.
-APP_FILES := $(shell find app/backend app/frontend -type f -not -path '*/test/*')
-# manifest.yaml belongs here even though it is not baked into the image: the tars are TAGGED
-# start9/$(PKG_ID)/main:$(PKG_VERSION), so a version-only bump must rebuild them. Without it,
-# `start-sdk pack` reuses tars tagged with the PREVIOUS version and emits an s9pk that fails
-# `start-sdk verify` with "Contains image with incorrect version".
-IMAGE_DEPS := Dockerfile docker_entrypoint.sh check-web.sh check-mrr.sh tailwind.config.js $(APP_FILES) icon.png manifest.yaml
-
-# Empty by default -> both arch image tars build and the 0.3.5.1 package is universal
-# (multi-arch). The single-arch convenience targets set ARCH=x86_64|aarch64 to skip one.
-ARCH ?=
+# Everything start-cli bakes into the image, so `make pack-040` repacks when any of it changes.
+IMAGE_DEPS := Dockerfile docker_entrypoint.sh check-web.sh tailwind.config.js icon.png \
+  $(shell find app/backend app/frontend -type f -not -path '*/test/*')
 
 .DELETE_ON_ERROR:
 
@@ -69,51 +68,6 @@ icons: $(ICON_MASTER)
 	@echo "icons regenerated: icon.png icon-040.png logo.png icon.svg"
 
 # ============================================================================
-# StartOS 0.3.5.1 package (manifest.yaml + Deno embassy procedures)
-# ============================================================================
-.PHONY: pack-0351 pack-0351-x86 pack-0351-arm verify-0351
-
-# Bundle the embassy procedures (properties + optional-dependency check) to one JS file.
-scripts/embassy.js: scripts/embassy.ts scripts/deps.ts scripts/bundle.ts $(wildcard scripts/procedures/*.ts)
-	deno run --allow-read --allow-write --allow-net --allow-env scripts/bundle.ts
-
-# Per-arch runtime image tars consumed by `start-sdk pack`. The ARCH guard lets the
-# single-arch targets skip the arch they removed; with ARCH unset (the default) BOTH
-# build, and the package `start-sdk pack` emits is multi-arch (universal). The base
-# image is a manifest-list digest, so --platform selects the right arch with no build args.
-docker-images/x86_64.tar: $(IMAGE_DEPS)
-ifneq ($(ARCH),aarch64)
-	mkdir -p docker-images
-	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
-	  --platform=linux/amd64 -o type=docker,dest=docker-images/x86_64.tar .
-endif
-
-docker-images/aarch64.tar: $(IMAGE_DEPS)
-ifneq ($(ARCH),x86_64)
-	mkdir -p docker-images
-	docker buildx build --tag start9/$(PKG_ID)/main:$(PKG_VERSION) \
-	  --platform=linux/arm64 -o type=docker,dest=docker-images/aarch64.tar .
-endif
-
-# Universal (multi-arch) 0.3.5.1 package by default. `start-sdk pack` bundles whichever
-# arch tars are present in docker-images/, so the single-arch targets rm the other first.
-$(PKG_ID).s9pk: manifest.yaml instructions.md icon.png LICENSE scripts/embassy.js docker-images/x86_64.tar docker-images/aarch64.tar
-	start-sdk pack
-
-pack-0351: $(PKG_ID).s9pk
-
-# Single-arch 0.3.5.1 packages (dev / targeted testing).
-pack-0351-x86:
-	@rm -f docker-images/aarch64.tar
-	ARCH=x86_64 $(MAKE) pack-0351
-pack-0351-arm:
-	@rm -f docker-images/x86_64.tar
-	ARCH=aarch64 $(MAKE) pack-0351
-
-verify-0351: $(PKG_ID).s9pk
-	start-sdk verify s9pk $(PKG_ID).s9pk
-
-# ============================================================================
 # StartOS 0.4.0 package (startos/ TypeScript SDK tree)
 # ============================================================================
 .PHONY: pack-040 pack-040-x86 pack-040-arm verify-040
@@ -143,7 +97,7 @@ format: | node_modules
 # Universal (multi-arch) 0.4.0 package by default. `start-cli s9pk pack` with no --arch
 # builds every architecture the manifest declares into one s9pk. start-cli builds the
 # Docker image itself (dockerBuild source), cross-building arm64 via buildx/qemu.
-$(PKG_ID)_040.s9pk: javascript/index.js manifest.yaml icon-040.png
+$(PKG_ID)_040.s9pk: javascript/index.js icon-040.png $(IMAGE_DEPS)
 	start-cli s9pk pack --icon icon-040.png -o $(PKG_ID)_040.s9pk
 
 pack-040: $(PKG_ID)_040.s9pk
@@ -158,49 +112,42 @@ verify-040: $(PKG_ID)_040.s9pk
 	start-cli s9pk inspect $(PKG_ID)_040.s9pk manifest >/dev/null && echo "0.4.0 s9pk OK"
 
 # ============================================================================
-# Combined builds -> builds/<version>/
+# Builds -> builds/<version>/
 # ============================================================================
 .PHONY: test-builds release-builds clean-builds
 
-# Fast x86_64-only build of BOTH packages (dev smoke test).
-test-builds:
-	@rm -f docker-images/aarch64.tar $(PKG_ID).s9pk
-	ARCH=x86_64 $(MAKE) $(PKG_ID).s9pk javascript/index.js
+# Fast x86_64-only build (dev smoke test).
+test-builds: javascript/index.js
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)
-	cp $(PKG_ID).s9pk $(BUILD_DIR)/pickhash-0351.s9pk
 	start-cli s9pk pack --arch=x86_64 --icon icon-040.png -o $(BUILD_DIR)/pickhash-040.s9pk
 	cd $(BUILD_DIR) && sha256sum *.s9pk > SHA256SUMS
 	@echo ""
-	@echo "Test builds (x86_64):"
+	@echo "Test build (x86_64):"
 	@ls -lh $(BUILD_DIR)/
 	@echo ""
 	@cat $(BUILD_DIR)/SHA256SUMS
 
-# Full multi-arch (universal) release of BOTH packages -> builds/<version>/. Each s9pk
-# carries both linux/amd64 and linux/arm64 images. arm64 cross-builds via buildx/qemu.
-release-builds:
-	@rm -f $(PKG_ID).s9pk
-	$(MAKE) $(PKG_ID).s9pk javascript/index.js
+# Full universal release: one s9pk carrying both the linux/amd64 and linux/arm64 images.
+# arm64 cross-builds via buildx/qemu.
+release-builds: javascript/index.js
 	rm -rf $(BUILD_DIR)
 	mkdir -p $(BUILD_DIR)
-	cp $(PKG_ID).s9pk $(BUILD_DIR)/pickhash-0351.s9pk
 	start-cli s9pk pack --icon icon-040.png -o $(BUILD_DIR)/pickhash-040.s9pk
 	cd $(BUILD_DIR) && sha256sum *.s9pk > SHA256SUMS
 	@echo ""
-	@echo "Release builds (universal / multi-arch):"
+	@echo "Release build (universal / multi-arch):"
 	@ls -lh $(BUILD_DIR)/
 	@echo ""
 	@cat $(BUILD_DIR)/SHA256SUMS
 
 clean-builds:
-	rm -f $(PKG_ID).s9pk $(PKG_ID)_040.s9pk $(PKG_ID)_x86_64.s9pk $(PKG_ID)_aarch64.s9pk
-	rm -f scripts/embassy.js
-	rm -rf docker-images javascript node_modules
+	rm -f $(PKG_ID)_040.s9pk $(PKG_ID)_x86_64.s9pk $(PKG_ID)_aarch64.s9pk
+	rm -rf javascript node_modules
 
 # ============================================================================
 # Generic multi-arch Docker image (Docker Hub) — the plain-Docker + Umbrel path.
-# StartOS builds its own image tars above and does not use these.
+# StartOS packs build their own images and do not use these.
 # ============================================================================
 .PHONY: docker-build-local docker-buildx
 DOCKER_REPO ?= paulscode/pickhash
