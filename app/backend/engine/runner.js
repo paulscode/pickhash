@@ -28,14 +28,17 @@ const duckdns = require('../duckdns');
 const mrr = require('../mrr');
 const endpoints = require('../endpoints');
 const bootstrap = require('../bootstrap');
+const shutdown = require('../shutdown');
 
 // runCycle reasons that mean this tick saw neither the market nor our own rentals reliably, so its
 // lack of a hold is no evidence the hold is over (and must not resolve a standing alert).
 const UNKNOWN_CYCLE_REASONS = new Set(['no_client', 'no_endpoint', 'needs_reconcile', 'fetch_not_ok', 'market_fetch_failed']);
 
-// How often to retry the MRR pool/profile setup for a saved endpoint that does not have one.
+// MRR pool/profile provisioning, re-run whenever the saved endpoint's identity changes (see
+// tickOnce). `key` is the identity last provisioned successfully in this process; a failure is
+// retried after ENSURE_RETRY_MS so an MRR outage is not hammered.
 const ENSURE_RETRY_MS = 5 * 60 * 1000;
-let lastEnsureAt = 0;
+let ensured = { key: null, failedAt: 0 };
 
 /** Close a session whose rentals have all ended; prompt disputes for under-delivered rigs. */
 async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
@@ -162,6 +165,12 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     alerts.raiseReconcile(conn, { key: `mrr${stray.mrrId}`, now, context: { mrr_id: stray.mrrId, rig: stray.rigId } });
   }
 
+  // Shutting down: everything below changes rentals on MRR or spends (repairs, provisioning,
+  // top-up, extensions, reroutes, nudges). The work above only records what already happened,
+  // so let it finish, but start nothing new: shutdown waits for this tick, and an extension
+  // begun now could still be mid-call when the wait runs out. The next start picks it all up.
+  if (shutdown.requested()) return { ran: true, adoptedCount, stopping: true };
+
   // A HashGG IP change is handled ONE of two ways, never both:
   //  - DuckDNS on: the endpoint host is a STABLE name, so we just re-point the name at the new IP (one
   //    DuckDNS update, no MRR pool rewrites). endpoint-repair MUST NOT run — it would see name != IP
@@ -200,19 +209,29 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     if (r && r.ran) log({ event: 'worker_repair', repaired: r.repaired, failed: r.failed });
   } catch (e) { log({ event: 'worker_repair_error', message: String(e && e.message) }); }
 
-  // A saved endpoint with no MRR profile yet: the save succeeded but the pool/profile setup
-  // that follows it did not (an MRR blip, the tab closed). Autopilot cannot rent without a
-  // profile and stops with 'no_endpoint', which says nothing on screen, so a session would
-  // sit below target until someone pressed save again. Retry the setup here instead. It is
-  // idempotent, and bounded to one attempt every few minutes so an MRR outage is not hammered.
+  // Keep the MRR saved pool + profile in step with the saved endpoint. Every new rental is
+  // created on that profile and runs on its pool until its own override lands (and for good if
+  // the override fails), so a profile left behind on an old host or address sends hashrate
+  // there. Three paths change the endpoint without re-provisioning: endpoint repair and DuckDNS
+  // rewrite the host in place, and an endpoint save whose follow-up setup failed leaves no
+  // profile at all, so autopilot stops with 'no_endpoint' and nothing on screen. Re-run the
+  // (idempotent) setup whenever the endpoint's identity differs from the last one provisioned,
+  // which includes once after every start. A failure is retried after a back-off.
   try {
     const ep = endpoints.active(conn);
-    if (client && ep && !ep.mrr_profile_id && now - lastEnsureAt >= ENSURE_RETRY_MS) {
-      lastEnsureAt = now;
-      const r = await bootstrap.ensure(conn, client, ep);
-      log({ event: 'bootstrap_retry', ok: true, profile_id: r.profileId });
+    const key = ep ? `${ep.id}|${ep.host}|${ep.port}|${ep.worker_base}` : null;
+    const due = !(ep && ep.mrr_profile_id && key === ensured.key);
+    if (client && ep && due && now - ensured.failedAt >= ENSURE_RETRY_MS) {
+      try {
+        const r = await bootstrap.ensure(conn, client, ep);
+        ensured = { key, failedAt: 0 };
+        if (r.mutated) log({ event: 'bootstrap_sync', profile_id: r.profileId });
+      } catch (e) {
+        ensured = { ...ensured, failedAt: now };
+        log({ event: 'bootstrap_sync_error', message: String(e && e.message) });
+      }
     }
-  } catch (e) { log({ event: 'bootstrap_retry', ok: false, message: String(e && e.message) }); }
+  } catch (e) { log({ event: 'bootstrap_sync_error', message: String(e && e.message) }); }
 
   try {
     if (client && !skipSpendCycle) {
@@ -327,4 +346,4 @@ function startEngine(conn, dataDir, opts = {}) {
   return loop;
 }
 
-module.exports = { startEngine, tickOnce, runLifecycle, rehydrateState, _resetEnsureRetry: () => { lastEnsureAt = 0; } };
+module.exports = { startEngine, tickOnce, runLifecycle, rehydrateState, _resetEnsureRetry: () => { ensured = { key: null, failedAt: 0 }; } };

@@ -713,6 +713,8 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         duckdns_update_failed: `Your endpoint's IP changed but the DuckDNS name couldn't be updated${c.name ? ` (${c.name}.duckdns.org)` : ''} — it may point at the old IP. Check your DuckDNS token.`,
         worker_repaired: (c.address_changed || c.host_changed)
           ? `Moved ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'} to your ${c.address_changed ? `new payout address ${c.address || ''}` : ''}${c.address_changed && c.host_changed ? ' on ' : ''}${c.host_changed ? `saved endpoint ${c.endpoint || ''}` : ''}${c.failed ? ` (${c.failed} still to move; retrying every minute)` : ''}`
+          : c.from_shared
+            ? `Gave ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'} ${c.repaired === 1 ? 'its' : 'their'} own worker name${c.failed ? ` (${c.failed} still to do; retrying every minute)` : ''} — ${c.repaired === 1 ? 'it was' : 'they were'} running on the shared one, still paying your address`
           : `Corrected the stratum username on ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'}${c.sample && c.sample.to ? ` (now ${c.sample.to})` : ''} — some pools couldn't credit the old form, so that hashrate wasn't reaching your address`,
       };
       return map[a.kind] || a.kind;
@@ -1679,7 +1681,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.seBusy = false;
       if (!b.ok) { this.seReportClass = 'text-neon-pink'; this.seReport = 'Endpoint saved, but the MRR pool/profile update failed — try again.'; return; }
       this.seReportClass = 'text-neon-green';
-      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint, and running rentals move to it on the next tick.${this.diffSupportNote(r.json.supports_password_diff)}`;
+      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint, and in LIVE mode running rentals move to it on the next tick.${this.diffSupportNote(r.json.supports_password_diff)}`;
       await this.loadConnection();
     },
     async loadSettings() {

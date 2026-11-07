@@ -109,3 +109,46 @@ test('bootstrap brings a saved pool under an old payout address in line, on the 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a refused saved-pool update does not stop the profile from being recorded', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickhash-boot-'));
+  try {
+    db.open(dir);
+    const conn = db.get();
+    conn.prepare('INSERT INTO pool_endpoints (id, host, port, worker_base, active) VALUES (1, ?, ?, ?, 1)')
+      .run('host.example', 26596, 'bc1qnewaddr');
+    const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE id = 1').get();
+    const client = stubClient();
+    client.state.pools.push({ id: 'POOL1', name: 'pickhash:host.example:26596', user: 'bc1qoldaddr' });
+    client.state.profiles.push({ id: 'PROF1', name: 'pickhash:host.example:26596', pools: [{ priority: '0', poolid: 'POOL1' }] });
+    const basePut = client.put.bind(client);
+    client.put = async (p, params) => { if (/^\/account\/pool\/[^/]+$/.test(p)) throw new Error('MRR 400'); return basePut(p, params); };
+    const r = await bootstrap.ensure(conn, client, ep);
+    assert.equal(r.profileId, 'PROF1');
+    assert.equal(conn.prepare('SELECT mrr_profile_id FROM pool_endpoints WHERE id = 1').get().mrr_profile_id, 'PROF1',
+      'autopilot can still rent: every rental gets its own override anyway');
+    assert.ok(conn.prepare("SELECT 1 FROM decisions WHERE note LIKE '%FAILED%'").get(), 'the refusal is on the record');
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('two provisioning runs at once create one pool and one profile, not two', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickhash-boot-'));
+  try {
+    db.open(dir);
+    const conn = db.get();
+    conn.prepare('INSERT INTO pool_endpoints (id, host, port, worker_base, active) VALUES (1, ?, ?, ?, 1)')
+      .run('host.example', 26596, 'bc1qaddr');
+    const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE id = 1').get();
+    const client = stubClient();
+    // The UI's save and the engine's tick racing each other.
+    await Promise.all([bootstrap.ensure(conn, client, ep), bootstrap.ensure(conn, client, ep)]);
+    assert.equal(client.state.pools.length, 1);
+    assert.equal(client.state.profiles.length, 1);
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

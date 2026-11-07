@@ -80,32 +80,31 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     // Back out the per-TH·day rate (fee-exclusive) so an adopted rig contributes to the hash-value
     // pay-rate like any normal rental: base_btc = rate × adv × (lengthHours/24).
     const rate = adv > 0 && lengthHours > 0 ? (base / 1e8) / (adv * (lengthHours / 24)) : null;
-    // Point the recovered rental at our endpoint/worker (the ambiguous create's override step
-    // may never have run). This is a real MRR mutation, so it runs only in LIVE — recording the
-    // already-billed money below is correct in any mode, but a DRY-RUN/paused session must not
-    // silently re-point a rental. Done before the row is written so the row can say which
-    // username the rental is really on: a failed override leaves it on the profile's shared
-    // worker, and recording the intended name instead would hide it from worker repair, which
-    // is what retries it.
-    let worker = endpoint.worker_base;
-    if (!dryRun && wantWorker) {
-      try {
-        await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: wantWorker, pass: stratumPass, priority: 0 });
-        worker = wantWorker;
-      } catch { /* left on the shared worker; worker repair retries it */ }
-    }
     conn.prepare(
       `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                             paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name, stratum_pass,
                             pool_host, pool_port)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-    ).run(market.activeAlgo(conn), sessionId, mrrId, s.rigId, rigName, rigRegion, adv, lengthHours, base, fee, rate, start, end, worker, stratumPass,
+    ).run(market.activeAlgo(conn), sessionId, mrrId, s.rigId, rigName, rigRegion, adv, lengthHours, base, fee, rate, start, end, endpoint.worker_base, stratumPass,
       // Created on this endpoint's profile, and re-pointed (if at all) at this endpoint.
       endpoint.host, endpoint.port);
     conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
       .run(paidTotal, fee, sessionId);
     conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
       .run(market.activeAlgo(conn), nowSec, paidTotal, 'rent', sessionId, mrrId);
+    // Point the recovered rental at our endpoint/worker (the ambiguous create's override step
+    // may never have run). The money is recorded above first, so nothing here can lose it.
+    // This is a real MRR mutation, so it runs only in LIVE — a DRY-RUN/paused session must not
+    // silently re-point a rental. The row starts on the profile's shared worker, which is
+    // where an un-overridden rental runs, and takes the per-rental name only once the override
+    // lands: recording the intended name regardless would hide a failure from worker repair,
+    // which is what retries it.
+    if (!dryRun && wantWorker) {
+      try {
+        await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: wantWorker, pass: stratumPass, priority: 0 });
+        conn.prepare('UPDATE rentals SET worker_name = ? WHERE mrr_id = ?').run(wantWorker, mrrId);
+      } catch { /* left on the shared worker; worker repair retries it */ }
+    }
     alerts.fireOnce(conn, { kind: 'rental_adopted', key: `mrr${mrrId}`, now: nowSec * 1000, context: { mrr_id: mrrId, rig: s.rigId, sats: paidTotal } });
     // The orphan is now fully reconciled (tracked, billed, re-pointed) — lift the halt its
     // ambiguous create raised, so autopilot resumes unattended. Both key shapes can carry it:

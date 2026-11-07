@@ -180,3 +180,23 @@ test('a failed move keeps the old host recorded, so it is retried', async () => 
   assert.equal(db.get().prepare('SELECT pool_host FROM rentals WHERE mrr_id = 9404').get().pool_host, 'old-tunnel.gg');
   assert.equal(wr.planWorkerRepairs(db.get(), ENDPOINT).length, 1);
 });
+
+test('the notice is kept current: stragglers moved later add to it, and it ends with nothing left', async () => {
+  seedRental(9501, 'bc1qold.r9501');
+  seedRental(9502, 'bc1qold.r9502');
+  const ep = { ...ENDPOINT, worker_base: 'bc1qnew' };
+  await wr.repairWorkers(db.get(), mockClient((p) => p.includes('9502')), { endpoint: ep, runMode: 'live', now: 1 });
+  const read = () => db.get().prepare("SELECT context_json FROM alerts WHERE kind = 'worker_repaired'").all().map((a) => JSON.parse(a.context_json));
+  assert.deepEqual(read().map((c) => [c.repaired, c.failed]), [[1, 1]]);
+  await wr.repairWorkers(db.get(), mockClient(), { endpoint: ep, runMode: 'live', now: 2 });
+  assert.deepEqual(read().map((c) => [c.repaired, c.failed, c.address_changed]), [[2, 0, true]], 'one notice, now complete');
+});
+
+test('a rental moved off the shared username is reported as such, not as a lost-hashrate fix', async () => {
+  seedRental(9601, ENDPOINT.worker_base);   // left there by a failed override
+  await wr.repairWorkers(db.get(), mockClient(), { endpoint: ENDPOINT, runMode: 'live', now: 1 });
+  const ctx = JSON.parse(db.get().prepare("SELECT context_json FROM alerts WHERE kind = 'worker_repaired'").get().context_json);
+  assert.equal(ctx.from_shared, true);
+  assert.equal(ctx.address_changed, false, 'same address: nothing was being credited elsewhere');
+  assert.equal(ctx.host_changed, false);
+});

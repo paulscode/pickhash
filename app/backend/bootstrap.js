@@ -38,11 +38,22 @@ function endpointPoolName(ep, algo) {
   return `${prefix}:${ep.host}:${ep.port}`;
 }
 
+// One provisioning run at a time. The endpoint save in the UI and the engine's tick can both
+// ask for one at the same moment, and two runs that each find no pool would each create one,
+// leaving duplicates in the MRR account. Queued, the second finds the first's work in place.
+let queue = Promise.resolve();
+
 /**
  * Ensure the saved pool + profile exist for `ep` (a pool_endpoints row), pool at
  * priority 0. Records ids back on the endpoint. Returns { poolId, profileId, mutated }.
  */
-async function ensure(conn, client, ep) {
+function ensure(conn, client, ep) {
+  const run = queue.then(() => ensureNow(conn, client, ep));
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function ensureNow(conn, client, ep) {
   const algo = market.activeAlgo(conn);
   const name = endpointPoolName(ep, algo);
   let mutated = false;
@@ -60,13 +71,21 @@ async function ensure(conn, client, ep) {
     // override lands, and stays on it if the override fails, so a stale username here sends
     // hashrate to an address the user has moved away from. Bring it in line. Only when MRR
     // reports a username at all: with none to compare, there is nothing to say it is wrong.
+    // Best-effort: every rental gets its own override on top of this pool, and worker repair
+    // retries a failed one, so a refused update here costs a few seconds per new rental at
+    // worst. Letting it throw would stop the profile below from being recorded, and with no
+    // profile autopilot cannot rent at all.
     if (pool.user != null && String(pool.user) !== String(ep.worker_base)) {
       const was = String(pool.user);
-      const updated = await client.put(`/account/pool/${poolId}`, {
-        type: algo, name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',
-      });
-      mutated = true;
-      decision(conn, `update saved pool ${name} user ${was} -> ${ep.worker_base}`, updated);
+      try {
+        const updated = await client.put(`/account/pool/${poolId}`, {
+          type: algo, name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',
+        });
+        mutated = true;
+        decision(conn, `update saved pool ${name} user ${was} -> ${ep.worker_base}`, updated);
+      } catch (e) {
+        decision(conn, `update saved pool ${name} user ${was} -> ${ep.worker_base} FAILED: ${e && e.name}`, null);
+      }
     }
   } else {
     const created = await client.put('/account/pool', {

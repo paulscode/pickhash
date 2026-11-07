@@ -35,8 +35,8 @@ HashGG and the playit.gg tunnel never see the address. They only forward the gat
    mainnet address starting with `bc1`, `1` or `3`.
 2. **Check that Datum passes usernames through.** In Datum Gateway's configuration, *Pass Full
    Usernames* should be **on**, which is the default. If it is off, Convoy credits Datum's address
-   for everything and ignores the one Pickhash sends. In that case the Datum step below is the one
-   that matters, and the Pickhash step only renames workers.
+   for everything and the address Pickhash sends ends up at most in a worker name. In that case
+   the Datum step below is the one that matters.
 3. **Make sure Pickhash is in LIVE mode** if a session is running. Running rentals are only moved
    in LIVE; in DRY-RUN they stay on the old address until you switch back to LIVE.
 4. **Keep the old wallet.** Convoy pays under TIDES, so shares already submitted under the old
@@ -59,7 +59,9 @@ What happens:
   fine and every rental would then be credited to an address nobody holds. The check does not
   catch a valid address from the wrong network, such as a testnet `tb1…`.
 - **The endpoint is tested** with the username rentals will actually send, then saved.
-- **The MRR saved pool is updated** to the new address, so new rentals start under it.
+- **The MRR saved pool is updated** to the new address, so new rentals start under it. If MRR
+  refuses that update, nothing is lost: each new rental still gets its own setting moments after it
+  starts, and the refusal is logged under Decisions.
 - **Within about a minute**, on the next control tick, every running rental's pool setting is
   rewritten to `<new-address>.r<rental-id>` on the saved host. Each rig reconnects once, which costs a few seconds of
   shares. Its per-rig difficulty is kept. An alert confirms it: *"Moved N active rentals to your
@@ -105,9 +107,9 @@ it.
 |---|---|
 | *"That payout address fails its checksum"* | There is a typo. Copy the address again from the wallet. Nothing was saved, so the old address is still in use. |
 | *"The endpoint serves work for that username, but not for the one rentals send"* | Datum or Convoy refused `<address>.r<id>`. Check the address belongs to the BLAKE2b chain and that *Pass Full Usernames* is on. Nothing was saved. |
-| *"Endpoint saved, but the MRR pool/profile update failed"* | The new address is saved and running rentals still move. Pickhash retries the MRR update by itself every few minutes, so new rentals are not blocked for long. Saving again also retries it. |
+| *"Endpoint saved, but the MRR pool/profile update failed"* | The new address is saved and running rentals still move. Pickhash retries the MRR update by itself on the next tick, then every 5 minutes while MRR keeps refusing. Autopilot rents nothing new until it succeeds. Saving again also retries it. |
 | Rentals not moving | Pickhash is in DRY-RUN. Switch to LIVE. |
-| Rigs offline after the Datum restart | Check the gateway is running and synced. If the playit.gg address changed while it was down, Pickhash moves the rentals to the new address automatically once HashGG reports it. |
+| Rigs offline after the Datum restart | Check the gateway is running and synced. If the playit.gg tunnel's host or port changed while the gateway was down, Pickhash moves the rentals to the new one automatically once HashGG reports it. |
 
 ## Changing the tunnel at the same time
 

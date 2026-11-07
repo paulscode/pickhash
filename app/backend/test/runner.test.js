@@ -565,18 +565,20 @@ test('tickOnce isolates a throwing top-up cycle (logs it, still runs auto-extend
   } finally { restore.forEach((r) => r()); }
 });
 
-test('tickOnce retries the MRR pool/profile setup for a saved endpoint that has none, at a bounded rate', async () => {
-  // A save whose follow-up setup failed leaves the endpoint without a profile, and autopilot
-  // cannot rent without one. Nothing on screen says so; the tick has to finish the job.
+test('tickOnce keeps the MRR pool/profile in step with the saved endpoint, retrying failures at a bounded rate', async () => {
+  // Endpoint repair and DuckDNS rewrite the host in place, and a save whose follow-up setup
+  // failed leaves no profile. Each must be re-provisioned, or new rentals start on a stale pool.
   const bootstrap = require('../bootstrap');
   const runner = require('../engine/runner');
   const c = db.get();
   const sid = seedAutopilot(c);
   c.prepare('DELETE FROM pool_endpoints').run();
-  c.prepare("INSERT INTO pool_endpoints (algo,host,port,worker_base,mrr_profile_id,active) VALUES ('sha256ab','a.gg',3333,'bc1qx',NULL,1)").run();
+  c.prepare("INSERT INTO pool_endpoints (algo,host,port,worker_base,mrr_profile_id,active) VALUES ('sha256ab','a.gg',3333,'bc1qx',7,1)").run();
   runner._resetEnsureRetry();
+  let fail = false;
+  const ensure = spy({ poolId: 1, profileId: 7, mutated: false });
   const restore = [
-    stub(bootstrap, 'ensure', spy({ poolId: 1, profileId: 2, mutated: true })),
+    stub(bootstrap, 'ensure', async (...a) => { const r = await ensure(...a); if (fail) throw new Error('mrr down'); return r; }),
     stub(autopilot, 'runCycle', spy({ ran: false })),
     stub(extend, 'runAutoExtend', spy({ ran: false })),
   ];
@@ -584,13 +586,40 @@ test('tickOnce retries the MRR pool/profile setup for a saved endpoint that has 
     const snapshot = { session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid), rentals: [], fetch_ok: {} };
     const T = 9_000_000;
     await tickOnce(c, DATA, snapshot, { now: T, client: {} });
-    assert.equal(bootstrap.ensure.calls.length, 1);
+    assert.equal(ensure.calls.length, 1, 'checked once after start');
     await tickOnce(c, DATA, snapshot, { now: T + 60_000, client: {} });
-    assert.equal(bootstrap.ensure.calls.length, 1, 'not retried every tick');
-    await tickOnce(c, DATA, snapshot, { now: T + 5 * 60_000, client: {} });
-    assert.equal(bootstrap.ensure.calls.length, 2, 'retried after the back-off');
-    c.prepare('UPDATE pool_endpoints SET mrr_profile_id = 7').run();
-    await tickOnce(c, DATA, snapshot, { now: T + 60 * 60_000, client: {} });
-    assert.equal(bootstrap.ensure.calls.length, 2, 'an endpoint that has a profile is left alone');
+    assert.equal(ensure.calls.length, 1, 'nothing changed, nothing re-run');
+    c.prepare("UPDATE pool_endpoints SET host = 'b.gg'").run();   // endpoint repair moved it
+    await tickOnce(c, DATA, snapshot, { now: T + 120_000, client: {} });
+    assert.equal(ensure.calls.length, 2, 're-provisioned for the new host straight away');
+    fail = true;
+    c.prepare("UPDATE pool_endpoints SET worker_base = 'bc1qy'").run();
+    await tickOnce(c, DATA, snapshot, { now: T + 180_000, client: {} });
+    assert.equal(ensure.calls.length, 3);
+    await tickOnce(c, DATA, snapshot, { now: T + 240_000, client: {} });
+    assert.equal(ensure.calls.length, 3, 'a failure is not retried every tick');
+    fail = false;
+    await tickOnce(c, DATA, snapshot, { now: T + 180_000 + 5 * 60_000, client: {} });
+    assert.equal(ensure.calls.length, 4, 'retried after the back-off');
   } finally { restore.forEach((r) => r()); c.prepare('DELETE FROM pool_endpoints').run(); }
+});
+
+test('once shutdown has begun, a tick still records but starts no repair, top-up or extension', async () => {
+  const shutdown = require('../shutdown');
+  const c = db.get();
+  const sid = seedAutopilot(c);
+  const restore = [
+    stub(workerRepair, 'repairWorkers', spy({ ran: false })),
+    stub(autopilot, 'runCycle', spy({ ran: true })),
+    stub(extend, 'runAutoExtend', spy({ ran: false })),
+  ];
+  try {
+    await shutdown.drain(10);
+    const snapshot = { session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid), rentals: [], fetch_ok: {} };
+    const r = await tickOnce(c, DATA, snapshot, { now: 5_000_000, client: {} });
+    assert.equal(r.stopping, true);
+    assert.equal(workerRepair.repairWorkers.calls.length, 0);
+    assert.equal(autopilot.runCycle.calls.length, 0);
+    assert.equal(extend.runAutoExtend.calls.length, 0);
+  } finally { restore.forEach((x) => x()); shutdown._reset(); }
 });

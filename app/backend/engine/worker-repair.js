@@ -101,20 +101,39 @@ async function repairWorkers(conn, client, { endpoint, runMode, now } = {}) {
     repaired += 1;
   }
   if (repaired) {
-    // Keyed on the corrected name and endpoint so a later drift (a changed address or host)
-    // can raise its own notice rather than being silenced by this one.
-    alerts.fireOnce(conn, {
-      kind: 'worker_repaired', key: `${plan[0].to}@${endpoint.host}:${endpoint.port}`, now: nowMs,
-      context: {
-        repaired, failed, sample: { mrr_id: plan[0].mrr_id, from: plan[0].from, to: plan[0].to },
-        // A new payout address and a corrected name format are different news for the user:
-        // one confirms a change they made, the other reports a fault that cost them hashrate.
-        address_changed: endpoints.poolAddress(plan[0].from || '') !== endpoints.poolAddress(plan[0].to),
-        address: endpoints.poolAddress(plan[0].to),
-        host_changed: plan.some((p) => p.hostMoved),
-        endpoint: `${endpoint.host}:${endpoint.port}`,
-      },
-    });
+    // One notice per destination (address + endpoint) per session, kept current: a pass that
+    // moves stragglers left by an earlier one adds to its count and updates how many are still
+    // to move, so the notice reads "nothing left" once they have all gone. A later change to a
+    // different address or host raises its own notice.
+    const address = endpoints.poolAddress(plan[0].to);
+    const key = `${address}@${endpoint.host}:${endpoint.port}#s${plan[0].session_id}`;
+    const context = {
+      repaired, failed, sample: { mrr_id: plan[0].mrr_id, from: plan[0].from, to: plan[0].to },
+      // A new payout address and a corrected name format are different news for the user:
+      // one confirms a change they made, the other reports a fault that cost them hashrate.
+      address_changed: plan.some((p) => endpoints.poolAddress(p.from || '') !== endpoints.poolAddress(p.to)),
+      address,
+      host_changed: plan.some((p) => p.hostMoved),
+      // A failed override leaves a rental on the shared username, which pools credit to the
+      // same address: worth fixing for per-rental attribution, but nothing was being lost.
+      from_shared: plan.some((p) => p.from === endpoint.worker_base),
+      endpoint: `${endpoint.host}:${endpoint.port}`,
+    };
+    const prior = conn.prepare("SELECT id, context_json FROM alerts WHERE kind = 'worker_repaired' AND key = ?").get(key);
+    if (prior) {
+      let was = {};
+      try { was = JSON.parse(prior.context_json || '{}') || {}; } catch { /* rewrite it whole */ }
+      conn.prepare('UPDATE alerts SET context_json = ? WHERE id = ?').run(JSON.stringify({
+        ...context,
+        repaired: (was.repaired || 0) + repaired,
+        address_changed: !!was.address_changed || context.address_changed,
+        host_changed: !!was.host_changed || context.host_changed,
+        from_shared: !!was.from_shared || context.from_shared,
+        sample: was.sample || context.sample,
+      }), prior.id);
+    } else {
+      alerts.fireOnce(conn, { kind: 'worker_repaired', key, now: nowMs, context });
+    }
   }
   return { ran: true, repaired, failed };
 }
