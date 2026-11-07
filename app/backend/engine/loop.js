@@ -15,6 +15,7 @@
  */
 const observeModule = require('./observe');
 const market = require('../market');
+const shutdown = require('../shutdown');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -79,7 +80,13 @@ function createLoop(opts = {}) {
 
   async function tick() {
     if (running) { log({ event: 'tick_skipped' }); return { skipped: true }; }   // overlap guard
+    // Shutting down: begin nothing. A tick already running is held, so it gets to finish.
+    if (shutdown.requested()) return { skipped: true, stopping: true };
     running = true;
+    return shutdown.hold(tickBody);
+  }
+
+  async function tickBody() {
     try {
       const now = nowFn();
       let snapshot = null;

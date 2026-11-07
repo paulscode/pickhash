@@ -87,7 +87,13 @@ async function repairWorkers(conn, client, { endpoint, runMode, now } = {}) {
     // notice rather than being silenced by this one.
     alerts.fireOnce(conn, {
       kind: 'worker_repaired', key: plan[0].to, now: nowMs,
-      context: { repaired, failed, sample: { mrr_id: plan[0].mrr_id, from: plan[0].from, to: plan[0].to } },
+      context: {
+        repaired, failed, sample: { mrr_id: plan[0].mrr_id, from: plan[0].from, to: plan[0].to },
+        // A new payout address and a corrected name format are different news for the user:
+        // one confirms a change they made, the other reports a fault that cost them hashrate.
+        address_changed: endpoints.poolAddress(plan[0].from || '') !== endpoints.poolAddress(plan[0].to),
+        address: endpoints.poolAddress(plan[0].to),
+      },
     });
   }
   return { ran: true, repaired, failed };

@@ -27,10 +27,15 @@ const hashgg = require('../hashgg');
 const duckdns = require('../duckdns');
 const mrr = require('../mrr');
 const endpoints = require('../endpoints');
+const bootstrap = require('../bootstrap');
 
 // runCycle reasons that mean this tick saw neither the market nor our own rentals reliably, so its
 // lack of a hold is no evidence the hold is over (and must not resolve a standing alert).
 const UNKNOWN_CYCLE_REASONS = new Set(['no_client', 'no_endpoint', 'needs_reconcile', 'fetch_not_ok', 'market_fetch_failed']);
+
+// How often to retry the MRR pool/profile setup for a saved endpoint that does not have one.
+const ENSURE_RETRY_MS = 5 * 60 * 1000;
+let lastEnsureAt = 0;
 
 /** Close a session whose rentals have all ended; prompt disputes for under-delivered rigs. */
 async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
@@ -95,7 +100,9 @@ async function runLifecycle(conn, snapshot, nowMs, opts = {}) {
 function rehydrateState(conn) {
   const rentals = {};
   const active = conn.prepare(
-    "SELECT r.mrr_id, r.health, r.avg_percent, r.start_ts FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state = 'active' AND r.ended = 0",
+    // winding_down too: a session being stopped still has paid rentals running, and a restart
+    // during that window would otherwise reset them to 'pending' and resolve their alerts.
+    "SELECT r.mrr_id, r.health, r.avg_percent, r.start_ts FROM rentals r JOIN sessions s ON s.id = r.session_id WHERE s.state IN ('active', 'winding_down') AND r.ended = 0",
   ).all();
   for (const r of active) {
     const startMs = (r.start_ts || 0) * 1000;
@@ -192,6 +199,20 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     });
     if (r && r.ran) log({ event: 'worker_repair', repaired: r.repaired, failed: r.failed });
   } catch (e) { log({ event: 'worker_repair_error', message: String(e && e.message) }); }
+
+  // A saved endpoint with no MRR profile yet: the save succeeded but the pool/profile setup
+  // that follows it did not (an MRR blip, the tab closed). Autopilot cannot rent without a
+  // profile and stops with 'no_endpoint', which says nothing on screen, so a session would
+  // sit below target until someone pressed save again. Retry the setup here instead. It is
+  // idempotent, and bounded to one attempt every few minutes so an MRR outage is not hammered.
+  try {
+    const ep = endpoints.active(conn);
+    if (client && ep && !ep.mrr_profile_id && now - lastEnsureAt >= ENSURE_RETRY_MS) {
+      lastEnsureAt = now;
+      const r = await bootstrap.ensure(conn, client, ep);
+      log({ event: 'bootstrap_retry', ok: true, profile_id: r.profileId });
+    }
+  } catch (e) { log({ event: 'bootstrap_retry', ok: false, message: String(e && e.message) }); }
 
   try {
     if (client && !skipSpendCycle) {
@@ -306,4 +327,4 @@ function startEngine(conn, dataDir, opts = {}) {
   return loop;
 }
 
-module.exports = { startEngine, tickOnce, runLifecycle, rehydrateState };
+module.exports = { startEngine, tickOnce, runLifecycle, rehydrateState, _resetEnsureRetry: () => { lastEnsureAt = 0; } };

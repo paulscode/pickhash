@@ -166,3 +166,11 @@ test('adoptStrays in DRY-RUN records the billed money but does NOT re-point the 
   assert.ok(db.get().prepare('SELECT 1 FROM rentals WHERE mrr_id = 9601').get(), 'the orphan is still tracked + billed in DRY-RUN');
   assert.equal(client.state.puts.filter((p) => /\/pool\/0$/.test(p[0])).length, 0, 'no pool re-point PUT fired in DRY-RUN');
 });
+
+test('an adopted rental whose re-point fails is recorded on the shared worker, so worker repair retries it', async () => {
+  const client = mockClient({ '/rental/9003': () => detail(9003) });
+  client.put = async () => { throw new Error('mrr down'); };
+  const r = await adopt.adoptStrays(db.get(), client, { sessionId, endpoint, adopt: [{ mrrId: '9003', rigId: 42 }], nowSec: 5000 });
+  assert.deepEqual(r.adopted, [9003], 'the money is still recorded');
+  assert.equal(db.get().prepare('SELECT worker_name FROM rentals WHERE mrr_id = 9003').get().worker_name, 'bc1qx.phash');
+});

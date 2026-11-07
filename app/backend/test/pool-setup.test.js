@@ -70,8 +70,17 @@ test('pool-test rejects missing/invalid inputs', async () => {
   assert.equal((await post('/api/setup/pool-test', { host: '1.2.3.4', port: 123, user: 'bad user!' })).json.error, 'invalid_worker');
 });
 
+test('pool-test refuses a payout address with a typo before probing or saving anything', async () => {
+  const before = db.get().prepare('SELECT COUNT(*) AS n FROM pool_endpoints').get().n;
+  // One character off a valid address: the gateway would serve work for it regardless.
+  const r = await post('/api/setup/pool-test', { host: '127.0.0.1', port: stratumPort, user: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5.phash' });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, 'invalid_address');
+  assert.equal(db.get().prepare('SELECT COUNT(*) AS n FROM pool_endpoints').get().n, before, 'nothing saved');
+});
+
 test('pool-test runs our authoritative probe, flags bare IP, and stores the endpoint + difficulty', async () => {
-  const r = await post('/api/setup/pool-test', { host: '127.0.0.1', port: stratumPort, user: 'bc1qaddr.phash' });
+  const r = await post('/api/setup/pool-test', { host: '127.0.0.1', port: stratumPort, user: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.phash' });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, true, 'our probe confirmed work');
   assert.equal(r.json.probe.gotWork, true);
@@ -84,13 +93,13 @@ test('pool-test runs our authoritative probe, flags bare IP, and stores the endp
   const row = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
   assert.equal(row.host, '127.0.0.1');
   assert.equal(row.port, stratumPort);
-  assert.equal(row.worker_base, 'bc1qaddr.phash');   // full username base (address + worker)
+  assert.equal(row.worker_base, 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.phash');   // full username base (address + worker)
   assert.equal(row.stratum_diff, 131072);
 });
 
 test('a failing pool-test does not persist or clobber the working endpoint', async () => {
   // Port 1 is closed -> the probe gets no work; the previously-stored endpoint must survive.
-  const r = await post('/api/setup/pool-test', { host: '127.0.0.1', port: 1, user: 'bc1qaddr.w' });
+  const r = await post('/api/setup/pool-test', { host: '127.0.0.1', port: 1, user: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.w' });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, false);
   const row = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
@@ -99,7 +108,7 @@ test('a failing pool-test does not persist or clobber the working endpoint', asy
 });
 
 test('pool-test accepts a pasted full stratum URL with an empty port field', async () => {
-  const r = await post('/api/setup/pool-test', { host: `stratum+tcp://127.0.0.1:${stratumPort}`, port: '', user: 'bc1qaddr.w' });
+  const r = await post('/api/setup/pool-test', { host: `stratum+tcp://127.0.0.1:${stratumPort}`, port: '', user: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.w' });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, true, 'the pasted URL parsed to a working host:port');
 });

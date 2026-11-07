@@ -7,6 +7,9 @@ services:
     image: paulscode/pickhash:dev
     container_name: pickhash
     restart: unless-stopped
+    # Room for a clean stop: Pickhash waits for a rental purchase or extension already in
+    # flight to be recorded before it exits (up to 45s). Docker's default 10s would cut that off.
+    stop_grace_period: 60s
     ports:
       # Loopback-only by default: the dashboard password is optional, so don't expose
       # the money-spending API on the LAN out of the box. To reach it from another host,

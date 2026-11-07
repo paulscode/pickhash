@@ -30,6 +30,7 @@ const accounting = require('./engine/accounting');
 const ledgerFetch = require('./engine/ledger');
 const decide = require('./engine/decide');
 const { MrrAmbiguousError } = require('./mrr-client');
+const shutdown = require('./shutdown');
 const algos = require('./algos');
 const units = require('./units');
 const endpoints = require('./endpoints');
@@ -149,7 +150,7 @@ async function rentOne(client, intent, endpoint, opts = {}) {
   // may have been billed for a rental we can no longer address, so halt for reconciliation
   // rather than persist a NaN handle.
   if (!Number.isInteger(mrrId) || mrrId <= 0) throw new MrrAmbiguousError('create returned no usable rental id');
-  const worker = endpoints.rentalWorker(endpoint.worker_base, mrrId);
+  let worker = endpoints.rentalWorker(endpoint.worker_base, mrrId);
   // Carries this rig's difficulty request when there is one, else the inert 'x' this
   // always sent. Falls back to 'x' rather than undefined so an intent from an older
   // stored quote cannot put a literal "undefined" in the password field.
@@ -168,6 +169,11 @@ async function rentOne(client, intent, endpoint, opts = {}) {
       // The rental still runs on the profile's shared worker; we just lose per-rental
       // attribution. Note it rather than fail the whole session.
       poolOverride = 'fallback_shared_worker';
+      // Record the username it is actually running under, not the one we meant to send.
+      // Recording the intended name would tell worker repair this rental is already right,
+      // so the override would never be retried and the rental would mine on the shared
+      // pool for its whole paid duration — under whatever address that pool was saved with.
+      worker = endpoint.worker_base;
     }
   }
   // Optional Ocean fallback at priority 1. Best-effort: a failure here just means this rental has no
@@ -236,6 +242,13 @@ function repackShortfall(stored, attemptedIds, shortfallTh) {
  * returns { needs_reconfirm, quote } without executing. Throws SessionError otherwise.
  */
 async function startSession(conn, client, quoteId, opts = {}) {
+  // Held, so a shutdown waits for the rental being created to be recorded before it closes
+  // the database; and refused outright once shutdown has begun.
+  if (shutdown.requested()) throw new SessionError('shutting_down');
+  return shutdown.hold(() => startSessionNow(conn, client, quoteId, opts));
+}
+
+async function startSessionNow(conn, client, quoteId, opts = {}) {
   const dryRun = opts.dryRun !== false;   // default to the safe path unless explicitly LIVE
 
   if (starting) throw new SessionError('session_in_progress');
@@ -355,6 +368,9 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
     let shortfallTh = 0;
 
     for (const intent of intents) {
+      // Shutting down: stop between rentals rather than be cut off in the middle of one. The
+      // rentals already made are recorded; an autopilot session tops up the rest after restart.
+      if (!dryRun && shutdown.requested()) { halted = true; haltReason = 'shutting_down'; break; }
       attempted.add(intent.rigId);
       const cost = intent.paidSats + intent.feeSats;
       planned.push({

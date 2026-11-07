@@ -564,3 +564,33 @@ test('tickOnce isolates a throwing top-up cycle (logs it, still runs auto-extend
     assert.equal(extend.runAutoExtend.calls.length, 1, 'auto-extend still runs after a top-up error');
   } finally { restore.forEach((r) => r()); }
 });
+
+test('tickOnce retries the MRR pool/profile setup for a saved endpoint that has none, at a bounded rate', async () => {
+  // A save whose follow-up setup failed leaves the endpoint without a profile, and autopilot
+  // cannot rent without one. Nothing on screen says so; the tick has to finish the job.
+  const bootstrap = require('../bootstrap');
+  const runner = require('../engine/runner');
+  const c = db.get();
+  const sid = seedAutopilot(c);
+  c.prepare('DELETE FROM pool_endpoints').run();
+  c.prepare("INSERT INTO pool_endpoints (algo,host,port,worker_base,mrr_profile_id,active) VALUES ('sha256ab','a.gg',3333,'bc1qx',NULL,1)").run();
+  runner._resetEnsureRetry();
+  const restore = [
+    stub(bootstrap, 'ensure', spy({ poolId: 1, profileId: 2, mutated: true })),
+    stub(autopilot, 'runCycle', spy({ ran: false })),
+    stub(extend, 'runAutoExtend', spy({ ran: false })),
+  ];
+  try {
+    const snapshot = { session: c.prepare('SELECT * FROM sessions WHERE id=?').get(sid), rentals: [], fetch_ok: {} };
+    const T = 9_000_000;
+    await tickOnce(c, DATA, snapshot, { now: T, client: {} });
+    assert.equal(bootstrap.ensure.calls.length, 1);
+    await tickOnce(c, DATA, snapshot, { now: T + 60_000, client: {} });
+    assert.equal(bootstrap.ensure.calls.length, 1, 'not retried every tick');
+    await tickOnce(c, DATA, snapshot, { now: T + 5 * 60_000, client: {} });
+    assert.equal(bootstrap.ensure.calls.length, 2, 'retried after the back-off');
+    c.prepare('UPDATE pool_endpoints SET mrr_profile_id = 7').run();
+    await tickOnce(c, DATA, snapshot, { now: T + 60 * 60_000, client: {} });
+    assert.equal(bootstrap.ensure.calls.length, 2, 'an endpoint that has a profile is left alone');
+  } finally { restore.forEach((r) => r()); c.prepare('DELETE FROM pool_endpoints').run(); }
+});

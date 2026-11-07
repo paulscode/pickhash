@@ -32,6 +32,7 @@ const messaging = require('./messaging');
 const alerts = require('./alerts');
 const dispute = require('./engine/dispute');
 const endpoints = require('./endpoints');
+const payoutAddress = require('./address');
 const diff = require('./diff');
 const fx = require('./fx');
 
@@ -260,6 +261,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // (".phash", ".") would name every rental after nothing. Rejected here, at the only
     // door worker_base comes through, so nothing downstream has to handle the empty case.
     if (!endpoints.rentalWorker(user, 1)) return sendJson(res, 400, { error: 'invalid_worker' });
+    // A mistyped payout address is refused here because nothing later will catch it: the
+    // gateway passes usernames through unchecked, so the probes below would get work for
+    // it and every rental would then be credited to an address nobody holds.
+    if (payoutAddress.check(endpoints.poolAddress(user)) === 'invalid') {
+      return sendJson(res, 400, { error: 'invalid_address' });
+    }
 
     // Light throttle so this authenticated endpoint can't be turned into a fast internal scanner.
     const nowMs = Date.now();

@@ -462,7 +462,7 @@ test('POST /api/run-mode: going live is refused until a dashboard password exist
 
 test('POST /api/setup/pool-test: refuses a link-local / cloud-metadata target', async () => {
   process.env.DASHBOARD_PASSWORD = 'x';   // managed -> pass the password-before-probe gate
-  const r = await call('POST', '/api/setup/pool-test', { host: '169.254.169.254', port: 80, user: 'bc1qaddr.w' });
+  const r = await call('POST', '/api/setup/pool-test', { host: '169.254.169.254', port: 80, user: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.w' });
   assert.equal(r.status, 400);
   assert.equal(r.json.error, 'endpoint_not_allowed');
   delete process.env.DASHBOARD_PASSWORD;

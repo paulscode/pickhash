@@ -124,6 +124,22 @@ test('rentOne skips the fallback pool when disabled', async () => {
   assert.ok(!client.state.puts.some((c) => /\/pool\/1$/.test(c[0])), 'no pool/1 override issued');
 });
 
+test('rentOne records the shared worker when the per-rental override fails, so worker repair retries it', async () => {
+  const client = mockClient();
+  const realPut = client.put.bind(client);
+  client.put = async (p, params) => {
+    if (/^\/rental\/\d+\/pool\/0$/.test(p)) { const e = new Error('nope'); e.name = 'MrrError'; throw e; }
+    return realPut(p, params);
+  };
+  const endpoint = { host: 'ab.example.gg', port: 26596, worker_base: 'bc1qabc.phash', mrr_profile_id: 953073 };
+  const intent = { rigId: 42, lengthHours: 3, rateCapUnitDay: 0.001, advertisedTh: 4 };
+  const res = await session.rentOne(client, intent, endpoint, { fallbackPool: null });
+  assert.equal(res.poolOverride, 'fallback_shared_worker');
+  // What the rental is really running under — the profile's saved pool — not the intended
+  // bc1qabc.r<id>, which would make worker repair think there is nothing to fix.
+  assert.equal(res.worker, 'bc1qabc.phash');
+});
+
 test('planIntents produces one intent per packed rig at the quote duration', async () => {
   const client = mockClient();
   const q = await makeQuote(client);

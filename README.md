@@ -64,6 +64,8 @@ including your encrypted marketplace credentials — lives in `./data`; protect 
 ## How it works
 
 See [docs/how-it-works.md](docs/how-it-works.md) for a plain-language walkthrough for non-technical users.
+To move rented hashrate to a new payout address without stopping a session, see
+[docs/changing-payout-address.md](docs/changing-payout-address.md).
 
 ## Contributing
 

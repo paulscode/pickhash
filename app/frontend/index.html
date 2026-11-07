@@ -1043,7 +1043,7 @@
     <div class="bg-navy-900 border border-navy-700 rounded-lg p-6 space-y-4 card-hover">
       <h2 class="font-mono text-neon-ember text-lg">Stratum endpoint</h2>
       <p class="font-mono text-xs text-gray-400">Current: <span class="text-white" x-text="seCurrent"></span></p>
-      <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the payout address (a bare btcaddress is fine; btcaddress.worker also works). Each rig reports as btcaddress.r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving; new rentals use the saved endpoint.</p>
+      <p class="font-mono text-[11px] text-gray-500 leading-relaxed">Where rented hashrate points, plus the payout address (a bare btcaddress is fine; btcaddress.worker also works). Each rig reports as btcaddress.r&lt;rental-id&gt;. Testing confirms the endpoint serves work before saving. New rentals use the saved endpoint, and in LIVE mode a changed payout address is also applied to running rentals within about a minute (each rig reconnects once).</p>
       <button type="button" x-show="seHashggAvail" x-cloak @click="seDetect()" :disabled="seBusy" class="bg-neon-flame/10 border border-neon-flame/30 text-neon-flame rounded px-3 py-2 text-sm hover:bg-neon-flame/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Auto-detect HashGG</button>
       <p x-show="detectNote" x-cloak class="text-xs font-mono text-neon-green" x-text="detectNote"></p>
       <div class="grid grid-cols-3 gap-2">

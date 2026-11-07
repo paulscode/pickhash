@@ -55,6 +55,19 @@ async function ensure(conn, client, ep) {
   let poolId;
   if (pool) {
     poolId = pool.id;
+    // The pool is found by host:port, so a payout address changed on the same tunnel finds
+    // the pool saved under the OLD address. Every rental starts on this pool until its own
+    // override lands, and stays on it if the override fails, so a stale username here sends
+    // hashrate to an address the user has moved away from. Bring it in line. Only when MRR
+    // reports a username at all: with none to compare, there is nothing to say it is wrong.
+    if (pool.user != null && String(pool.user) !== String(ep.worker_base)) {
+      const was = String(pool.user);
+      const updated = await client.put(`/account/pool/${poolId}`, {
+        type: algo, name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',
+      });
+      mutated = true;
+      decision(conn, `update saved pool ${name} user ${was} -> ${ep.worker_base}`, updated);
+    }
   } else {
     const created = await client.put('/account/pool', {
       type: algo, name, host: ep.host, port: ep.port, user: ep.worker_base, pass: 'x',

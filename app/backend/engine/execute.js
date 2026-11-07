@@ -13,6 +13,7 @@ const { rentOne, persistRental, insertDecision, resolveFallbackPool } = require(
 const { MrrAmbiguousError } = require('../mrr-client');
 const alerts = require('../alerts');
 const config = require('../config');
+const shutdown = require('../shutdown');
 
 function cost(a) { return (a.paidSats || 0) + (a.feeSats || 0); }
 
@@ -44,6 +45,7 @@ async function execute(conn, client, ctx) {
   // creates nearly all rentals in practice, so without this the fallback would never actually attach.
   const fallbackPool = resolveFallbackPool(conn);
   for (const a of gateResult.authorized || []) {
+    if (shutdown.requested()) { halted = true; haltReason = 'shutting_down'; break; }
     // Intent-first audit row — the reconciliation anchor if we crash mid-create.
     insertDecision(conn, sessionId, false, {
       proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_unit_day: a.rateCapUnitDay, price_unit: a.priceUnit, worker_base: endpoint.worker_base },

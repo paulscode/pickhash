@@ -64,7 +64,7 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     const lengthHours = num(d.length) || 0;
     const start = num(d.start) > 0 ? num(d.start) : nowSec;
     const end = num(d.end) > 0 ? num(d.end) : start + Math.round(lengthHours * 3600);
-    const worker = endpoints.rentalWorker(endpoint.worker_base, mrrId);
+    const wantWorker = endpoints.rentalWorker(endpoint.worker_base, mrrId);
     const adv = advertisedTh(d);
     const rig = await rigRecord(client, d, s.rigId);
     // Same rule as a normal rental: only ask for a difficulty when the endpoint was
@@ -80,6 +80,20 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     // Back out the per-TH·day rate (fee-exclusive) so an adopted rig contributes to the hash-value
     // pay-rate like any normal rental: base_btc = rate × adv × (lengthHours/24).
     const rate = adv > 0 && lengthHours > 0 ? (base / 1e8) / (adv * (lengthHours / 24)) : null;
+    // Point the recovered rental at our endpoint/worker (the ambiguous create's override step
+    // may never have run). This is a real MRR mutation, so it runs only in LIVE — recording the
+    // already-billed money below is correct in any mode, but a DRY-RUN/paused session must not
+    // silently re-point a rental. Done before the row is written so the row can say which
+    // username the rental is really on: a failed override leaves it on the profile's shared
+    // worker, and recording the intended name instead would hide it from worker repair, which
+    // is what retries it.
+    let worker = endpoint.worker_base;
+    if (!dryRun && wantWorker) {
+      try {
+        await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: wantWorker, pass: stratumPass, priority: 0 });
+        worker = wantWorker;
+      } catch { /* left on the shared worker; worker repair retries it */ }
+    }
     conn.prepare(
       `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                             paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name, stratum_pass)
@@ -89,13 +103,6 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
       .run(paidTotal, fee, sessionId);
     conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
       .run(market.activeAlgo(conn), nowSec, paidTotal, 'rent', sessionId, mrrId);
-    // Point the recovered rental at our endpoint/worker (the ambiguous create's override step
-    // may never have run); if this fails, health will flag under-delivery. This is a real MRR
-    // mutation, so it runs only in LIVE — recording the already-billed money above is correct in
-    // any mode, but a DRY-RUN/paused session must not silently re-point a rental.
-    if (!dryRun) {
-      try { await client.put(`/rental/${mrrId}/pool/0`, { host: endpoint.host, port: endpoint.port, user: worker, pass: stratumPass, priority: 0 }); } catch { /* health flags it */ }
-    }
     alerts.fireOnce(conn, { kind: 'rental_adopted', key: `mrr${mrrId}`, now: nowSec * 1000, context: { mrr_id: mrrId, rig: s.rigId, sats: paidTotal } });
     // The orphan is now fully reconciled (tracked, billed, re-pointed) — lift the halt its
     // ambiguous create raised, so autopilot resumes unattended. Both key shapes can carry it:

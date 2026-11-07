@@ -71,3 +71,41 @@ test('bootstrap creates pool+profile+attach, records the audit trail, then is id
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('bootstrap brings a saved pool under an old payout address in line, on the same host:port', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickhash-boot-'));
+  try {
+    db.open(dir);
+    const conn = db.get();
+    conn.prepare('INSERT INTO pool_endpoints (id, host, port, worker_base, active) VALUES (1, ?, ?, ?, 1)')
+      .run('host.example', 26596, 'bc1qnewaddr');
+    const ep = conn.prepare('SELECT * FROM pool_endpoints WHERE id = 1').get();
+    const client = stubClient();
+    // Already provisioned under the address the user just moved away from.
+    client.state.pools.push({ id: 'POOL1', name: 'pickhash:host.example:26596', user: 'bc1qoldaddr' });
+    client.state.profiles.push({ id: 'PROF1', name: 'pickhash:host.example:26596', pools: [{ priority: '0', poolid: 'POOL1' }] });
+    const basePut = client.put.bind(client);
+    const sent = [];
+    client.put = async (p, params) => {
+      sent.push([p, params]);
+      const m = p.match(/^\/account\/pool\/([^/]+)$/);
+      if (m) { const pool = client.state.pools.find((x) => x.id === m[1]); pool.user = params.user; return { id: m[1], success: true }; }
+      return basePut(p, params);
+    };
+
+    const r1 = await bootstrap.ensure(conn, client, ep);
+    assert.equal(r1.mutated, true);
+    assert.deepEqual(sent.map((s) => s[0]), ['/account/pool/POOL1'], 'updates the pool in place, creates nothing');
+    assert.equal(sent[0][1].user, 'bc1qnewaddr');
+    assert.equal(sent[0][1].host, 'host.example');
+    assert.ok(conn.prepare('SELECT note FROM decisions').all().some((d) => d.note.startsWith('update saved pool') && d.note.endsWith('bc1qoldaddr -> bc1qnewaddr')));
+
+    sent.length = 0;
+    const r2 = await bootstrap.ensure(conn, client, ep);
+    assert.equal(r2.mutated, false);
+    assert.equal(sent.length, 0, 'idempotent once the username matches');
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

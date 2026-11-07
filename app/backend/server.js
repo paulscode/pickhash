@@ -11,6 +11,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const db = require('./db');
+const shutdownGate = require('./shutdown');
 const api = require('./api');
 
 const MAX_BODY_BYTES = 64 * 1024;   // JSON request bodies are small; cap to resist abuse
@@ -212,15 +213,27 @@ function start() {
   try { engine = require('./engine/runner').startEngine(db.get(), DATA_DIR, { log: engineLog }); }
   catch (e) { console.error('[pickhash] engine failed to start:', e && e.message); }
 
-  // Clean shutdown: stop accepting connections, checkpoint + close the DB, exit.
-  // The container entrypoint forwards SIGTERM here.
-  const shutdown = () => {
+  // Clean shutdown. The container entrypoint forwards SIGTERM here, on every update and
+  // service restart, which lands in the middle of whatever the engine is doing. So first stop
+  // starting new work and wait for a rental purchase or extension already in flight to be
+  // recorded (see shutdown.js), then stop accepting connections, close the DB, and exit.
+  // The wait is bounded under StartOS's 60s SIGTERM grace; a plain Docker stop allows only 10s
+  // unless the compose file raises it (docker-compose.yml sets stop_grace_period).
+  const DRAIN_MS = 45 * 1000;
+  let closing = false;
+  const stop = async () => {
+    if (closing) return;
+    closing = true;
     if (engine) { try { engine.stop(); } catch { /* best effort */ } }
-    server.close(() => { db.close(); process.exit(0); });
-    setTimeout(() => { db.close(); process.exit(0); }, 5000).unref();
+    const drained = await shutdownGate.drain(DRAIN_MS);
+    if (!drained) console.error('[pickhash] shutdown: work still in flight after 45s; closing anyway');
+    let done = false;
+    const finish = () => { if (done) return; done = true; db.close(); process.exit(0); };
+    server.close(finish);
+    setTimeout(finish, 2000).unref();
   };
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
 }
 
 if (require.main === module) start();

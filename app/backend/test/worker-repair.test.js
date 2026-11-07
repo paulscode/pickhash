@@ -131,4 +131,14 @@ test('an address change under a running session is repaired the same way', async
   const client = mockClient();
   await wr.repairWorkers(db.get(), client, { endpoint: { ...ENDPOINT, worker_base: 'bc1qnew' }, runMode: 'live', now: 1 });
   assert.equal(workerOf(811), 'bc1qnew.r811');
+  const ctx = JSON.parse(db.get().prepare("SELECT context_json FROM alerts WHERE kind = 'worker_repaired'").get().context_json);
+  assert.equal(ctx.address_changed, true, 'the notice says the address moved, not that a name was broken');
+  assert.equal(ctx.address, 'bc1qnew');
+});
+
+test('a rental left on the shared worker by a failed override is planned for repair', () => {
+  // rentOne records worker_base when its pool/0 override fails; that has to read as stale.
+  seedRental(9301, ENDPOINT.worker_base);
+  const plan = wr.planWorkerRepairs(db.get(), ENDPOINT);
+  assert.deepEqual(plan.map((p) => [p.mrr_id, p.to]), [[9301, 'bc1qx.r9301']]);
 });
