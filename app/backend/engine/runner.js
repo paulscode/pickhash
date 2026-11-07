@@ -287,6 +287,8 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       }
     }
   } catch (e) { log({ event: 'autopilot_error', message: String(e && e.message) }); }
+  // Re-checked between steps: a stop that arrives mid-tick must not start the next one.
+  if (shutdown.requested()) return { ran: true, adoptedCount, stopping: true };
   try {
     if (client && !skipSpendCycle) {
       const r = await extend.runAutoExtend(conn, client, snapshot, { now });
@@ -294,6 +296,8 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     }
   } catch (e) { log({ event: 'auto_extend_error', message: String(e && e.message) }); }
 
+  // Re-checked between steps: a stop that arrives mid-tick must not start the next one.
+  if (shutdown.requested()) return { ran: true, adoptedCount, stopping: true };
   // Opt-in: reroute a rig that's dead on our pool (offline while the endpoint is healthy) to Ocean
   // and notify its owner. Runs BEFORE the nudge so a rerouted rig isn't also nudged. Not a spend.
   try {
@@ -301,6 +305,8 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     if (r && r.ran) log({ event: 'dead_rig_reroute', decided: r.decided, mrr_id: r.mrr_id, messaged: r.messaged });
   } catch (e) { log({ event: 'dead_rig_reroute_error', message: String(e && e.message) }); }
 
+  // Re-checked between steps: a stop that arrives mid-tick must not start the next one.
+  if (shutdown.requested()) return { ran: true, adoptedCount, stopping: true };
   // Opt-in courtesy nudge to a rig owner whose rig is sustaining under-delivery (not a spend).
   try {
     const r = await ownerNudge.maybeNudge(conn, client, { now });

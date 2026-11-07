@@ -382,3 +382,18 @@ test('planExtend: refuses a cost that is implausibly small vs the original rate 
   const p = extend.planExtend({ rental, sim: sim({ cost: btcScaleCost }), tolerancePct: 10, budgetRemainingSats: 1e9, windowRemainingH: 100 });
   assert.equal(p.reason, 'cost_unit_suspect');
 });
+
+test('runAutoExtend LIVE: a stop that began during the simulation starts no purchase', async () => {
+  const shutdown = require('../shutdown');
+  config.set(db.get(), 'run', { mode: 'live' });
+  const client = mockClient(sim());
+  const realPut = client.put.bind(client);
+  // The stop arrives while the cost is being simulated.
+  client.put = async (p, params) => { const r = await realPut(p, params); if (params && params.getcost) await shutdown.drain(10); return r; };
+  try {
+    const r = await extend.runAutoExtend(db.get(), client, okSnap, { now: NOW_MS });
+    assert.equal(r.reason, 'shutting_down');
+    assert.equal(client.state.puts.filter((p) => /\/extend$/.test(p[0]) && !p[1].getcost).length, 0, 'no real extend call');
+    assert.equal(db.get().prepare('SELECT spent_sats FROM sessions WHERE id = ?').get(sessionId).spent_sats, 0);
+  } finally { shutdown._reset(); }
+});

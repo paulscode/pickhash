@@ -9,6 +9,7 @@
  */
 const config = require('../config');
 const market = require('../market');
+const shutdown = require('../shutdown');
 const gate = require('./gate');
 const alerts = require('../alerts');
 const { MrrAmbiguousError } = require('../mrr-client');
@@ -232,6 +233,9 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
     // unparseable) may actually have extended on MRR — we must NOT silently move on and let the
     // next tick re-extend (that double-charges real BTC). Reconcile by OBSERVING the authoritative
     // detail (see reconcileAmbiguousExtend); a non-ambiguous failure is a clean no-op -> next candidate.
+    // A stop that began while the cost was being simulated: do not start a purchase the
+    // shutdown wait might cut off before it is recorded. Retried after the restart.
+    if (shutdown.requested()) return { ran: false, reason: 'shutting_down' };
     try { await client.put(`/rental/${rental.mrr_id}/extend`, { length: plan.lengthHours }); }
     catch (e) {
       if (e instanceof MrrAmbiguousError) {
