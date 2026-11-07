@@ -24,6 +24,12 @@
  * paying for hashrate credited to an address the user no longer uses. A rental on a pool
  * that was working keeps working — a worker rename costs a reconnect, and pools credit the
  * address, not the label.
+ *
+ * The same holds for the host: a rental whose recorded pool host:port is not the saved
+ * endpoint's (the user saved a new tunnel, or an earlier re-point failed part-way) is moved
+ * too. This is the one pass that brings every running rental in line with the saved
+ * endpoint, so the other re-pointing paths (endpoint repair, DuckDNS) can be best-effort:
+ * whatever they leave behind is picked up here on the next tick.
  */
 const alerts = require('../alerts');
 const market = require('../market');
@@ -39,7 +45,7 @@ const endpoints = require('../endpoints');
 function planWorkerRepairs(conn, endpoint) {
   if (!endpoint || !endpoint.worker_base) return [];
   const rows = conn.prepare(
-    `SELECT r.mrr_id, r.worker_name, r.stratum_pass, r.session_id, r.rig_name
+    `SELECT r.mrr_id, r.worker_name, r.stratum_pass, r.session_id, r.rig_name, r.pool_host, r.pool_port
        FROM rentals r JOIN sessions s ON s.id = r.session_id
       WHERE s.state IN ('active', 'winding_down') AND r.ended = 0 AND r.rerouted_ocean = 0`,
   ).all();
@@ -48,7 +54,17 @@ function planWorkerRepairs(conn, endpoint) {
     const want = endpoints.rentalWorker(endpoint.worker_base, r.mrr_id);
     // A base with no address yields no name; there is nothing better to move to, so leave
     // the rental alone rather than re-point it at something emptier than what it has.
-    if (want && want !== r.worker_name) out.push({ ...r, from: r.worker_name, to: want });
+    if (!want) continue;
+    // A pool host that is unknown (NULL: never recorded) is not evidence of a move, so only
+    // a recorded host that differs from the saved endpoint counts.
+    const hostMoved = r.pool_host != null
+      && (String(r.pool_host) !== String(endpoint.host) || Number(r.pool_port) !== Number(endpoint.port));
+    if (want !== r.worker_name || hostMoved) {
+      out.push({
+        ...r, from: r.worker_name, to: want,
+        fromHost: r.pool_host, fromPort: r.pool_port, hostMoved,
+      });
+    }
   }
   return out;
 }
@@ -77,22 +93,26 @@ async function repairWorkers(conn, client, { endpoint, runMode, now } = {}) {
         host: endpoint.host, port: endpoint.port, user: p.to, pass: p.stratum_pass || 'x', priority: 0,
       });
     } catch { failed += 1; continue; }   // no row update -> retried next tick
-    conn.prepare('UPDATE rentals SET worker_name = ? WHERE mrr_id = ?').run(p.to, p.mrr_id);
+    conn.prepare('UPDATE rentals SET worker_name = ?, pool_host = ?, pool_port = ? WHERE mrr_id = ?')
+      .run(p.to, endpoint.host, endpoint.port, p.mrr_id);
+    const moved = p.hostMoved ? `@${p.fromHost}:${p.fromPort}->${endpoint.host}:${endpoint.port}` : '';
     conn.prepare('INSERT INTO decisions (algo, ts, session_id, dry_run, note) VALUES (?, ?, ?, ?, ?)')
-      .run(market.activeAlgo(conn), nowSec, p.session_id, 0, `worker_repair:${p.mrr_id}:${p.from || 'none'}->${p.to}`);
+      .run(market.activeAlgo(conn), nowSec, p.session_id, 0, `worker_repair:${p.mrr_id}:${p.from || 'none'}->${p.to}${moved}`);
     repaired += 1;
   }
   if (repaired) {
-    // Keyed on the corrected name so a later drift (a changed address) can raise its own
-    // notice rather than being silenced by this one.
+    // Keyed on the corrected name and endpoint so a later drift (a changed address or host)
+    // can raise its own notice rather than being silenced by this one.
     alerts.fireOnce(conn, {
-      kind: 'worker_repaired', key: plan[0].to, now: nowMs,
+      kind: 'worker_repaired', key: `${plan[0].to}@${endpoint.host}:${endpoint.port}`, now: nowMs,
       context: {
         repaired, failed, sample: { mrr_id: plan[0].mrr_id, from: plan[0].from, to: plan[0].to },
         // A new payout address and a corrected name format are different news for the user:
         // one confirms a change they made, the other reports a fault that cost them hashrate.
         address_changed: endpoints.poolAddress(plan[0].from || '') !== endpoints.poolAddress(plan[0].to),
         address: endpoints.poolAddress(plan[0].to),
+        host_changed: plan.some((p) => p.hostMoved),
+        endpoint: `${endpoint.host}:${endpoint.port}`,
       },
     });
   }

@@ -74,6 +74,8 @@ test('a LIVE authorized rent creates the rental + worker override + decision and
   const row = db.get().prepare('SELECT * FROM rentals WHERE session_id = ?').get(sessionId);
   assert.ok(row.mrr_id > 0 && /^bc1qx\.r\d+$/.test(row.worker_name) && row.health === 'pending');
   assert.equal(row.endpoint_diff, 131072, 'diff telemetry persisted like a quick rental');
+  assert.equal(row.pool_host, 'ab.gg', 'records the host it was pointed at, so a later endpoint change can move it');
+  assert.equal(row.pool_port, 26596);
   assert.equal(client.state.puts.filter((p) => p[0] === '/rental').length, 1);
   assert.equal(client.state.puts.filter((p) => /\/pool\/0$/.test(p[0])).length, 1, 'per-rental worker override applied');
   const s = db.get().prepare('SELECT spent_sats, fee_sats FROM sessions WHERE id = ?').get(sessionId);

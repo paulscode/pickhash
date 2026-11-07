@@ -193,7 +193,10 @@ async function rentOne(client, intent, endpoint, opts = {}) {
   // engaged only when the primary endpoint has already dropped, and MRR measures the
   // rental on pool 0 — so there is nothing to gain by asking it for a difficulty and a
   // stranger's pool is the wrong place to try an unrecognised password.
-  return { mrrId, worker, poolOverride, fallback, created, stratumPass };
+  // Either way the rental is on the endpoint's host: the override names it, and the profile's
+  // saved pool it falls back to is the same host:port. Recorded so a later endpoint change
+  // can tell this rental needs moving.
+  return { mrrId, worker, poolOverride, fallback, created, stratumPass, poolHost: endpoint.host, poolPort: endpoint.port };
 }
 
 function persistRental(conn, sessionId, intent, res) {
@@ -205,15 +208,17 @@ function persistRental(conn, sessionId, intent, res) {
   conn.prepare(
     `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
                           paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name,
-                          endpoint_diff, optimal_diff_min, optimal_diff_max, diff_in_range, stratum_pass)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+                          endpoint_diff, optimal_diff_min, optimal_diff_max, diff_in_range, stratum_pass,
+                          pool_host, pool_port)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(market.activeAlgo(conn), sessionId, res.mrrId, intent.rigId, intent.rigName, intent.region, intent.advertisedTh,
     intent.lengthHours, intent.paidSats, intent.feeSats, intent.rateBtcThDay, start, end, res.worker,
     intent.endpointDiff, intent.optimalDiffMin, intent.optimalDiffMax,
     intent.diffInRange == null ? null : (intent.diffInRange ? 1 : 0),
     // What was actually sent, so the DuckDNS repoint can rewrite pool/0 without
     // resetting the password to 'x' and undoing the difficulty mid-rental.
-    res.stratumPass || 'x');
+    res.stratumPass || 'x',
+    res.poolHost == null ? null : res.poolHost, res.poolPort == null ? null : res.poolPort);
   conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')
     .run(market.activeAlgo(conn), nowSec(), (intent.paidSats || 0) + (intent.feeSats || 0), 'rent', sessionId, res.mrrId);
 }

@@ -142,3 +142,41 @@ test('a rental left on the shared worker by a failed override is planned for rep
   const plan = wr.planWorkerRepairs(db.get(), ENDPOINT);
   assert.deepEqual(plan.map((p) => [p.mrr_id, p.to]), [[9301, 'bc1qx.r9301']]);
 });
+
+// ---- host convergence ----
+
+const setHost = (mrrId, host, port) => db.get().prepare('UPDATE rentals SET pool_host = ?, pool_port = ? WHERE mrr_id = ?').run(host, port, mrrId);
+
+test('a rental recorded on another host is moved to the saved endpoint, even with the right name', async () => {
+  // The user saved a new tunnel; this rental is still on the old one.
+  seedRental(9401, 'bc1qx.r9401');
+  setHost(9401, 'old-tunnel.gg', 1111);
+  const client = mockClient();
+  const r = await wr.repairWorkers(db.get(), client, { endpoint: ENDPOINT, runMode: 'live', now: 1 });
+  assert.equal(r.repaired, 1);
+  const [, params] = client.state.puts[0];
+  assert.equal(params.host, ENDPOINT.host);
+  assert.equal(params.port, ENDPOINT.port);
+  assert.equal(params.user, 'bc1qx.r9401');
+  const row = db.get().prepare('SELECT pool_host, pool_port FROM rentals WHERE mrr_id = 9401').get();
+  assert.deepEqual([row.pool_host, row.pool_port], [ENDPOINT.host, ENDPOINT.port], 'recorded, so the next pass finds nothing');
+  assert.equal(wr.planWorkerRepairs(db.get(), ENDPOINT).length, 0);
+  const ctx = JSON.parse(db.get().prepare("SELECT context_json FROM alerts WHERE kind = 'worker_repaired'").get().context_json);
+  assert.equal(ctx.host_changed, true);
+  assert.equal(ctx.address_changed, false);
+});
+
+test('a rental already on the saved host, or with no host recorded, is left alone', () => {
+  seedRental(9402, 'bc1qx.r9402');
+  setHost(9402, ENDPOINT.host, ENDPOINT.port);
+  seedRental(9403, 'bc1qx.r9403');   // pool_host NULL: unknown is not evidence of a move
+  assert.equal(wr.planWorkerRepairs(db.get(), ENDPOINT).length, 0);
+});
+
+test('a failed move keeps the old host recorded, so it is retried', async () => {
+  seedRental(9404, 'bc1qx.r9404');
+  setHost(9404, 'old-tunnel.gg', 1111);
+  await wr.repairWorkers(db.get(), mockClient(() => true), { endpoint: ENDPOINT, runMode: 'live', now: 1 });
+  assert.equal(db.get().prepare('SELECT pool_host FROM rentals WHERE mrr_id = 9404').get().pool_host, 'old-tunnel.gg');
+  assert.equal(wr.planWorkerRepairs(db.get(), ENDPOINT).length, 1);
+});

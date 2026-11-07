@@ -56,20 +56,20 @@ async function repair(conn, client, { plan, runMode, now }) {
         // Preserve the password the rental was created with: this rewrites pool/0 on a
         // LIVE rental, and dropping back to 'x' would silently undo its difficulty.
         await client.put(`/rental/${r.mrr_id}/pool/0`, { host: plan.to.host, port: plan.to.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 });
+        conn.prepare('UPDATE rentals SET pool_host = ?, pool_port = ? WHERE mrr_id = ?').run(plan.to.host, plan.to.port, r.mrr_id);
         repaired += 1;
       } catch { failed += 1; }
     }
   }
-  // Converge the saved endpoint ONLY once every active rental is re-pointed (or there are none,
-  // or DRY-RUN has nothing to mutate). If a PUT failed, leave the saved endpoint on the old value
-  // so planRepair re-triggers next tick and retries the straggler — otherwise idempotency
-  // short-circuits and that rental stays stranded on the dead endpoint for its paid duration.
-  if (failed === 0) {
-    // Scoped like every other endpoint write: a repair belongs to one algorithm's
-      // endpoint, not to whichever rows happen to be flagged active.
-      conn.prepare('UPDATE pool_endpoints SET host = ?, port = ? WHERE active = 1 AND algo = ?')
-        .run(plan.to.host, plan.to.port, market.activeAlgo(conn));
-  }
+  // Converge the saved endpoint whether or not every rental moved. A straggler whose PUT failed
+  // still has the dead host recorded, so the convergence pass (worker-repair) sees it differs
+  // from the saved endpoint and retries it every tick until it moves. This used to hold the saved
+  // endpoint back on a failure instead, so this pass would re-run; with the convergence pass also
+  // running, that would have had it drag the rentals already moved back to the dead host.
+  // Scoped like every other endpoint write: a repair belongs to one algorithm's endpoint, not to
+  // whichever rows happen to be flagged active.
+  conn.prepare('UPDATE pool_endpoints SET host = ?, port = ? WHERE active = 1 AND algo = ?')
+    .run(plan.to.host, plan.to.port, market.activeAlgo(conn));
   alerts.fireOnce(conn, {
     kind: 'endpoint_repaired', key: `${plan.to.host}:${plan.to.port}`, now,
     context: { from: plan.from, to: plan.to, rentals: repaired, active: active.length },

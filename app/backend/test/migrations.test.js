@@ -172,3 +172,34 @@ test('self-heals a pre-tracking database (already-exists path stamps, does not t
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('migration 012 records each running rental on the active endpoint of its algorithm', () => {
+  const dir = freshDataDir();
+  try {
+    db.open(dir);
+    const c = db.get();
+    // Roll back to just before 012, with a running session on a BLAKE2b endpoint.
+    c.prepare("DELETE FROM schema_migrations WHERE filename = '012_rental_pool_host.sql'").run();
+    c.exec('ALTER TABLE rentals DROP COLUMN pool_host');
+    c.exec('ALTER TABLE rentals DROP COLUMN pool_port');
+    c.prepare("INSERT INTO pool_endpoints (algo, host, port, worker_base, active) VALUES ('blake2b', 'old.gg', 1111, 'bc1qx', 0)").run();
+    c.prepare("INSERT INTO pool_endpoints (algo, host, port, worker_base, active) VALUES ('blake2b', 'tunnel.gg', 2222, 'bc1qx', 1)").run();
+    const sid = Number(c.prepare("INSERT INTO sessions (algo, mode, state, created_at, started_at) VALUES ('blake2b','autopilot','active',1,1)").run().lastInsertRowid);
+    const ins = c.prepare(`INSERT INTO rentals (algo, session_id, mrr_id, rig_id, advertised_th, length_hours, paid_sats, fee_sats,
+                                                start_ts, end_ts, ended, health, rerouted_ocean)
+                           VALUES ('blake2b', ?, ?, 1, 1, 3, 1, 1, 1, 9, ?, 'healthy', ?)`);
+    ins.run(sid, 1, 0, 0);   // running
+    ins.run(sid, 2, 1, 0);   // ended: history, left alone
+    ins.run(sid, 3, 0, 1);   // parked on the fallback pool: deliberately elsewhere
+    db.close();
+    db.open(dir);
+    const rows = Object.fromEntries(db.get().prepare('SELECT mrr_id, pool_host, pool_port FROM rentals').all().map((r) => [r.mrr_id, r]));
+    assert.equal(rows[1].pool_host, 'tunnel.gg');
+    assert.equal(rows[1].pool_port, 2222);
+    assert.equal(rows[2].pool_host, null);
+    assert.equal(rows[3].pool_host, null);
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

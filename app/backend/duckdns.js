@@ -135,10 +135,19 @@ async function applyName(conn, dataDir, client, { subdomain, token, runMode, upd
   let repointed = 0;
   if (runMode === 'live' && client) {
     for (const r of ownPoolRentals(conn)) {
-      try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: name, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 }); repointed++; } catch { /* best-effort */ }
+      try {
+        await client.put(`/rental/${r.mrr_id}/pool/0`, { host: name, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 });
+        recordPool(conn, r.mrr_id, name, ep.port);
+        repointed++;
+      } catch { /* best-effort: still on the IP, so the convergence pass moves it next tick */ }
     }
   }
   return { ok: true, name, repointed };
+}
+
+/** Record where a rental's pool/0 now points (see migration 012). */
+function recordPool(conn, mrrId, host, port) {
+  conn.prepare('UPDATE rentals SET pool_host = ?, pool_port = ? WHERE mrr_id = ?').run(host, port, mrrId);
 }
 
 /**
@@ -164,7 +173,10 @@ async function removeName(conn, dataDir, client, { runMode } = {}) {
     conn.prepare('UPDATE pool_endpoints SET host = ? WHERE id = ?').run(ip, ep.id);
     if (runMode === 'live' && client) {
       for (const r of ownPoolRentals(conn)) {
-        try { await client.put(`/rental/${r.mrr_id}/pool/0`, { host: ip, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 }); } catch { /* best-effort */ }
+        try {
+          await client.put(`/rental/${r.mrr_id}/pool/0`, { host: ip, port: ep.port, user: r.worker_name, pass: r.stratum_pass || 'x', priority: 0 });
+          recordPool(conn, r.mrr_id, ip, ep.port);
+        } catch { /* best-effort: the convergence pass moves it next tick */ }
       }
     }
   }

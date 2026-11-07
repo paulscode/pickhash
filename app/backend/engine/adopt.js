@@ -96,9 +96,12 @@ async function adoptStrays(conn, client, { sessionId, endpoint, adopt, nowSec, d
     }
     conn.prepare(
       `INSERT INTO rentals (algo, session_id, mrr_id, rig_id, rig_name, region, advertised_th, length_hours,
-                            paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name, stratum_pass)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    ).run(market.activeAlgo(conn), sessionId, mrrId, s.rigId, rigName, rigRegion, adv, lengthHours, base, fee, rate, start, end, worker, stratumPass);
+                            paid_sats, fee_sats, rate_btc_th_day, start_ts, end_ts, health, worker_name, stratum_pass,
+                            pool_host, pool_port)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+    ).run(market.activeAlgo(conn), sessionId, mrrId, s.rigId, rigName, rigRegion, adv, lengthHours, base, fee, rate, start, end, worker, stratumPass,
+      // Created on this endpoint's profile, and re-pointed (if at all) at this endpoint.
+      endpoint.host, endpoint.port);
     conn.prepare('UPDATE sessions SET spent_sats = COALESCE(spent_sats, 0) + ?, fee_sats = COALESCE(fee_sats, 0) + ? WHERE id = ?')
       .run(paidTotal, fee, sessionId);
     conn.prepare('INSERT INTO spend_events (algo, ts, sats, kind, session_id, mrr_id) VALUES (?, ?, ?, ?, ?, ?)')

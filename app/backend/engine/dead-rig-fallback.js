@@ -93,7 +93,7 @@ async function maybeReroute(conn, client, snapshot, opts = {}) {
       await client.put(`/rental/${mrrId}/pool/0`, { host: pool.host, port: pool.port, user: worker, pass: 'x', priority: 0 });
     } catch { return { ran: false, reason: 'reroute_failed' }; }   // no marker -> retry next tick
     // Mark rerouted BEFORE the (best-effort) owner message: a message failure must never re-reroute.
-    conn.prepare('UPDATE rentals SET rerouted_ocean = 1 WHERE mrr_id = ?').run(mrrId);
+    conn.prepare('UPDATE rentals SET rerouted_ocean = 1, pool_host = ?, pool_port = ? WHERE mrr_id = ?').run(pool.host, pool.port, mrrId);
     let messaged = false;
     try { await client.put(`/rental/${mrrId}/message`, { message: ownerMessage(rental, { healthyPeers }) }); messaged = true; }
     catch { /* the reroute itself stands; the message just didn't send */ }

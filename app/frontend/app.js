@@ -711,8 +711,8 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         price_limit_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — the rigs that could fill the rest are priced over your market price limit${c.limit_sats_unit_day != null && c.price_unit ? ` (${this.fmtSats(c.limit_sats_unit_day)} sats/${String(c.price_unit).toUpperCase()}·day, market +${c.over_market_pct}%)` : ''}. Raise “Max price over market” in Settings if paying more is acceptable, or wait for cheaper rigs.`,
         rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the fallback pool${c.messaged ? ' and messaged the owner' : ''}`,
         duckdns_update_failed: `Your endpoint's IP changed but the DuckDNS name couldn't be updated${c.name ? ` (${c.name}.duckdns.org)` : ''} — it may point at the old IP. Check your DuckDNS token.`,
-        worker_repaired: c.address_changed
-          ? `Moved ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'} to your new payout address ${c.address || ''}${c.failed ? ` (${c.failed} still to move; retrying every minute)` : ''}`
+        worker_repaired: (c.address_changed || c.host_changed)
+          ? `Moved ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'} to your ${c.address_changed ? `new payout address ${c.address || ''}` : ''}${c.address_changed && c.host_changed ? ' on ' : ''}${c.host_changed ? `saved endpoint ${c.endpoint || ''}` : ''}${c.failed ? ` (${c.failed} still to move; retrying every minute)` : ''}`
           : `Corrected the stratum username on ${c.repaired || 'your'} active rental${c.repaired === 1 ? '' : 's'}${c.sample && c.sample.to ? ` (now ${c.sample.to})` : ''} — some pools couldn't credit the old form, so that hashrate wasn't reaching your address`,
       };
       return map[a.kind] || a.kind;
@@ -1679,7 +1679,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.seBusy = false;
       if (!b.ok) { this.seReportClass = 'text-neon-pink'; this.seReport = 'Endpoint saved, but the MRR pool/profile update failed — try again.'; return; }
       this.seReportClass = 'text-neon-green';
-      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint; running rentals pick up a changed payout address on the next tick.${this.diffSupportNote(r.json.supports_password_diff)}`;
+      this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint, and running rentals move to it on the next tick.${this.diffSupportNote(r.json.supports_password_diff)}`;
       await this.loadConnection();
     },
     async loadSettings() {

@@ -61,7 +61,7 @@ What happens:
 - **The endpoint is tested** with the username rentals will actually send, then saved.
 - **The MRR saved pool is updated** to the new address, so new rentals start under it.
 - **Within about a minute**, on the next control tick, every running rental's pool setting is
-  rewritten to `<new-address>.r<rental-id>`. Each rig reconnects once, which costs a few seconds of
+  rewritten to `<new-address>.r<rental-id>` on the saved host. Each rig reconnects once, which costs a few seconds of
   shares. Its per-rig difficulty is kept. An alert confirms it: *"Moved N active rentals to your
   new payout address …"*. If MRR refuses an update, the alert says how many are left, and Pickhash
   retries them every minute until they all move.
@@ -111,11 +111,11 @@ it.
 
 ## Changing the tunnel at the same time
 
-If you save a new **host or port** together with the new address, running rentals are moved to both
-in the same update. Saving a new host or port **without** changing the address only affects new
-rentals: running ones stay on the old host for the rest of their paid time, so keep the old tunnel
-up until they end. (Pickhash's automatic tunnel repair is for a different case, where the tunnel
-you saved stops working and HashGG reports its replacement.)
+A new **host or port** is handled the same way as a new address. Save it in Settings and, in LIVE
+mode, running rentals move to it on the next tick, together with any address change in the same
+save. Pickhash records which host each rental points at, so it can tell which rentals still need
+moving, and it keeps retrying any that MRR refuses. You can shut the old tunnel down once the
+*Moved N active rentals to your saved endpoint* notice shows nothing left to move.
 
 ## SHA256 setups
 

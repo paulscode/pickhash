@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const db = require('../db');
 const er = require('../engine/endpoint-repair');
+const wr = require('../engine/worker-repair');
 
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'pickhash-erepair-'));
 before(() => { db.open(DATA); });
@@ -97,16 +98,20 @@ test('repair updates the saved endpoint but issues NO MRR mutation in DRY-RUN', 
   assert.ok(db.get().prepare("SELECT 1 FROM alerts WHERE kind = 'endpoint_repaired'").get());
 });
 
-test('a failed re-point PUT leaves the saved endpoint UNCHANGED so it retries next tick', async () => {
+test('a failed re-point still converges the saved endpoint; the straggler keeps its old host recorded', async () => {
   seedRental(504, 'bc1qx.phash-r504');
+  db.get().prepare("UPDATE rentals SET pool_host = '198.51.100.1', pool_port = 3333 WHERE mrr_id = 504").run();
   const client = { async put(p) { if (/\/pool\/0$/.test(p)) throw new Error('MRR 500'); throw new Error('unexpected ' + p); } };
   const r = await er.repair(db.get(), client, { plan: PLAN, runMode: 'live', now: 1000 });
   assert.equal(r.failed, 1);
   const ep = db.get().prepare('SELECT host, port FROM pool_endpoints WHERE active = 1').get();
-  assert.equal(ep.host, '198.51.100.1', 'saved endpoint NOT converged while a rental is stranded');
-  assert.equal(ep.port, 3333);
-  // Because stored stayed old, planRepair still returns a plan -> it will retry.
-  assert.ok(er.planRepair({ storedEndpoint: ep, endpointOk: false, hashgg: hg('198.51.100.4', 4444) }), 'retry armed');
+  assert.equal(ep.host, '198.51.100.4', 'saved endpoint follows HashGG');
+  assert.equal(ep.port, 4444);
+  const row = db.get().prepare('SELECT pool_host, pool_port FROM rentals WHERE mrr_id = 504').get();
+  assert.equal(row.pool_host, '198.51.100.1', 'the straggler is still recorded on the dead host');
+  // ...which is exactly what the convergence pass retries from.
+  const plan = wr.planWorkerRepairs(db.get(), { ...ep, worker_base: 'bc1qx.phash' });
+  assert.ok(plan.some((p) => p.mrr_id === 504 && p.hostMoved), 'convergence retries it');
 });
 
 test('repair is idempotent: once the saved endpoint matches HashGG, planRepair stops', async () => {
@@ -115,9 +120,10 @@ test('repair is idempotent: once the saved endpoint matches HashGG, planRepair s
   assert.equal(er.planRepair({ storedEndpoint: now, endpointOk: false, hashgg: hg('198.51.100.4', 4444) }), null);
 });
 
-test('a MIX of one failed and one successful re-point leaves the saved endpoint UNCHANGED (retry next tick)', async () => {
-  seedRental(601, 'bc1qx.phash-r601');
-  seedRental(602, 'bc1qx.phash-r602');
+test('a MIX of one failed and one successful re-point: only the straggler is left for convergence', async () => {
+  seedRental(601, 'bc1qx.r601');
+  seedRental(602, 'bc1qx.r602');
+  db.get().prepare("UPDATE rentals SET pool_host = '198.51.100.1', pool_port = 3333 WHERE mrr_id IN (601, 602)").run();
   const client = {
     state: { puts: [] },
     async put(p, params) {
@@ -130,8 +136,10 @@ test('a MIX of one failed and one successful re-point leaves the saved endpoint 
   assert.equal(r.rentals, 1, 'exactly one re-point succeeded');
   assert.equal(r.failed, 1, 'exactly one re-point failed');
   const ep = db.get().prepare('SELECT host, port FROM pool_endpoints WHERE active = 1').get();
-  assert.equal(ep.host, '198.51.100.1', 'saved endpoint stays OLD while a rental is stranded (failed > 0)');
-  assert.equal(ep.port, 3333);
+  assert.equal(ep.host, '198.51.100.4');
+  // The rental already moved must NOT be planned back; the stranded one must be.
+  const plan = wr.planWorkerRepairs(db.get(), { ...ep, worker_base: 'bc1qx' });
+  assert.deepEqual(plan.map((p) => p.mrr_id), [601]);
 });
 
 test('a winding_down session rental is still re-pointed (the repair query includes winding_down)', async () => {
