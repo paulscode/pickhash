@@ -530,3 +530,69 @@ test('contributionTh: advertised while healthy/pending/ramping, measured once de
   assert.equal(decide.contributionTh({ health: 'healthy' }), 0);
   assert.equal(decide.contributionTh({ health: 'offline' }), 0);
 });
+
+// ---- issue #15: a small leftover gap must not be filled with the dearest listings ----
+// trig: a rig in TH/s priced in sats per TH·day (priceBtcThDay = sats ÷ 1e8).
+const trig = (id, th, satsThDay) => rig(id, { th, hourBtc: (satsThDay / 1e8) * th / 24 });
+// The report's market: three fairly priced rigs leave ~0.21 TH of a 3 TH target, and the only
+// rigs smaller than that gap are 0.03 TH listings at ~450x the market.
+const issue15Market = (extra = []) => [
+  trig('381519', 0.47, 6530), trig('383464', 1.779, 6856), trig('381633', 0.54, 7396),
+  ...extra,
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => trig(`micro${i}`, 0.03, 2_900_000)),
+];
+const BAND_3TH = 3 * 0.05;   // a 3 TH target at the default 5% hashrate tolerance
+const micros = (r) => r.selection.filter((x) => x.id.startsWith('micro')).length;
+
+test('#15: without the band, the packer fills the leftover gap with micro-rigs (the reported bug)', () => {
+  const r = pack(issue15Market([trig('modest', 0.3, 8000)]), 3, { maxOvershoot: 0.5 });
+  assert.ok(micros(r) >= 5, `the gap-relative rules reach for the micro-rigs (${micros(r)} taken)`);
+});
+
+test('#15: overshoot judged against the target lets a modest rig close the gap instead', () => {
+  // 0.3 TH closes a 0.211 TH gap with 0.089 TH over: past 0.211 x 50%, but inside 5% of the target.
+  const r = pack(issue15Market([trig('modest', 0.3, 8000)]), 3, { maxOvershoot: 0.5, bandTh: BAND_3TH });
+  assert.equal(micros(r), 0, 'no micro-rig is rented');
+  assert.ok(r.selection.some((x) => x.id === 'modest'), 'the modest rig closes the gap');
+  assert.ok(r.coveredTh >= 3 - 1e-9);
+});
+
+test('#15: inside the band, a rig that would raise the blend is not taken', () => {
+  // No closer at all: the micros are taken only until the remaining gap is inside the band, then
+  // the packer stops rather than buying the rest of the target at 450x the market.
+  const r = pack(issue15Market(), 3, { maxOvershoot: 0.5, bandTh: BAND_3TH });
+  assert.ok(3 - r.coveredTh <= BAND_3TH + 1e-9, 'stops once within the band');
+  assert.ok(micros(r) <= 3, `takes only what reaches the band (${micros(r)} taken)`);
+  const blend = r.selection.reduce((s, x) => s + x.priceBtcThDay * x.advertisedTh, 0)
+    / r.selection.reduce((s, x) => s + x.advertisedTh, 0);
+  const old = pack(issue15Market(), 3, { maxOvershoot: 0.5 });
+  const oldBlend = old.selection.reduce((s, x) => s + x.priceBtcThDay * x.advertisedTh, 0)
+    / old.selection.reduce((s, x) => s + x.advertisedTh, 0);
+  assert.ok(blend < oldBlend, 'the blended rate comes out lower than before');
+});
+
+test('inside the band, a rig that does not raise the blend is still taken', () => {
+  // 96 of 100 TH held by 50k rigs (inside a 5 TH band); a 4 TH rig at 40k lowers the blend, so it closes.
+  const feasible = [crig('a', 48, 50000), crig('b', 48, 50000), crig('cheap', 4, 40000)];
+  const r = pack(feasible, 100, { bandTh: 5 });
+  assert.ok(r.selection.some((x) => x.id === 'cheap'));
+  const dear = pack([crig('a', 48, 50000), crig('b', 48, 50000), crig('dear', 4, 60000)], 100, { bandTh: 5 });
+  assert.ok(!dear.selection.some((x) => x.id === 'dear'), 'a dearer one is left out');
+  assert.equal(dear.coveredTh, 96);
+});
+
+test('a band of 0 keeps the gap-relative rules exactly', () => {
+  const feasible = issue15Market([trig('modest', 0.3, 8000)]);
+  const a = pack(feasible, 3, { maxOvershoot: 0.5 });
+  const b = pack(feasible, 3, { maxOvershoot: 0.5, bandTh: 0 });
+  assert.deepEqual(a.selection.map((x) => x.id), b.selection.map((x) => x.id));
+});
+
+test('#15: decide() applies the band from the hashrate tolerance', () => {
+  const marketRigs = issue15Market([trig('modest', 0.3, 8000)]);
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 3 }), rentals: [], marketRigs, maxOvershootPct: 50,
+  }));
+  const ids = plan.actions.map((a) => String(a.rigId));
+  assert.ok(!ids.some((id) => id.startsWith('micro')), `no micro-rig proposed (${ids.join(',')})`);
+});

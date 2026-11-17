@@ -472,7 +472,13 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
  * (budget / burn). Pure-ish (fetches the market). The runway vs the time cap tells the user
  * whether the budget or the clock ends the session.
  */
-async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint }) {
+/*
+ * ceilingSatsUnitDay: the blended rate ceiling to hold the preview to, in sats per <priceUnit>/day,
+ * with the same per-rig backstop the live loop applies (decide.js). Without it the preview packed
+ * uncapped, so a typed ceiling changed nothing and the preview disagreed with what LIVE would rent
+ * (issue #15). null or undefined = no cap.
+ */
+async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay = null }) {
   const strat = config.get(conn, 'strategy');
   const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
   // One options object, so the tally below cannot drift from the filter above it.
@@ -518,7 +524,16 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   // show a SHORTER runway). The budget only enters below, as the runway divisor.
   // coveredTh is EXPECTED DELIVERED TH (coverage is delivery-weighted), so the preview reflects the
   // hashrate you'll actually hold, not headline advertised numbers.
-  const { selection, coveredTh } = decide.packToTarget(cands, targetTh, { fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0 });
+  // The same tolerance band the live loop leaves unfilled, and the same ceiling it holds to.
+  const tol = (strat.hashrate_tolerance_pct != null ? strat.hashrate_tolerance_pct : 5) / 100;
+  const priceUnit = algos.priceUnit(market.activeAlgo(conn));
+  const ceil = Number(ceilingSatsUnitDay);
+  const capped = ceilingSatsUnitDay != null && Number.isFinite(ceil) && ceil > 0;
+  const blendCapBtcThDay = capped ? units.btcThDayFromSatsPerUnitDay(ceil, priceUnit) : Infinity;
+  const { selection, coveredTh, blendBlocked } = decide.packToTarget(cands, targetTh, {
+    fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0, bandTh: targetTh * tol,
+    blendCapBtcThDay, rigBackstopBtcThDay: capped ? blendCapBtcThDay * decide.BLEND_BACKSTOP_MULT : Infinity,
+  });
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;
@@ -527,7 +542,6 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
   // rig rate (no fee), to match those market references.
   const advTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
   const costRateBtcDay = selection.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0);
-  const priceUnit = algos.priceUnit(market.activeAlgo(conn));
   const toUnitDay = (v) => (v != null ? Math.round(units.satsPerUnitDay(v, priceUnit)) : null);
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
@@ -552,7 +566,11 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint 
     passedOver,
     rigCount: selection.length,
     coveredTh,
-    shortfallTh: Math.max(0, targetTh - coveredTh),
+    // Within the tolerance band is the target held, as the live loop sees it: no shortfall.
+    shortfallTh: coveredTh >= targetTh * (1 - tol) - 1e-9 ? 0 : Math.max(0, targetTh - coveredTh),
+    // The ceiling the preview was held to (null = none), and whether it is what left a shortfall.
+    ceilingSatsUnitDay: capped ? Math.round(ceil) : null,
+    ceilingBlocked: !!(capped && blendBlocked),
     targetTh,   // echoed so a caller can explain a shortfall without re-deriving it
     burnSatsHr,
     priceUnit,

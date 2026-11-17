@@ -53,12 +53,21 @@ function rentCostSats(hourBtc, hours) {
  *     lives in coverage), and only overshoot within maxOvershoot allowed (else a bounded shortfall,
  *     retried next tick).
  *
+ * bandTh is the target's tolerance band (target x hashrate tolerance), the shortfall autopilot is
+ * content to leave since it wouldn't top up for it. It does two things, both judged against the
+ * TARGET rather than the shrinking gap (issue #15):
+ *   - a closer may overshoot by up to the band, not just by a fraction of the gap, so a modest rig
+ *     can close a small leftover gap instead of the packer reaching for dust;
+ *   - once the remaining gap is inside the band, a rig is taken only if it doesn't raise the blended
+ *     rate. The last few percent are never filled with the dearest listings on the market.
+ * 0 (the default) keeps the gap-relative rules alone.
+ *
  * Budget-aware via costOf + budgetRemaining. Pure — the single source of truth for the live decide
  * loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
  * Returns { selection: [rig], coveredTh (expected delivered), cost }.
  */
 function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemaining, costOf,
-  blendCapBtcThDay = Infinity, rigBackstopBtcThDay = Infinity, heldCostRateBtcDay = 0, heldAdvTh = 0 }) {
+  blendCapBtcThDay = Infinity, rigBackstopBtcThDay = Infinity, heldCostRateBtcDay = 0, heldAdvTh = 0, bandTh = 0 }) {
   const selection = [];
   let selTh = 0;   // expected DELIVERED TH covered so far
   let selCost = 0;
@@ -95,15 +104,27 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     return newBlend <= Math.max(blendCapBtcThDay, curBlend) * EPS;
   };
 
+  const band = bandTh > 0 ? bandTh : 0;
+  // The advertised-TH-weighted blend of held + selected, for the in-band rule (Infinity before any).
+  const blendNow = () => {
+    const adv = heldAdvTh + selAdv;
+    return adv > 0 ? (heldCostRateBtcDay + selRateCost) / adv : Infinity;
+  };
   let blendBlocked = false;   // did the cap/backstop reject an otherwise-affordable rig? (for an accurate note)
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
     const affordable = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
-    const avail = affordable.filter(blendOk);
+    let avail = affordable.filter(blendOk);
     if (affordable.length > avail.length) blendBlocked = true;
+    // Inside the band the target is held: only a rig that doesn't raise the blend is worth adding.
+    if (band > 0 && gap <= band + 1e-9) {
+      const b = blendNow();
+      avail = avail.filter((r) => (r.priceBtcThDay || 0) <= b * EPS);
+    }
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
-    // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot), by absolute rate.
-    const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap * (1 + fitTol));
+    // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot, or up to the band), by absolute rate.
+    const cleanSlack = Math.max(gap * fitTol, band);
+    const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap + cleanSlack);
     const bestClean = clean.length ? cheapestRate(clean) : null;
     // The cheapest sub-gap rig by cost-per-delivered-TH (feasible is rank-sorted, so the first wins).
     const cheapSmall = avail.find((r) => effTh(r) < gap);
@@ -118,7 +139,7 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     if (bestClean) { take(bestClean); break; }
     if (cheapSmall) { take(cheapSmall); continue; }
     // Only oversized rigs remain: close with the cheapest to hold within the overshoot ceiling.
-    const over = avail.filter((r) => effTh(r) - gap <= gap * maxOvershoot);
+    const over = avail.filter((r) => effTh(r) - gap <= Math.max(gap * maxOvershoot, band));
     if (over.length) { take(cheapestRate(over)); break; }
     break;                                                        // nothing covers the gap within the ceiling -> shortfall
   }
@@ -256,9 +277,10 @@ function decide(ctx = {}) {
     ? units.btcThDayFromSatsPerUnitDay(ctx.blendedCeilingSatsUnitDay, ctx.priceUnit) : Infinity;
   const rigBackstopBtcThDay = Number.isFinite(blendCapBtcThDay) ? blendCapBtcThDay * BLEND_BACKSTOP_MULT : Infinity;
 
+  const bandTh = targetTh * tol;
   const { selection: picked, coveredTh, blendBlocked } = packToTarget(feasible, neededTh, {
     fitTol, maxOvershoot, budgetRemaining, costOf,
-    blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh,
+    blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh, bandTh,
   });
   const selection = picked.map((r) => ({ rig: r, hours: hoursOf(r) }));
 
@@ -287,7 +309,7 @@ function decide(ctx = {}) {
     const underGate = (r) => r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil;
     const unlimited = packToTarget(ranked.filter((r) => fits(r) && underGate(r)), neededTh, {
       fitTol, maxOvershoot, budgetRemaining, costOf,
-      blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh,
+      blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh, bandTh,
     });
     const heldBackTh = unlimited.coveredTh - coveredTh;
     if (heldBackTh > 1e-9 && heldBackTh >= targetTh * tol - 1e-9) {
@@ -336,4 +358,4 @@ function decide(ctx = {}) {
   };
 }
 
-module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, FEE_RATE };
+module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, FEE_RATE, BLEND_BACKSTOP_MULT };

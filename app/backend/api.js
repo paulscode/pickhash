@@ -929,15 +929,22 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (!(targetTh > 0) || !(budgetSats > 0)) return sendJson(res, 400, { error: 'bad_params' });
     const endpoint = endpoints.active(conn);
     if (!endpoint || !endpoint.mrr_profile_id) return sendJson(res, 400, { error: 'no_endpoint' });
+    // Surface a standing blended ceiling so the preview pre-fills it — but ONLY when the user set it
+    // deliberately (blended_ceiling_auto === false). An accepted auto-suggestion, OR a ceiling saved
+    // before this flag existed (undefined -> treated as auto, since the UI always pre-filled a
+    // suggestion), returns null so the preview re-suggests with fresh headroom instead of masking it
+    // with a stale (possibly too-tight) number. A deliberate ceiling stays sticky.
+    const deliberate = config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
+    const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null;
+    // The ceiling to hold the estimate to: the one in the form when sent (blank = no cap), else
+    // the deliberate standing one the form is about to pre-fill, so the preview matches LIVE.
+    let ceilingSatsUnitDay = currentCeiling;
+    if (url.searchParams.has('blended_ceiling_sats_unit_day')) {
+      const c = Number(url.searchParams.get('blended_ceiling_sats_unit_day'));
+      ceilingSatsUnitDay = Number.isFinite(c) && c > 0 ? c : null;
+    }
     try {
-      const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });
-      // Surface a standing blended ceiling so the preview pre-fills it — but ONLY when the user set it
-      // deliberately (blended_ceiling_auto === false). An accepted auto-suggestion, OR a ceiling saved
-      // before this flag existed (undefined -> treated as auto, since the UI always pre-filled a
-      // suggestion), returns null so the preview re-suggests with fresh headroom instead of masking it
-      // with a stale (possibly too-tight) number. A deliberate ceiling stays sticky.
-      const deliberate = config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
-      const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null;
+      const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay });
       return sendJson(res, 200, { estimate, current_blended_ceiling_sats_unit_day: currentCeiling });
     } catch {
       return sendJson(res, 502, { error: 'estimate_failed' });

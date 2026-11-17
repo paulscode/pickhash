@@ -230,3 +230,38 @@ test('a new session is blocked while a stopped session is still winding down', a
     (e) => e.code === 'session_active',
   );
 });
+
+// ---- issue #15: the preview honours the rate ceiling, and the tolerance band ----
+
+test('#15: the estimate is held to a blended ceiling, as the live loop is', async () => {
+  // Two 100 TH rigs at one price and a third at 1.5x (inside the default 2x market price limit).
+  const dear = rawRig(3, 0.1, 0.0003);
+  dear.price.BTC.price = '0.00075000';   // the listed per-day price the blend is computed from, also 1.5x
+  const rigs = [rawRig(1, 0.1, 0.0002), rawRig(2, 0.1, 0.0002), dear];
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  const open = await session.estimateAutopilot(db.get(), client(rigs), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep });
+  assert.equal(open.coveredTh, 300);
+  assert.equal(open.ceilingSatsUnitDay, null);
+  assert.equal(open.ceilingBlocked, false);
+  // A ceiling just above the two cheaper rigs' rate: the dear one would lift the blend past it.
+  const two = await session.estimateAutopilot(db.get(), client(rigs.slice(0, 2)), { targetTh: 200, budgetSats: 1_000_000, endpoint: ep });
+  const ceiling = Math.round(two.blendedSatsUnitDay * 1.05);
+  const held = await session.estimateAutopilot(db.get(), client(rigs), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: ceiling });
+  assert.equal(held.coveredTh, 200, 'the dear rig is left out under the ceiling');
+  assert.equal(held.rigCount, 2);
+  assert.ok(held.blendedSatsUnitDay <= ceiling);
+  assert.equal(held.ceilingSatsUnitDay, ceiling);
+  assert.equal(held.ceilingBlocked, true, 'the ceiling is named as what left the shortfall');
+  assert.ok(held.shortfallTh > 0);
+});
+
+test('#15: a fill inside the hashrate tolerance is no shortfall in the estimate', async () => {
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  // 300 TH on the market for a 310 TH target: 3% short, inside the default 5% band.
+  const est = await session.estimateAutopilot(db.get(), client(), { targetTh: 310, budgetSats: 1_000_000, endpoint: ep });
+  assert.equal(est.coveredTh, 300);
+  assert.equal(est.shortfallTh, 0);
+  // 20% short is still reported.
+  const far = await session.estimateAutopilot(db.get(), client(), { targetTh: 375, budgetSats: 1_000_000, endpoint: ep });
+  assert.ok(far.shortfallTh > 0);
+});

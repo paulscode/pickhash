@@ -169,6 +169,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
     quoteError: '',
     breakdownOpen: false,
     _quoteTimer: null,
+    _apCeilTimer: null,
     _refreshTimer: null,
 
     // Derived display (plain props so CSP templates bind bare refs, not expressions).
@@ -822,7 +823,13 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       else { this.apHasEstimate = false; this.apStarted = false; this.scheduleQuote(0); }
     },
     apPreset(sats) { this.apBudget = String(sats); this.apHasEstimate = false; },
-    apCeilTouched() { this.apRateCeilTouched = true; this.apRateCeilAuto = false; },   // an edited ceiling is deliberate -> sticky
+    apCeilTouched() {
+      this.apRateCeilTouched = true; this.apRateCeilAuto = false;   // an edited ceiling is deliberate -> sticky
+      // Re-run the shown estimate under the new ceiling once typing pauses, so the rigs, rate and
+      // burn above it are what LIVE would rent with that ceiling (issue #15).
+      if (this._apCeilTimer) clearTimeout(this._apCeilTimer);
+      if (this.apHasEstimate) this._apCeilTimer = setTimeout(() => { if (this.apHasEstimate && !this.apBusy) this.apPreview(); }, 700);
+    },
     async apMax() {
       this.apMaxBusy = true;
       try {
@@ -847,7 +854,11 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       const p = this.apParams();
       if (!this.apValid(p)) { this.apError = 'Enter a target, time cap, and budget.'; return; }
       this.apBusy = true; this.apBusyText = 'Checking the market…'; this.apError = ''; this.apStarted = false;
-      const r = await this.getJson(`/api/autopilot/estimate?target_th=${p.targetTh}&budget_sats=${p.budgetSats}`);
+      // A ceiling the user has typed is sent (blank = no cap); otherwise the server applies a
+      // deliberate standing one, the same value the form pre-fills.
+      const ceilQ = this.apRateCeilTouched
+        ? `&blended_ceiling_sats_unit_day=${Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : ''}` : '';
+      const r = await this.getJson(`/api/autopilot/estimate?target_th=${p.targetTh}&budget_sats=${p.budgetSats}${ceilQ}`);
       this.apBusy = false;
       if (!r || !r.estimate) { this.apHasEstimate = false; this.apError = 'Could not estimate — check your MRR connection and try again.'; return; }
       this.applyEstimate(r.estimate, p, r.current_blended_ceiling_sats_unit_day);
@@ -1495,6 +1506,10 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
          * because that capacity cannot be cancelled. Saying "the market can only cover
          * 0" here is actively wrong, and the fix is one the user can act on.
          */
+        // The rate ceiling, not the market, is what stops the fill: say so, since it's the user's to raise.
+        if (est.ceilingBlocked && est.ceilingSatsUnitDay != null) {
+          return `Your rate ceiling of ${this.fmtSats(est.ceilingSatsUnitDay)} ${this.rateUnit} holds autopilot to ${covered} of your target: the rigs that would cover the rest would lift the blended rate above it. Raise the ceiling to cover more.`;
+        }
         if (est.coveredTh === 0 && est.eligibleRigs > 0 && est.smallestEligibleTh) {
           const cap = (est.maxOvershootPct != null ? est.maxOvershootPct : 50) / 100;
           const clears = est.smallestEligibleTh / (1 + cap);
