@@ -244,3 +244,32 @@ test('a result recorded for another host is not shown once the endpoint has move
   const out = await observe.observe(conn, client(), { now: t0, marketSkip: true, probeTimeoutMs: 300, prevState: { rentals: {}, marketAt: t0, refundAt: t0 } });
   assert.equal(out.snapshot.gateway, null);
 });
+
+test('a dismissed alert is shown again when what to do changes (install it -> switch it on)', () => {
+  const conn = db.get();
+  const base = { rentals: [], fetch_ok: {} };
+  const outdated = { status: 'outdated', app: 'Datum Gateway (BLAKE2b)', store: { url: gateway.REGISTRY_URL } };
+  alerts.evaluate(conn, { ...base, gateway: outdated }, {}, 1000);
+  const id = conn.prepare("SELECT id FROM alerts WHERE kind = 'gateway_outdated' AND state = 'fired'").get().id;
+  alerts.ack(conn, id, 1500);
+  alerts.evaluate(conn, { ...base, gateway: { ...outdated, status: 'disabled' } }, {}, 2000);
+  const fired = conn.prepare("SELECT context_json FROM alerts WHERE kind = 'gateway_outdated' AND state = 'fired'").get();
+  assert.ok(fired, 'raised again');
+  assert.equal(JSON.parse(fired.context_json).status, 'disabled');
+});
+
+test('a result recorded for another algorithm is ignored for this tick', () => {
+  const conn = db.get();
+  const other = market.activeAlgo(conn) === 'blake2b' ? 'sha256ab' : 'blake2b';
+  const ev = alerts.evaluate(conn, { rentals: [], fetch_ok: {}, gateway: { status: 'outdated', algo: other } }, {}, 1000);
+  assert.equal(ev.filter((e) => e.kind === 'gateway_outdated').length, 0);
+});
+
+test('a last-known result older than a day is not kept', async () => {
+  const conn = db.get();
+  const t0 = 1_700_000_000_000;
+  conn.prepare("INSERT INTO pool_endpoints (algo, host, port, worker_base, active, gateway_json) VALUES (?, '127.0.0.1', 1, 'bc1qx.w', 1, ?)")
+    .run(market.activeAlgo(conn), JSON.stringify({ status: 'outdated', endpoint: '127.0.0.1:1', checked_at: Math.floor(t0 / 1000) - 2 * 86400 }));
+  const out = await observe.observe(conn, client(), { now: t0, marketSkip: true, probeTimeoutMs: 300, prevState: { rentals: {}, marketAt: t0, refundAt: t0 } });
+  assert.equal(out.snapshot.gateway, null);
+});

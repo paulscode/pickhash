@@ -156,19 +156,29 @@ function evaluate(conn, snapshot, prev = {}, now = Date.now(), cfg = {}) {
     // lists only the active algorithm's alerts, so one alert shared between them would be
     // shown under the wrong one, or not at all, after a switch.
     const key = market.activeAlgo(conn);
+    // A result recorded for another algorithm (the user switched while it was being taken)
+    // says nothing about this one's gateway this tick.
+    const forOtherAlgo = !!(g && g.algo && g.algo !== key);
     // Dismissed stays dismissed while the condition lasts. This alert can stand for days, and
     // without this a dismissal would be undone on the next tick. Resolving clears it as usual.
-    const acked = conn.prepare("SELECT id FROM alerts WHERE kind = 'gateway_outdated' AND key IS ? AND state = 'acked'").get(key);
-    if (bad && acked) {
-      // nothing: the user has seen it
+    const acked = conn.prepare("SELECT id, context_json FROM alerts WHERE kind = 'gateway_outdated' AND key IS ? AND state = 'acked'").get(key);
+    let ackedStatus = null;
+    try { ackedStatus = acked ? (JSON.parse(acked.context_json || '{}') || {}).status : null; } catch { ackedStatus = null; }
+    if (forOtherAlgo) {
+      // skip this tick
+    } else if (bad && acked && ackedStatus === context.status) {
+      // nothing: the user has seen it, and what to do about it has not changed
     } else {
-      if (!bad && acked) conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE id = ?").run(now, acked.id);
+      // A dismissed alert is closed when the gateway is fixed, or when what to do about it
+      // has changed (install it -> switch it on), in which case it is raised again as new
+      // advice below.
+      if (acked) conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE id = ?").run(now, acked.id);
       push(runTransition(conn, { kind: 'gateway_outdated', key, bad, now, context }));
     }
     // A standing alert's wording follows the Gateway: one upgraded to a build that has the
     // feature but with it switched off must stop telling the user to install it.
-    if (bad) {
-      conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'gateway_outdated' AND key IS ? AND state IN ('fired', 'acked') AND context_json IS NOT ?")
+    if (bad && !forOtherAlgo) {
+      conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'gateway_outdated' AND key IS ? AND state = 'fired' AND context_json IS NOT ?")
         .run(JSON.stringify(context), key, JSON.stringify(context));
     }
   }

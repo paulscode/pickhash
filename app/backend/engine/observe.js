@@ -34,6 +34,8 @@ const gatewayCaps = require('../gateway');
 
 const MARKET_CADENCE_MS = 5 * 60 * 1000;   // market snapshot every 5 min, not every tick
 const GATEWAY_CADENCE_MS = 30 * 60 * 1000; // re-ask the Gateway what it supports every 30 min
+const GATEWAY_TIMEOUT_MS = 4000;           // ...and give it this long to answer
+const GATEWAY_STALE_SEC = 24 * 60 * 60;    // a last-known answer older than this is dropped
 const ADOPT_WINDOW_SEC = 15 * 60;          // a rental starting within 15 min of an intent
 
 function num(v) { return v === '' || v === null || v === undefined ? null : Number(v); }
@@ -261,15 +263,22 @@ async function observe(conn, client, ctx = {}) {
         // endpoint that is down says nothing about its Gateway's version.
         const key = `${ep.id}|${ep.host}|${ep.port}`;
         if (p.gotWork && (gatewayKey !== key || nowMs - gatewayAt >= GATEWAY_CADENCE_MS)) {
-          const caps = await stratum.capabilities(ip, ep.port, { timeoutMs: ctx.probeTimeoutMs || 6000 });
-          const a = gatewayCaps.assess(caps, { algo: market.activeAlgo(conn), platform: gatewayCaps.platform() });
-          gatewayAt = nowMs;
-          gatewayKey = key;
-          // An endpoint that did not answer keeps what was last known about it.
-          if (a.status !== 'unknown') {
-            gatewayInfo = { ...a, endpoint_id: ep.id, endpoint: `${ep.host}:${ep.port}`, checked_at: nowSec };
-            conn.prepare('UPDATE pool_endpoints SET gateway_json = ? WHERE id = ?').run(JSON.stringify(gatewayInfo), ep.id);
-          }
+          // Its own try: a failure here (a busy database, say) must not mark the endpoint
+          // probe above as a blip and so hold back endpoint_down. Its own short timeout, so a
+          // gateway that serves work but never answers this cannot hold the tick for long.
+          try {
+            const caps = await stratum.capabilities(ip, ep.port, { timeoutMs: GATEWAY_TIMEOUT_MS });
+            // The endpoint's own algorithm, not the active one: the user may switch while
+            // this waits, and the result describes this endpoint's gateway.
+            const a = gatewayCaps.assess(caps, { algo: ep.algo || market.activeAlgo(conn), platform: gatewayCaps.platform() });
+            gatewayAt = nowMs;
+            gatewayKey = key;
+            // An endpoint that did not answer keeps what was last known about it (for a day).
+            if (a.status !== 'unknown') {
+              gatewayInfo = { ...a, algo: ep.algo || null, endpoint_id: ep.id, endpoint: `${ep.host}:${ep.port}`, checked_at: nowSec };
+              conn.prepare('UPDATE pool_endpoints SET gateway_json = ? WHERE id = ?').run(JSON.stringify(gatewayInfo), ep.id);
+            }
+          } catch { /* nothing learned this time; tried again at the next cadence */ }
         }
       }
     } catch { fetchOk.endpoint = false; }
@@ -283,6 +292,9 @@ async function observe(conn, client, ctx = {}) {
     // What is known is about the host it was asked of. DuckDNS and endpoint repair move the
     // same row to a new host; until the new one has answered, nothing is known about it.
     if (gatewayInfo && gatewayInfo.endpoint && gatewayInfo.endpoint !== `${ep.host}:${ep.port}`) gatewayInfo = null;
+    // Nor is a result from more than a day ago something to keep warning on: a gateway that
+    // has stopped answering the check since (after an upgrade, say) is no longer known.
+    if (gatewayInfo && gatewayInfo.checked_at && nowSec - gatewayInfo.checked_at > GATEWAY_STALE_SEC) gatewayInfo = null;
   } else {
     gatewayInfo = null;
   }

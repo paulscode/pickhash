@@ -168,7 +168,7 @@ function capabilities(host, port, opts = {}) {
           result.caps = m.result;
         } else {
           result.supported = false;
-          result.error = Array.isArray(m.error) ? String(m.error[1] || m.error[0]) : 'error_reply';
+          result.error = (Array.isArray(m.error) ? String(m.error[1] || m.error[0]) : 'error_reply').slice(0, 200);
         }
         finish();
         return;
