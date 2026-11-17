@@ -76,3 +76,21 @@ test('/api/status has no rehearsal block for a session without rehearsed rows', 
   assert.equal(r.json.rehearsal, null);
   db.get().prepare("UPDATE sessions SET state = 'ended' WHERE id = ?").run(sid);
 });
+
+test('/api/status drops the rehearsal once the run mode is LIVE, even mid-session', async () => {
+  const sid = insertSession('autopilot');
+  wouldRent(sid, 3000, 31, 'rehearsed rig', 500);
+  assert.ok((await get('/api/status')).json.rehearsal, 'shown while rehearsing');
+  config.set(db.get(), 'run', { mode: 'live' });
+  const r = await get('/api/status');
+  assert.equal(r.json.rehearsal, null, 'the last dry-run plan is not what a LIVE engine is doing');
+  config.set(db.get(), 'run', { mode: 'dry-run' });
+  db.get().prepare("UPDATE sessions SET state = 'ended' WHERE id = ?").run(sid);
+});
+
+test('the rehearsal lookup uses the decisions session index', () => {
+  const plan = db.get().prepare(
+    "EXPLAIN QUERY PLAN SELECT MAX(ts) AS ts FROM decisions WHERE session_id = ? AND dry_run = 1 AND executed_json LIKE '%\"would_rent\":true%'",
+  ).all(1).map((r) => r.detail).join(' | ');
+  assert.match(plan, /idx_decisions_session/, plan);
+});

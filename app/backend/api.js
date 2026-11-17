@@ -605,7 +605,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
         `SELECT mrr_id, rig_id, rig_name, region, advertised_th, length_hours, paid_sats, fee_sats,
                 start_ts, end_ts, health, avg_percent FROM rentals WHERE session_id = ? ORDER BY id`,
       ).all(s.id);
-      rehearsal = rehearsalFor(conn, s.id);
+      // Only while rehearsing: a session switched to LIVE mid-run would otherwise keep showing
+      // the last dry-run plan, which is no longer what the engine is doing.
+      if (mode !== 'live') rehearsal = rehearsalFor(conn, s.id);
     }
     // Latest engine-observed balance (already polled each tick) so the dashboard balance
     // card updates live off /api/status without an extra per-poll MRR call.

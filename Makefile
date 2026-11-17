@@ -37,9 +37,9 @@ IMAGE_DEPS := Dockerfile docker_entrypoint.sh check-web.sh tailwind.config.js ic
 .DELETE_ON_ERROR:
 
 .PHONY: css
-# Compile the dashboard stylesheet into app/frontend/ for the live-reload dev setup
-# (docker-compose.override.yml mounts it). Re-run after changing Tailwind classes.
-# The image build compiles its own copy — this is dev-only (gitignored).
+# Compile the dashboard stylesheet into app/frontend/dashboard.min.css. Re-run and commit it
+# after changing Tailwind classes: that committed file is what the image ships (the image does
+# not run Tailwind), and a class missing from it renders as if it were never written.
 css:
 	docker run --rm -v "$(CURDIR)":/b -w /b node:24-slim \
 	  sh -c "npm install -g tailwindcss@3.4.17 >/dev/null 2>&1 && npx tailwindcss -i app/frontend/src/input.css -o app/frontend/dashboard.min.css --minify"

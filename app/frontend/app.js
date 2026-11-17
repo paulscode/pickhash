@@ -1708,7 +1708,8 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.duckdnsName = (d.duckdns && d.duckdns.name) || '';
       if (d.duckdns && d.duckdns.subdomain) this.duckdnsSub = d.duckdns.subdomain;
       this.seShowDuckdns = this.seIsIp && !this.duckdnsEnabled;   // settings gate (plain bool for the CSP build)
-      await this.loadMrrPools();
+      // Not awaited: it calls MRR, and a slow reply must not hold up the rest of Settings.
+      this.loadMrrPools();
       if (this.seShowDuckdns && !this.duckdnsSub) this.suggestDuckdnsSub();
       // Derive the bare-IP warning from the CURRENT endpoint state so it reflects reality on every load
       // (and reappears after reverting DuckDNS), not only right after a pool test.
@@ -2065,7 +2066,8 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.apRehearsal = !!(rh && rh.rows && rh.rows.length);
       if (this.apRehearsal) {
         const at = new Date(rh.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        this.apRehearsalBanner = `Rehearsal — on its latest tick (${at}, tick ${rh.ticks}) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
+        // ticks counts the ticks that planned a rental, not every tick, so it's named as plans.
+        this.apRehearsalBanner = `Rehearsal — on its latest plan (${at}; ${rh.ticks} plan${rh.ticks === 1 ? '' : 's'} so far) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
         this.apRehearsalRows = rh.rows.map((r) => ({
           id: r.rig_id, name: r.rig_name, region: r.region, hash: r.advertised_th != null ? this.fmtHashRig(r.advertised_th) : '', hours: `${r.length_hours}h`, cost: `${this.fmtSats(r.cost_sats)} sats`,
         }));
