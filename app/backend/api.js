@@ -35,6 +35,7 @@ const endpoints = require('./endpoints');
 const payoutAddress = require('./address');
 const diff = require('./diff');
 const fx = require('./fx');
+const gateway = require('./gateway');
 
 // Throttle for the authenticated endpoint-probe route (blunts use as an internal scanner).
 // Overridable so tests can disable the spacing between rapid consecutive probes.
@@ -329,6 +330,22 @@ async function handleApi(req, res, url, body, ctx = {}) {
       } catch { /* leave unknown */ }
     }
 
+    /*
+     * Can this Gateway serve rented rigs below the pool's minimum difficulty? Asked, not
+     * inferred: PaulsCode's Datum Gateway builds answer datum.capabilities, and any other
+     * Gateway answers "Method not found". Without the feature, a pool that sizes its minimum
+     * to the gateway's total hashrate (CONVOY does) pushes every rented rig to a difficulty
+     * sized for the whole fleet. Advisory: it never blocks the save. Same gate as the probe
+     * above, for the same reason.
+     */
+    let gatewayInfo = null;
+    if (probe.gotWork && rentalWorkerOk) {
+      try {
+        const caps = await stratum.capabilities(connectIp, port, { timeoutMs: 4000 });
+        gatewayInfo = { ...gateway.assess(caps, { algo: market.activeAlgo(conn), platform: gateway.platform() }), checked_at: Math.floor(Date.now() / 1000) };
+      } catch { /* leave unknown */ }
+    }
+
     let mrrAdvisory = null;
     const client = mrr.clientFromStore(conn, ctx.dataDir);
     if (client) {
@@ -344,11 +361,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // Scoped: saving an endpoint for one algorithm must not stand the other's down.
       endpoints.deactivateAll(conn);
       conn.prepare(
-        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, supports_password_diff, last_test_json, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        `INSERT INTO pool_endpoints (algo, name, source, host, port, worker_base, stratum_diff, supports_password_diff, last_test_json, active, gateway_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       ).run(market.activeAlgo(conn), `endpoint:${host}:${port}`, 'manual', host, port, user, probe.difficulty,
         supportsPasswordDiff == null ? null : (supportsPasswordDiff ? 1 : 0),
-        JSON.stringify({ probe, mrrAdvisory, isIp, supportsPasswordDiff, at: Math.floor(Date.now() / 1000) }));
+        JSON.stringify({ probe, mrrAdvisory, isIp, supportsPasswordDiff, at: Math.floor(Date.now() / 1000) }),
+        gatewayInfo ? JSON.stringify(gatewayInfo) : null);
       // If the endpoint identity changed out from under an active DuckDNS name (the user saved a
       // different host), disable DuckDNS — the name tracked the old endpoint. They can re-enable it
       // for the new one. (Re-saving the SAME name keeps it.)
@@ -372,6 +390,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
       // runs at whatever single difficulty the gateway hands out instead of one suited to
       // its own hashrate — which is what MRR measures the rental on.
       supports_password_diff: supportsPasswordDiff,
+      // { status: ready|disabled|outdated|unknown, gateway, poolMinDiff, app, store } or null
+      // when the endpoint failed before it was asked. See gateway.js.
+      gateway: gatewayInfo,
       bare_ip: isIp,
       warning: isIp
         ? 'Bare-IP endpoint: MRR does not refund rentals pointed at IP-based pools — prefer a DNS hostname (a HashGG playit tunnel gives you one).'

@@ -478,7 +478,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.poolReport = r.json;
       this.poolOk = !!r.json.ok;
       this.poolFailed = !r.json.ok;
-      this.poolWarning = r.json.warning || '';
+      this.poolWarning = [r.json.warning, this.gatewayNote(r.json.gateway)].filter(Boolean).join(' ');
       this.bareIp = !!r.json.bare_ip;   // a raw IP -> surface the DuckDNS naming option
       this.duckdnsReport = '';
       this.showDuckdns = this.poolOk && this.bareIp && !this.duckdnsEnabled;
@@ -505,6 +505,19 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
      *
      * null means the test did not get far enough to establish it, and says nothing.
      */
+    /*
+     * What the endpoint's Datum Gateway means for rented rigs, as a warning sentence, or ''
+     * when there is nothing to say (it is ready, or nothing is known). See backend gateway.js.
+     */
+    gatewayNote(g) {
+      if (!g || (g.status !== 'outdated' && g.status !== 'disabled')) return '';
+      const store = g.store || {};
+      const where = `${store.name || 'PaulsCode store'}${store.url ? ` (${store.url}${store.how ? `; ${store.how}` : ''})` : ''}`;
+      if (g.status === 'disabled') {
+        return 'Your Datum Gateway can give each rented rig its own difficulty, but that is switched off. Turn on \u201cServe miners below the pool\u2019s minimum difficulty\u201d in its settings, otherwise a busy gateway pushes every rented rig to the pool\u2019s minimum difficulty.';
+      }
+      return `If this endpoint is a Datum Gateway, it can\u2019t give rented rigs their own difficulty. A pool that sizes its minimum difficulty to your gateway\u2019s total hashrate then pushes every rented rig far above what it suits: rig owners see a \u201cHigh Worker Difficulty\u201d warning, MRR\u2019s delivery readings turn choppy, and rigs reconnect every few minutes. Install ${g.app || 'Datum Gateway'} from the ${where} to fix this.`;
+    },
     diffSupportNote(supports) {
       if (supports === true) return ' Each rental will run at a difficulty suited to its own rig.';
       if (supports === false) return ' This endpoint ignores per-rental difficulty requests, so every rental runs at that difficulty. A gateway that accepts them lets each rig run at one suited to its size, which gives MRR a more reliable delivery reading.';
@@ -696,6 +709,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         rental_underdelivering: `${c.name || 'A rig'} is under-delivering (${c.percent != null ? Math.round(c.percent) + '%' : 'low'})`,
         rental_offline: `${c.name || 'A rig'} is offline`,
         endpoint_down: `Your stratum endpoint is unreachable — new rentals are paused`,
+        gateway_outdated: c.status === 'disabled'
+          ? 'Your Datum Gateway can give rented rigs their own difficulty, but it is switched off \u2014 turn on \u201cServe miners below the pool\u2019s minimum difficulty\u201d in its settings'
+          : `Your Datum Gateway pushes rented rigs to the pool\u2019s minimum difficulty — install ${c.app || 'Datum Gateway'} from ${(c.store && c.store.url) || 'the PaulsCode store'}`,
         mrr_api_outage: `MiningRigRentals API is unreachable`,
         balance_low: `Low balance — about ${c.runway_hours != null ? c.runway_hours + 'h' : 'little'} of runway left`,
         deposit_seen: `Deposit detected — waiting for confirmations`,
@@ -1682,6 +1698,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       if (!b.ok) { this.seReportClass = 'text-neon-pink'; this.seReport = 'Endpoint saved, but the MRR pool/profile update failed — try again.'; return; }
       this.seReportClass = 'text-neon-green';
       this.seReport = `Saved — serves work (difficulty ${pr.difficulty}). New rentals use this endpoint, and in LIVE mode running rentals move to it on the next tick.${this.diffSupportNote(r.json.supports_password_diff)}`;
+      this.seWarning = [this.seWarning, this.gatewayNote(r.json.gateway)].filter(Boolean).join(' ');
       await this.loadConnection();
     },
     async loadSettings() {

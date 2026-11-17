@@ -106,4 +106,69 @@ function probe(host, port, user, opts = {}) {
   });
 }
 
-module.exports = { probe };
+/*
+ * Ask a stratum endpoint what it supports, via the `datum.capabilities` request that
+ * PaulsCode's Datum Gateway builds answer. Never throws. Resolves:
+ *   { reachable, answered, supported, caps, error }
+ *   - supported true:  caps is the Gateway's reply ({ gateway, algo, features, pooled, pool_min_diff }).
+ *   - supported false: the endpoint answered with an error ("Method not found" from any
+ *     Gateway without the method, i.e. an older or stock Datum, or a pool that is not Datum).
+ *   - supported null:  no answer at all (unreachable, closed, or timed out), so nothing is known.
+ * No subscribe or authorize: the request stands alone, so this costs the endpoint nothing.
+ */
+function capabilities(host, port, opts = {}) {
+  const timeoutMs = opts.timeoutMs || 6000;
+  return new Promise((resolve) => {
+    const result = { reachable: false, answered: false, supported: null, caps: null, error: null };
+    const portNum = Number(port);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      result.error = 'bad_port';
+      resolve(result);
+      return;
+    }
+    let settled = false;
+    let deadline = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      try { sock.destroy(); } catch { /* already gone */ }
+      resolve(result);
+    };
+    const sock = net.connect({ host, port: portNum }, () => {
+      result.reachable = true;
+      try { sock.write(`${JSON.stringify({ id: 1, method: 'datum.capabilities', params: [] })}\n`); } catch { /* closing */ }
+    });
+    sock.setTimeout(timeoutMs, () => { if (!result.error) result.error = 'timeout'; finish(); });
+    deadline = setTimeout(() => { if (!result.error) result.error = 'timeout'; finish(); }, timeoutMs);
+    if (deadline.unref) deadline.unref();
+    let buf = '';
+    sock.on('data', (d) => {
+      buf += d.toString();
+      if (buf.length > 65536) { result.error = 'oversized'; finish(); return; }
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        let m;
+        try { m = JSON.parse(line); } catch { continue; }
+        if (m.id !== 1) continue;
+        result.answered = true;
+        if (m.error == null && m.result && typeof m.result === 'object' && !Array.isArray(m.result)) {
+          result.supported = true;
+          result.caps = m.result;
+        } else {
+          result.supported = false;
+          result.error = Array.isArray(m.error) ? String(m.error[1] || m.error[0]) : 'error_reply';
+        }
+        finish();
+        return;
+      }
+    });
+    sock.on('error', (e) => { if (!result.error) result.error = e.message; finish(); });
+    sock.on('close', () => finish());
+  });
+}
+
+module.exports = { probe, capabilities };

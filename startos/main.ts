@@ -31,6 +31,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
         env: {
           PORT: String(uiPort),
           DATA_DIR: '/root/data',
+          // Which store to point the user at when their Datum Gateway needs updating.
+          PICKHASH_PLATFORM: 'startos',
           // On StartOS 0.4.0 the HashGG services are reachable at these host names.
           // Setting them only ENABLES optional auto-discovery; if a HashGG is not
           // installed the probe simply fails and Pickhash stays fully usable.

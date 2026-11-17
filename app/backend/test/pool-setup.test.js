@@ -35,6 +35,8 @@ function fakeStratum() {
           sock.write(`${JSON.stringify({ id: null, method: 'mining.notify', params: ['job'] })}\n`);
         }
         if (m.method === 'mining.authorize') sock.write(`${JSON.stringify({ id: m.id, result: true, error: null })}\n`);
+        // Like a stock Datum Gateway: anything else is "Method not found".
+        if (m.method === 'datum.capabilities') sock.write(`${JSON.stringify({ error: [-3, 'Method not found', null], id: m.id, result: null })}\n`);
       }
     });
   });
@@ -95,6 +97,13 @@ test('pool-test runs our authoritative probe, flags bare IP, and stores the endp
   assert.equal(row.port, stratumPort);
   assert.equal(row.worker_base, 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.phash');   // full username base (address + worker)
   assert.equal(row.stratum_diff, 131072);
+
+  // A stock Gateway (no datum.capabilities) is reported, and recorded on the endpoint, as one
+  // that cannot serve rented rigs below the pool minimum, with where to get one that can.
+  assert.equal(r.json.gateway.status, 'outdated');
+  assert.match(r.json.gateway.app, /^Datum/);
+  assert.ok(r.json.gateway.store && r.json.gateway.store.url);
+  assert.equal(JSON.parse(row.gateway_json).status, 'outdated');
 });
 
 test('a failing pool-test does not persist or clobber the working endpoint', async () => {

@@ -30,8 +30,10 @@ const dispute = require('./dispute');
 const prune = require('./prune');
 const scoring = require('./scoring');
 const endpoints = require('../endpoints');
+const gatewayCaps = require('../gateway');
 
 const MARKET_CADENCE_MS = 5 * 60 * 1000;   // market snapshot every 5 min, not every tick
+const GATEWAY_CADENCE_MS = 30 * 60 * 1000; // re-ask the Gateway what it supports every 30 min
 const ADOPT_WINDOW_SEC = 15 * 60;          // a rental starting within 15 min of an intent
 
 function num(v) { return v === '' || v === null || v === undefined ? null : Number(v); }
@@ -229,6 +231,9 @@ async function observe(conn, client, ctx = {}) {
   // --- Endpoint stratum probe (authoritative endpoint health) ---
   const ep = endpoints.active(conn);
   let endpoint = prev.endpoint || null;
+  let gatewayInfo = prev.gateway || null;
+  let gatewayAt = prev.gatewayAt || 0;
+  let gatewayKey = prev.gatewayKey || null;
   if (ep) {
     try {
       // Resolve to a validated IP every tick and PIN the probe to it — the stored host may be a DNS
@@ -250,8 +255,33 @@ async function observe(conn, client, ctx = {}) {
       } else {
         const p = await stratum.probe(ip, ep.port, ep.worker_base, { timeoutMs: ctx.probeTimeoutMs || 8000 });
         endpoint = { host: ep.host, port: ep.port, ok: !!p.gotWork, difficulty: p.difficulty, reachable: p.reachable };
+        // Re-ask the Gateway what it supports now and then, and at once when the endpoint
+        // changes, so the gateway_outdated alert clears by itself after the user upgrades it
+        // (the endpoint test is not re-run for that). Only while the endpoint serves work: an
+        // endpoint that is down says nothing about its Gateway's version.
+        const key = `${ep.id}|${ep.host}|${ep.port}`;
+        if (p.gotWork && (gatewayKey !== key || nowMs - gatewayAt >= GATEWAY_CADENCE_MS)) {
+          const caps = await stratum.capabilities(ip, ep.port, { timeoutMs: ctx.probeTimeoutMs || 6000 });
+          const a = gatewayCaps.assess(caps, { algo: market.activeAlgo(conn), platform: gatewayCaps.platform() });
+          gatewayAt = nowMs;
+          gatewayKey = key;
+          // An endpoint that did not answer keeps what was last known about it.
+          if (a.status !== 'unknown') {
+            gatewayInfo = { ...a, endpoint_id: ep.id, checked_at: nowSec };
+            conn.prepare('UPDATE pool_endpoints SET gateway_json = ? WHERE id = ?').run(JSON.stringify(gatewayInfo), ep.id);
+          }
+        }
       }
     } catch { fetchOk.endpoint = false; }
+  }
+  // What is known about the active endpoint's Gateway: carried across ticks, or read from the
+  // endpoint row (set by the endpoint test) after a restart. Only for the endpoint now active.
+  if (ep) {
+    if (!gatewayInfo || gatewayInfo.endpoint_id !== ep.id) {
+      try { gatewayInfo = ep.gateway_json ? { ...JSON.parse(ep.gateway_json), endpoint_id: ep.id } : null; } catch { gatewayInfo = null; }
+    }
+  } else {
+    gatewayInfo = null;
   }
 
   // --- HashGG probe (optional) ---
@@ -304,6 +334,7 @@ async function observe(conn, client, ctx = {}) {
     reconciliation,
     balance,
     endpoint,
+    gateway: gatewayInfo,
     hashgg: hg,
     // Whether HashGG is configured at all. Lets the tick metric distinguish "not
     // configured" (n/a) from "configured but unreachable" (a real outage), so uptime
@@ -311,7 +342,7 @@ async function observe(conn, client, ctx = {}) {
     hashgg_configured: !!ctx.hashggHost,
     market: mkt,
   };
-  const nextState = { rentals: nextRentals, marketAt, refundAt, pruneAt, market: mkt, balance, endpoint, hashgg: hg };
+  const nextState = { rentals: nextRentals, marketAt, refundAt, pruneAt, market: mkt, balance, endpoint, hashgg: hg, gateway: gatewayInfo, gatewayAt, gatewayKey };
   return { snapshot, nextState };
 }
 

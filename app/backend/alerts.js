@@ -1,5 +1,6 @@
 'use strict';
 const market = require('./market');
+const gatewayCaps = require('./gateway');
 /*
  * Alert evaluator (state-transition machinery).
  *
@@ -46,6 +47,7 @@ const SEVERITY = {
   rig_rerouted: 'warning',
   duckdns_update_failed: 'warning',
   worker_repaired: 'warning',
+  gateway_outdated: 'warning',
 };
 
 function currentActive(conn, kind, key) {
@@ -141,6 +143,22 @@ function evaluate(conn, snapshot, prev = {}, now = Date.now(), cfg = {}) {
   if (s.endpoint) {
     const bad = s.fetch_ok.endpoint !== false && !s.endpoint.ok;
     push(runTransition(conn, { kind: 'endpoint_down', bad, now, thresholdMs: c.endpoint_down_ms, context: { host: s.endpoint.host, port: s.endpoint.port } }));
+  }
+
+  // gateway_outdated: the endpoint's Datum Gateway cannot serve rented rigs below the pool's
+  // minimum difficulty (or has it switched off). Standing while true, and resolves by itself
+  // once a periodic re-check finds the feature on (engine/observe.js). Nothing known: no alert.
+  {
+    const g = s.gateway || null;
+    const bad = gatewayCaps.needsAttention(g);
+    const context = g ? { status: g.status, app: g.app, store: g.store, gateway: g.gateway, pool_min_diff: g.poolMinDiff } : {};
+    push(runTransition(conn, { kind: 'gateway_outdated', bad, now, context }));
+    // A standing alert's wording follows the Gateway: one upgraded to a build that has the
+    // feature but with it switched off must stop telling the user to install it.
+    if (bad) {
+      conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'gateway_outdated' AND key IS NULL AND state = 'fired' AND context_json IS NOT ?")
+        .run(JSON.stringify(context), JSON.stringify(context));
+    }
   }
 
   // mrr_api_outage — the rentals list failing.
