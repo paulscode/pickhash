@@ -72,7 +72,8 @@ function probe(host, port, user, opts = {}) {
     }
 
     let buf = '';
-    sock.on('data', (d) => {
+    sock.on('data', (d) => { try { onData(d); } catch (e) { if (!result.error) result.error = 'bad_reply'; finish(); } });
+    function onData(d) {
       buf += d.toString();
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
@@ -81,6 +82,9 @@ function probe(host, port, user, opts = {}) {
         if (!line) continue;
         let m;
         try { m = JSON.parse(line); } catch { continue; }
+        // A reply must be a JSON object; `null`, a number or a string would make the field
+        // reads below throw inside this socket handler, which takes the whole process down.
+        if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
         if (m.id === 1 && m.result !== undefined && m.error == null) { result.subscribed = true; result.msToSubscribe = el(); }
         if (m.id === 2) {
           if (m.result === true) result.authorized = true;
@@ -100,7 +104,7 @@ function probe(host, port, user, opts = {}) {
           // starts the grace timer above, or for a job sent after it.
         }
       }
-    });
+    }
     sock.on('error', (e) => { if (!result.error) result.error = e.message; finish(); });
     sock.on('close', () => finish());
   });
@@ -143,7 +147,8 @@ function capabilities(host, port, opts = {}) {
     deadline = setTimeout(() => { if (!result.error) result.error = 'timeout'; finish(); }, timeoutMs);
     if (deadline.unref) deadline.unref();
     let buf = '';
-    sock.on('data', (d) => {
+    sock.on('data', (d) => { try { onData(d); } catch (e) { if (!result.error) result.error = 'bad_reply'; finish(); } });
+    function onData(d) {
       buf += d.toString();
       if (buf.length > 65536) { result.error = 'oversized'; finish(); return; }
       let i;
@@ -153,6 +158,9 @@ function capabilities(host, port, opts = {}) {
         if (!line) continue;
         let m;
         try { m = JSON.parse(line); } catch { continue; }
+        // A reply must be a JSON object; `null`, a number or a string would make the field
+        // reads below throw inside this socket handler, which takes the whole process down.
+        if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
         if (m.id !== 1) continue;
         result.answered = true;
         if (m.error == null && m.result && typeof m.result === 'object' && !Array.isArray(m.result)) {
@@ -165,7 +173,7 @@ function capabilities(host, port, opts = {}) {
         finish();
         return;
       }
-    });
+    }
     sock.on('error', (e) => { if (!result.error) result.error = e.message; finish(); });
     sock.on('close', () => finish());
   });

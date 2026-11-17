@@ -18,6 +18,7 @@ const stratum = require('../stratum');
 const gateway = require('../gateway');
 const alerts = require('../alerts');
 const observe = require('../engine/observe');
+const market = require('../market');
 
 const READY = { gateway: 'v0.5.0-beta/abc', algo: 'blake2b', features: { vardiff_below_pool_min: true, password_difficulty: true, reject_tls_probe: true }, pooled: true, pool_min_diff: 1048576 };
 
@@ -195,4 +196,51 @@ test('no alert when nothing is known about the Gateway', () => {
   assert.equal(ev.filter((e) => e.kind === 'gateway_outdated').length, 0);
   const ev2 = alerts.evaluate(conn, { rentals: [], fetch_ok: {}, gateway: { status: 'unknown' } }, {}, 2000);
   assert.equal(ev2.filter((e) => e.kind === 'gateway_outdated').length, 0);
+});
+
+test('a hostile endpoint cannot crash the process: non-object replies end the probe quietly', async () => {
+  for (const reply of ['null', '1', '"x"', '[1,2]', 'true']) {
+    const srv = net.createServer((c) => { c.on('error', () => {}); c.on('data', () => c.write(reply + '\n')); });
+    const port = await listen(srv);
+    try {
+      const caps = await stratum.capabilities('127.0.0.1', port, { timeoutMs: 400 });
+      assert.equal(caps.supported, null, `capabilities on ${reply}`);
+      const p = await stratum.probe('127.0.0.1', port, 'u', { timeoutMs: 400 });
+      assert.equal(p.gotWork, false, `probe on ${reply}`);
+    } finally { srv.close(); }
+  }
+});
+
+test('the alert is per algorithm, so the dashboard for each shows its own', () => {
+  const conn = db.get();
+  const outdated = { status: 'outdated', app: 'Datum Gateway (BLAKE2b)', store: { url: gateway.REGISTRY_URL } };
+  alerts.evaluate(conn, { rentals: [], fetch_ok: {}, gateway: outdated }, {}, 1000);
+  const row = conn.prepare("SELECT key, algo FROM alerts WHERE kind = 'gateway_outdated'").get();
+  assert.equal(row.key, market.activeAlgo(conn));
+  assert.equal(row.algo, market.activeAlgo(conn));
+});
+
+test('a dismissed alert stays dismissed while the gateway is unchanged, and clears when it is fixed', () => {
+  const conn = db.get();
+  const base = { rentals: [], fetch_ok: {} };
+  const outdated = { status: 'outdated', app: 'Datum Gateway (BLAKE2b)', store: { url: gateway.REGISTRY_URL } };
+  alerts.evaluate(conn, { ...base, gateway: outdated }, {}, 1000);
+  const id = conn.prepare("SELECT id FROM alerts WHERE kind = 'gateway_outdated' AND state = 'fired'").get().id;
+  alerts.ack(conn, id, 1500);
+  alerts.evaluate(conn, { ...base, gateway: outdated }, {}, 2000);
+  assert.equal(conn.prepare("SELECT COUNT(*) n FROM alerts WHERE kind = 'gateway_outdated' AND state = 'fired'").get().n, 0, 'not re-raised');
+  alerts.evaluate(conn, { ...base, gateway: { ...outdated, status: 'ready' } }, {}, 3000);
+  assert.equal(conn.prepare("SELECT state FROM alerts WHERE id = ?").get(id).state, 'resolved');
+  // A later regression raises it afresh.
+  alerts.evaluate(conn, { ...base, gateway: outdated }, {}, 4000);
+  assert.equal(conn.prepare("SELECT COUNT(*) n FROM alerts WHERE kind = 'gateway_outdated' AND state = 'fired'").get().n, 1);
+});
+
+test('a result recorded for another host is not shown once the endpoint has moved', async () => {
+  const conn = db.get();
+  conn.prepare("INSERT INTO pool_endpoints (algo, host, port, worker_base, active, gateway_json) VALUES (?, '127.0.0.1', 1, 'bc1qx.w', 1, ?)")
+    .run(market.activeAlgo(conn), JSON.stringify({ status: 'outdated', endpoint: 'old.example:1' }));
+  const t0 = 1_700_000_000_000;
+  const out = await observe.observe(conn, client(), { now: t0, marketSkip: true, probeTimeoutMs: 300, prevState: { rentals: {}, marketAt: t0, refundAt: t0 } });
+  assert.equal(out.snapshot.gateway, null);
 });

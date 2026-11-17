@@ -711,7 +711,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         endpoint_down: `Your stratum endpoint is unreachable — new rentals are paused`,
         gateway_outdated: c.status === 'disabled'
           ? 'Your Datum Gateway can give rented rigs their own difficulty, but it is switched off \u2014 turn on \u201cServe miners below the pool\u2019s minimum difficulty\u201d in its settings'
-          : `Your Datum Gateway pushes rented rigs to the pool\u2019s minimum difficulty — install ${c.app || 'Datum Gateway'} from ${(c.store && c.store.url) || 'the PaulsCode store'}`,
+          : `Your stratum endpoint can\u2019t give rented rigs their own difficulty. If it is a Datum Gateway, install ${c.app || 'Datum Gateway'} from ${(c.store && c.store.url) || 'the PaulsCode store'}`,
         mrr_api_outage: `MiningRigRentals API is unreachable`,
         balance_low: `Low balance — about ${c.runway_hours != null ? c.runway_hours + 'h' : 'little'} of runway left`,
         deposit_seen: `Deposit detected — waiting for confirmations`,

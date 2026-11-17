@@ -342,7 +342,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     if (probe.gotWork && rentalWorkerOk) {
       try {
         const caps = await stratum.capabilities(connectIp, port, { timeoutMs: 4000 });
-        gatewayInfo = { ...gateway.assess(caps, { algo: market.activeAlgo(conn), platform: gateway.platform() }), checked_at: Math.floor(Date.now() / 1000) };
+        gatewayInfo = { ...gateway.assess(caps, { algo: market.activeAlgo(conn), platform: gateway.platform() }), endpoint: `${host}:${port}`, checked_at: Math.floor(Date.now() / 1000) };
       } catch { /* leave unknown */ }
     }
 

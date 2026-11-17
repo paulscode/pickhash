@@ -267,7 +267,7 @@ async function observe(conn, client, ctx = {}) {
           gatewayKey = key;
           // An endpoint that did not answer keeps what was last known about it.
           if (a.status !== 'unknown') {
-            gatewayInfo = { ...a, endpoint_id: ep.id, checked_at: nowSec };
+            gatewayInfo = { ...a, endpoint_id: ep.id, endpoint: `${ep.host}:${ep.port}`, checked_at: nowSec };
             conn.prepare('UPDATE pool_endpoints SET gateway_json = ? WHERE id = ?').run(JSON.stringify(gatewayInfo), ep.id);
           }
         }
@@ -280,6 +280,9 @@ async function observe(conn, client, ctx = {}) {
     if (!gatewayInfo || gatewayInfo.endpoint_id !== ep.id) {
       try { gatewayInfo = ep.gateway_json ? { ...JSON.parse(ep.gateway_json), endpoint_id: ep.id } : null; } catch { gatewayInfo = null; }
     }
+    // What is known is about the host it was asked of. DuckDNS and endpoint repair move the
+    // same row to a new host; until the new one has answered, nothing is known about it.
+    if (gatewayInfo && gatewayInfo.endpoint && gatewayInfo.endpoint !== `${ep.host}:${ep.port}`) gatewayInfo = null;
   } else {
     gatewayInfo = null;
   }

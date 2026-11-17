@@ -152,12 +152,24 @@ function evaluate(conn, snapshot, prev = {}, now = Date.now(), cfg = {}) {
     const g = s.gateway || null;
     const bad = gatewayCaps.needsAttention(g);
     const context = g ? { status: g.status, app: g.app, store: g.store, gateway: g.gateway, pool_min_diff: g.poolMinDiff } : {};
-    push(runTransition(conn, { kind: 'gateway_outdated', bad, now, context }));
+    // Keyed by algorithm: each algorithm has its own endpoint and gateway, and the dashboard
+    // lists only the active algorithm's alerts, so one alert shared between them would be
+    // shown under the wrong one, or not at all, after a switch.
+    const key = market.activeAlgo(conn);
+    // Dismissed stays dismissed while the condition lasts. This alert can stand for days, and
+    // without this a dismissal would be undone on the next tick. Resolving clears it as usual.
+    const acked = conn.prepare("SELECT id FROM alerts WHERE kind = 'gateway_outdated' AND key IS ? AND state = 'acked'").get(key);
+    if (bad && acked) {
+      // nothing: the user has seen it
+    } else {
+      if (!bad && acked) conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE id = ?").run(now, acked.id);
+      push(runTransition(conn, { kind: 'gateway_outdated', key, bad, now, context }));
+    }
     // A standing alert's wording follows the Gateway: one upgraded to a build that has the
     // feature but with it switched off must stop telling the user to install it.
     if (bad) {
-      conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'gateway_outdated' AND key IS NULL AND state = 'fired' AND context_json IS NOT ?")
-        .run(JSON.stringify(context), JSON.stringify(context));
+      conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'gateway_outdated' AND key IS ? AND state IN ('fired', 'acked') AND context_json IS NOT ?")
+        .run(JSON.stringify(context), key, JSON.stringify(context));
     }
   }
 
