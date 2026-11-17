@@ -44,7 +44,10 @@ function route(method, p, load, query = {}) {
   if (method === 'GET' && p === '/account') return load('account.json');
   if (method === 'GET' && p === '/account/balance') return load('balance.json');
   if (method === 'GET' && p === '/account/transactions') return load('transactions.json');
-  if (method === 'GET' && p === '/account/pool') return [{ id: '7000001', name: 'pickhash-test' }];
+  if (method === 'GET' && p === '/account/pool') return [
+    { id: '7000001', name: 'pickhash-test', type: 'sha256ab', host: 'pool.example', port: '3333', user: 'bc1qexample.phash', pass: 'x', priority: 0, status: '' },
+    { id: '7000003', name: 'my blake pool', type: 'blake2b', host: '203.0.113.10', port: '23334', user: 'bc1qblake.mrr1', pass: 'x', priority: 0, status: '' },
+  ];
   if (method === 'GET' && p === '/account/profile') return [{ id: '7000002', name: 'pickhash-test' }];
   if (method === 'GET' && /^\/rental\/\d+$/.test(p)) return load('rental-created.json');
   if (method === 'GET' && p === '/rental') return { total: 1, records: [load('rental-created.json')] };

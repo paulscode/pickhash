@@ -59,6 +59,12 @@ after(async () => {
   fs.rmSync(DATA, { recursive: true, force: true });
 });
 
+test('mrr-pools before any key is stored -> 400 mrr_not_configured', async () => {
+  const r = await call('GET', '/api/setup/mrr-pools');
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, 'mrr_not_configured');
+});
+
 test('mrr-keys: missing fields, auth failure, and rent-permission are rejected without persisting', async () => {
   let r = await call('POST', '/api/setup/mrr-keys', { key: '', secret: '' });
   assert.equal(r.status, 400);
@@ -91,6 +97,24 @@ test('mrr-keys: a valid rent-only key is stored and reports non-capable withdraw
   const blob = db.get().prepare("SELECT blob FROM secrets WHERE name='mrr_secret'").get().blob;
   assert.doesNotMatch(blob.toString('latin1'), /REALSECRET/, 'secret is encrypted at rest');
   assert.ok(config.getKey(db.get(), 'mrr', 'userid'));
+});
+
+test('mrr-pools lists the saved pools for the active algorithm only, with usable fields', async () => {
+  scenarioFn = () => null;   // mock serves two saved pools, one per algorithm
+  let r = await call('GET', '/api/setup/mrr-pools');
+  assert.equal(r.status, 200);
+  assert.equal(r.json.algo, 'sha256ab');
+  assert.deepEqual(r.json.pools.map((p) => p.id), ['7000001']);
+  assert.deepEqual(r.json.pools[0], { id: '7000001', name: 'pickhash-test', host: 'pool.example', port: 3333, user: 'bc1qexample.phash' });
+  // Switch the active algorithm: the other market's pool is the only one offered.
+  config.set(db.get(), 'algorithm', { active: 'blake2b' });
+  r = await call('GET', '/api/setup/mrr-pools');
+  assert.equal(r.status, 200);
+  assert.equal(r.json.algo, 'blake2b');
+  assert.deepEqual(r.json.pools.map((p) => p.id), ['7000003']);
+  assert.equal(r.json.pools[0].port, 23334);
+  assert.equal(r.json.pools[0].user, 'bc1qblake.mrr1');
+  config.set(db.get(), 'algorithm', { active: 'sha256ab' });
 });
 
 test('mrr-keys: storing a key resets run mode to DRY-RUN and clears the LIVE confirmation', async () => {
