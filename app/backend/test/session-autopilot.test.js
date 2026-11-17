@@ -273,8 +273,8 @@ function pricedRig(id, ph, x) {
   r.price.BTC.price = perDay.toFixed(8);
   return r;
 }
-// A big cheap rig dilutes the blend, so the pre-filled ceiling's 2x per-rig backstop sits below a
-// dearer rig that's still inside the market price limit: LIVE would refuse it.
+// A big cheap rig dilutes the blend well under the market, so 2x the pre-filled ceiling sits below a
+// dearer rig (1.9x) that's still inside the market price limit (2x the median listed price).
 const dilutedMarket = () => [pricedRig(1, 0.9, 0.5), pricedRig(2, 0.01, 1), pricedRig(3, 0.01, 1), pricedRig(4, 0.08, 1.9)];
 
 test('#15: an untouched preview is held to the ceiling it pre-fills, as a start would be', async () => {
@@ -282,8 +282,10 @@ test('#15: an untouched preview is held to the ceiling it pre-fills, as a start 
   const auto = await session.estimateAutopilot(db.get(), client(dilutedMarket()), { targetTh: 1000, budgetSats: 1_000_000, endpoint: ep });
   assert.ok(auto.suggestedCeilingSatsUnitDay > 0);
   assert.equal(auto.ceilingSatsUnitDay, auto.suggestedCeilingSatsUnitDay, 'held to its own suggestion');
-  assert.equal(auto.coveredTh, 920, 'the rig over the suggestion backstop is left out');
-  assert.equal(auto.ceilingBlocked, true);
+  // The per-rig backstop is never tighter than the market price limit, so a fairly priced rig the
+  // diluted blend would have put over 2x the ceiling is still rented, as the uncapped fill had it.
+  assert.equal(auto.coveredTh, 1000, 'the suggestion does not refuse a rig inside the market limit');
+  assert.equal(auto.ceilingBlocked, false);
   // Cleared by the user (null): no ceiling, so the dear rig is in.
   const open = await session.estimateAutopilot(db.get(), client(dilutedMarket()), { targetTh: 1000, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: null });
   assert.equal(open.coveredTh, 1000);

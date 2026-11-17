@@ -616,3 +616,22 @@ test('decide(): a fill that lands inside the band is no shortfall, so no ceiling
   assert.ok(!plan.notes.includes('shortfall'));
   assert.ok(!plan.notes.includes('blend_ceiling'));
 });
+
+test('blendBackstop: 2x the cap, never tighter than the market price limit', () => {
+  assert.equal(decide.blendBackstop(Infinity, { limitBtcThDay: 5 }), Infinity, 'no cap, no backstop');
+  assert.equal(decide.blendBackstop(1, null), 2, 'market limit off: 2x the cap, as before');
+  assert.equal(decide.blendBackstop(1, { limitBtcThDay: 3 }), 3, 'a looser market limit wins');
+  assert.equal(decide.blendBackstop(2, { limitBtcThDay: 3 }), 4, 'a tighter one does not tighten it');
+});
+
+test('decide(): a diluted blend cap does not refuse a rig the market price limit allows', () => {
+  // A big cheap rig pulls the blend far under the market. With the cap at 1.1x that blend, 2x the cap
+  // is under the dear rig's price, but the market limit (2x the median listed) admits it.
+  const marketRigs = [crig('big', 900, 25000), crig('s1', 10, 50000), crig('s2', 10, 50000), crig('dear', 80, 95000)];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 1000 }), rentals: [], marketRigs, maxOverMarketPct: 100,
+    blendedCeilingSatsUnitDay: 34000,
+  }));
+  assert.ok(plan.actions.some((a) => a.rigId === 'dear'), plan.actions.map((a) => a.rigId).join(','));
+  assert.equal(plan.shortfallTh, 0);
+});

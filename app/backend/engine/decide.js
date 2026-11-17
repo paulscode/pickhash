@@ -34,6 +34,19 @@ const FEE_RATE = quote.FEE_RATE;
 // multiple of the blended cap, even if cheap holdings would dilute it under the average ("seatbelt").
 const BLEND_BACKSTOP_MULT = 2;
 
+/*
+ * The per-rig backstop for a blended cap: BLEND_BACKSTOP_MULT x the cap, but never tighter than the
+ * per-rig market price limit (quote.marketPriceLimit) when that is on. The market limit already
+ * keeps absurdly priced rigs out, which is what the backstop is for. Without this floor, a big cheap
+ * rig that pulls the blend (and so a suggested cap) well under the market made the backstop refuse
+ * fairly priced rigs the market limit allows, leaving a shortfall nobody asked for. Infinity = off.
+ */
+function blendBackstop(blendCapBtcThDay, priceLimit) {
+  if (!Number.isFinite(blendCapBtcThDay)) return Infinity;
+  const market = priceLimit && Number.isFinite(priceLimit.limitBtcThDay) ? priceLimit.limitBtcThDay : 0;
+  return Math.max(blendCapBtcThDay * BLEND_BACKSTOP_MULT, market);
+}
+
 /** Fee-inclusive cost to rent a rig for `hours` (reproduces MRR's per-rental rounding). */
 function rentCostSats(hourBtc, hours) {
   const base = Math.round((hourBtc || 0) * hours * 1e8);
@@ -277,7 +290,7 @@ function decide(ctx = {}) {
   const heldAdvTh = pricedActive.reduce((s, r) => s + r.advertised_th, 0);
   const blendCapBtcThDay = ctx.blendedCeilingSatsUnitDay != null
     ? units.btcThDayFromSatsPerUnitDay(ctx.blendedCeilingSatsUnitDay, ctx.priceUnit) : Infinity;
-  const rigBackstopBtcThDay = Number.isFinite(blendCapBtcThDay) ? blendCapBtcThDay * BLEND_BACKSTOP_MULT : Infinity;
+  const rigBackstopBtcThDay = blendBackstop(blendCapBtcThDay, priceLimit);
 
   const bandTh = targetTh * tol;
   const { selection: picked, coveredTh, blendBlocked } = packToTarget(feasible, neededTh, {
@@ -362,4 +375,4 @@ function decide(ctx = {}) {
   };
 }
 
-module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, FEE_RATE, BLEND_BACKSTOP_MULT };
+module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, blendBackstop, FEE_RATE, BLEND_BACKSTOP_MULT };

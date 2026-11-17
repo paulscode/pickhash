@@ -246,11 +246,11 @@ const SETTINGS = {
     },
     rate_ceiling_sats_th_hour: {
       type: 'floatOrNull', min: 0, unit: 'sats/TH/hr', label: 'Per-rig backstop',
-      help: 'Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies.',
+      help: 'Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, an auto-backstop of 2× it already applies (never tighter than Max price over market).',
       // Always per TH/hr, so the unit does not move — but the number a user should
       // have in mind moves by a factor of 2,425, which is the whole point of saying it.
       forAlgo: (a) => ({
-        help: `Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, a 2× auto-backstop already applies. A recent ${a.short} rig runs ~${a.typicalSatsThHour} sats/TH/hr.`,
+        help: `Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, an auto-backstop of 2× it already applies (never tighter than Max price over market). A recent ${a.short} rig runs ~${a.typicalSatsThHour} sats/TH/hr.`,
       }),
     },
     deposit_leadtime_hours: { type: 'number', min: 0, max: 168, unit: 'h', label: 'Low-balance lead time', help: 'Warn when runway drops under this.' },

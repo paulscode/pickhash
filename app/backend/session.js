@@ -541,7 +541,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
     const cap = ceilUnitDay != null ? units.btcThDayFromSatsPerUnitDay(ceilUnitDay, priceUnit) : Infinity;
     return decide.packToTarget(cands, targetTh, {
       fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0, bandTh: targetTh * tol,
-      blendCapBtcThDay: cap, rigBackstopBtcThDay: Number.isFinite(cap) ? cap * decide.BLEND_BACKSTOP_MULT : Infinity,
+      blendCapBtcThDay: cap, rigBackstopBtcThDay: decide.blendBackstop(cap, priceLimit),
     });
   };
   const blendOf = (sel) => {
@@ -565,6 +565,8 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   // rig rate (no fee), to match those market references.
   const advTh = selection.reduce((s, r) => s + r.advertisedTh, 0);
   const costRateBtcDay = selection.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0);
+  // Within the tolerance band is the target held, as the live loop sees it: no shortfall.
+  const shortfallTh = coveredTh >= targetTh * (1 - tol) - 1e-9 ? 0 : Math.max(0, targetTh - coveredTh);
   const toUnitDay = (v) => (v != null ? Math.round(units.satsPerUnitDay(v, priceUnit)) : null);
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
@@ -589,11 +591,13 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
     passedOver,
     rigCount: selection.length,
     coveredTh,
-    // Within the tolerance band is the target held, as the live loop sees it: no shortfall.
-    shortfallTh: coveredTh >= targetTh * (1 - tol) - 1e-9 ? 0 : Math.max(0, targetTh - coveredTh),
+    shortfallTh,
     // The ceiling the preview was held to (null = none), and whether it is what left a shortfall.
+    // blendBlocked alone only says the cap turned some rig away at some step (it may have been
+    // admitted later, once cheaper rigs diluted the blend), so it counts only alongside a shortfall,
+    // as decide() reports it.
     ceilingSatsUnitDay: capped ? Math.round(ceil) : null,
-    ceilingBlocked: !!(capped && blendBlocked),
+    ceilingBlocked: !!(capped && blendBlocked && shortfallTh > 0),
     targetTh,   // echoed so a caller can explain a shortfall without re-deriving it
     burnSatsHr,
     priceUnit,
