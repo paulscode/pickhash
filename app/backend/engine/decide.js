@@ -60,7 +60,8 @@ function rentCostSats(hourBtc, hours) {
  *     can close a small leftover gap instead of the packer reaching for dust;
  *   - once the remaining gap is inside the band, a rig is taken only if it doesn't raise the blended
  *     rate. The last few percent are never filled with the dearest listings on the market.
- * 0 (the default) keeps the gap-relative rules alone.
+ * 0 (the default) keeps the gap-relative rules alone, and a fit tolerance or max overshoot of 0 is
+ * never widened by the band: 0 means no overshoot.
  *
  * Budget-aware via costOf + budgetRemaining. Pure — the single source of truth for the live decide
  * loop and the pre-session estimate, so the Autopilot preview can't diverge from execution.
@@ -123,7 +124,8 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     }
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
     // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot, or up to the band), by absolute rate.
-    const cleanSlack = Math.max(gap * fitTol, band);
+    // A setting of 0 means no overshoot at all, so the band never widens it.
+    const cleanSlack = Math.max(gap * fitTol, fitTol > 0 ? band : 0);
     const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap + cleanSlack);
     const bestClean = clean.length ? cheapestRate(clean) : null;
     // The cheapest sub-gap rig by cost-per-delivered-TH (feasible is rank-sorted, so the first wins).
@@ -139,7 +141,7 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     if (bestClean) { take(bestClean); break; }
     if (cheapSmall) { take(cheapSmall); continue; }
     // Only oversized rigs remain: close with the cheapest to hold within the overshoot ceiling.
-    const over = avail.filter((r) => effTh(r) - gap <= Math.max(gap * maxOvershoot, band));
+    const over = avail.filter((r) => effTh(r) - gap <= Math.max(gap * maxOvershoot, maxOvershoot > 0 ? band : 0));
     if (over.length) { take(cheapestRate(over)); break; }
     break;                                                        // nothing covers the gap within the ceiling -> shortfall
   }
@@ -332,7 +334,9 @@ function decide(ctx = {}) {
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes, priceLimitHold };
   }
 
-  const shortfallTh = shortTh;
+  // A fill that lands inside the tolerance band holds the target, as the next tick will see it: no
+  // shortfall, so neither the note nor the ceiling-hold alert reads it as one.
+  const shortfallTh = activeTh + coveredTh >= tolFloorTh - 1e-9 ? 0 : shortTh;
   if (shortfallTh > 1e-9) { notes.push('shortfall'); if (blendBlocked) notes.push('blend_ceiling'); }
 
   const actions = selection.map((x) => {

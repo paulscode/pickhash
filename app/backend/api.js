@@ -938,7 +938,9 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null;
     // The ceiling to hold the estimate to: the one in the form when sent (blank = no cap), else
     // the deliberate standing one the form is about to pre-fill, so the preview matches LIVE.
-    let ceilingSatsUnitDay = currentCeiling;
+    // With neither, undefined: the estimate holds itself to the ceiling it suggests, which is the
+    // value the form pre-fills.
+    let ceilingSatsUnitDay = currentCeiling != null ? currentCeiling : undefined;
     if (url.searchParams.has('blended_ceiling_sats_unit_day')) {
       const c = Number(url.searchParams.get('blended_ceiling_sats_unit_day'));
       ceilingSatsUnitDay = Number.isFinite(c) && c > 0 ? c : null;

@@ -828,7 +828,15 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       // Re-run the shown estimate under the new ceiling once typing pauses, so the rigs, rate and
       // burn above it are what LIVE would rent with that ceiling (issue #15).
       if (this._apCeilTimer) clearTimeout(this._apCeilTimer);
-      if (this.apHasEstimate) this._apCeilTimer = setTimeout(() => { if (this.apHasEstimate && !this.apBusy) this.apPreview(); }, 700);
+      if (this.apHasEstimate) this._apCeilTimer = setTimeout(() => this.apCeilRepreview(), 700);
+    },
+    // A preview already in flight was sent with the old ceiling, so wait for it and then re-run,
+    // rather than dropping the edit and leaving a stale estimate on screen.
+    apCeilRepreview() {
+      this._apCeilTimer = null;
+      if (!this.apHasEstimate) return;
+      if (this.apBusy) { this._apCeilTimer = setTimeout(() => this.apCeilRepreview(), 300); return; }
+      this.apPreview();
     },
     async apMax() {
       this.apMaxBusy = true;
@@ -1498,6 +1506,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
           no_hashrate: 'no hashrate advertised',
           blacklisted: 'blacklisted by you',
           diff_mismatch: 'outside your pool difficulty',
+          over_rate_ceiling: 'over your per-rig backstop (Settings)',
           overpriced: 'priced too far over the market (Max price over market in Settings)',
         };
         /*

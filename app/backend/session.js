@@ -476,9 +476,13 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
  * ceilingSatsUnitDay: the blended rate ceiling to hold the preview to, in sats per <priceUnit>/day,
  * with the same per-rig backstop the live loop applies (decide.js). Without it the preview packed
  * uncapped, so a typed ceiling changed nothing and the preview disagreed with what LIVE would rent
- * (issue #15). null or undefined = no cap.
+ * (issue #15).
+ *   - a number: that ceiling;
+ *   - null: no ceiling (the user cleared it);
+ *   - undefined: the suggested ceiling, which is what the form pre-fills and a start then applies,
+ *     so an untouched preview shows what LIVE would rent too.
  */
-async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay = null }) {
+async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay }) {
   const strat = config.get(conn, 'strategy');
   const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
   // One options object, so the tally below cannot drift from the filter above it.
@@ -494,7 +498,12 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   const priceLimit = quote.marketPriceLimit(eligible, {
     last10BtcThDay: market.recentLast10(conn, nowSec()), overMarketPct: strat.max_over_market_pct,
   });
-  const { kept: cands, overpriced } = quote.applyPriceLimit(eligible, priceLimit);
+  const { kept: priced, overpriced } = quote.applyPriceLimit(eligible, priceLimit);
+  // The gate's optional per-rig ceiling refuses these at rent time, so the preview leaves them out too.
+  const gateCeil = config.getKey(conn, 'guardrails', 'rate_ceiling_sats_th_hour');
+  const underGate = (r) => gateCeil == null || (r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil);
+  const cands = priced.filter(underGate);
+  const overGate = priced.length - cands.length;
   // Pack to the target with the SAME overshoot-bounded packer the live decide loop uses, so the
   // preview reflects what execution will actually rent — a small target is never "held" by a giant
   // rig (which inflated rigCount/coveredTh/burn/runway ~6x before this). costOf uses each rig's
@@ -516,6 +525,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
     for (const reason of e.reasons) passedOver[reason] = (passedOver[reason] || 0) + 1;
   }
   if (overpriced.length) passedOver.overpriced = overpriced.length;
+  if (overGate) passedOver.over_rate_ceiling = overGate;
   const fitTol = (strat.fit_tolerance_pct != null ? strat.fit_tolerance_pct : 20) / 100;
   const maxOvershoot = (strat.max_overshoot_pct != null ? strat.max_overshoot_pct : 50) / 100;
   // Pack to the target WITHOUT a budget constraint. The cost to HOLD a target is a market property,
@@ -527,13 +537,26 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   // The same tolerance band the live loop leaves unfilled, and the same ceiling it holds to.
   const tol = (strat.hashrate_tolerance_pct != null ? strat.hashrate_tolerance_pct : 5) / 100;
   const priceUnit = algos.priceUnit(market.activeAlgo(conn));
-  const ceil = Number(ceilingSatsUnitDay);
-  const capped = ceilingSatsUnitDay != null && Number.isFinite(ceil) && ceil > 0;
-  const blendCapBtcThDay = capped ? units.btcThDayFromSatsPerUnitDay(ceil, priceUnit) : Infinity;
-  const { selection, coveredTh, blendBlocked } = decide.packToTarget(cands, targetTh, {
-    fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0, bandTh: targetTh * tol,
-    blendCapBtcThDay, rigBackstopBtcThDay: capped ? blendCapBtcThDay * decide.BLEND_BACKSTOP_MULT : Infinity,
-  });
+  const packWith = (ceilUnitDay) => {
+    const cap = ceilUnitDay != null ? units.btcThDayFromSatsPerUnitDay(ceilUnitDay, priceUnit) : Infinity;
+    return decide.packToTarget(cands, targetTh, {
+      fitTol, maxOvershoot, budgetRemaining: Infinity, costOf: () => 0, bandTh: targetTh * tol,
+      blendCapBtcThDay: cap, rigBackstopBtcThDay: Number.isFinite(cap) ? cap * decide.BLEND_BACKSTOP_MULT : Infinity,
+    });
+  };
+  const blendOf = (sel) => {
+    const adv = sel.reduce((s, r) => s + r.advertisedTh, 0);
+    return adv > 0 ? Math.round(units.satsPerUnitDay(sel.reduce((s, r) => s + (r.priceBtcThDay || 0) * r.advertisedTh, 0) / adv, priceUnit)) : null;
+  };
+  // Suggested cap = the uncapped blend + headroom, so the pre-filled ceiling gives the live fill room
+  // instead of strangling it at the estimate. Shown to the user (editable), not enforced silently.
+  const uncapped = packWith(null);
+  const suggested = blendOf(uncapped.selection) != null ? Math.round(blendOf(uncapped.selection) * CEILING_HEADROOM) : null;
+  let ceil = null;
+  if (ceilingSatsUnitDay === undefined) ceil = suggested;
+  else if (ceilingSatsUnitDay != null && Number.isFinite(Number(ceilingSatsUnitDay)) && Number(ceilingSatsUnitDay) > 0) ceil = Number(ceilingSatsUnitDay);
+  const capped = ceil != null;
+  const { selection, coveredTh, blendBlocked } = capped ? packWith(ceil) : uncapped;
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
   const burnSatsHr = Math.round(burnBtcHr * 1e8 * (1 + quote.FEE_RATE));   // fee-incl sats/hr to hold target
   const runwayHours = burnSatsHr > 0 ? budgetSats / burnSatsHr : Infinity;
@@ -575,9 +598,8 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
     burnSatsHr,
     priceUnit,
     blendedSatsUnitDay,
-    // Suggested cap = estimated blend + headroom, so the pre-filled ceiling gives the live fill room
-    // instead of strangling it at the estimate. Shown to the user (editable), not enforced silently.
-    suggestedCeilingSatsUnitDay: blendedSatsUnitDay != null ? Math.round(blendedSatsUnitDay * CEILING_HEADROOM) : null,
+    // From the uncapped pack (see above), so the pre-fill doesn't drift with the ceiling applied.
+    suggestedCeilingSatsUnitDay: suggested,
     runwayHours: Number.isFinite(runwayHours) ? Math.round(runwayHours * 10) / 10 : null,
   };
 }

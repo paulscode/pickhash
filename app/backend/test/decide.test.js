@@ -596,3 +596,23 @@ test('#15: decide() applies the band from the hashrate tolerance', () => {
   const ids = plan.actions.map((a) => String(a.rigId));
   assert.ok(!ids.some((id) => id.startsWith('micro')), `no micro-rig proposed (${ids.join(',')})`);
 });
+
+test('a max overshoot or fit tolerance of 0 is not widened by the band', () => {
+  // A 0.3 TH rig for a 0.211 TH gap overshoots; with both settings at 0 the user asked for none.
+  const r = pack(issue15Market([trig('modest', 0.3, 8000)]), 3, { fitTol: 0, maxOvershoot: 0, bandTh: BAND_3TH });
+  assert.ok(!r.selection.some((x) => x.id === 'modest'), 'no overshooting closer when overshoot is set to 0');
+});
+
+test('decide(): a fill that lands inside the band is no shortfall, so no ceiling hold is raised', () => {
+  // Target 100, nothing held. Two 48 TH rigs reach 96 (inside the 5 TH band); the only rig left
+  // would raise the blend, so the packer stops there. That holds the target: no shortfall note.
+  const marketRigs = [crig('a', 48, 50000), crig('b', 48, 50000), crig('dear', 4, 59000)];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals: [], marketRigs,
+    blendedCeilingSatsUnitDay: 60000,
+  }));
+  assert.equal(plan.actions.length, 2);
+  assert.equal(plan.shortfallTh, 0);
+  assert.ok(!plan.notes.includes('shortfall'));
+  assert.ok(!plan.notes.includes('blend_ceiling'));
+});

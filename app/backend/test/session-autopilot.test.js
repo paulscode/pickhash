@@ -239,7 +239,7 @@ test('#15: the estimate is held to a blended ceiling, as the live loop is', asyn
   dear.price.BTC.price = '0.00075000';   // the listed per-day price the blend is computed from, also 1.5x
   const rigs = [rawRig(1, 0.1, 0.0002), rawRig(2, 0.1, 0.0002), dear];
   const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
-  const open = await session.estimateAutopilot(db.get(), client(rigs), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep });
+  const open = await session.estimateAutopilot(db.get(), client(rigs), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: null });
   assert.equal(open.coveredTh, 300);
   assert.equal(open.ceilingSatsUnitDay, null);
   assert.equal(open.ceilingBlocked, false);
@@ -264,4 +264,38 @@ test('#15: a fill inside the hashrate tolerance is no shortfall in the estimate'
   // 20% short is still reported.
   const far = await session.estimateAutopilot(db.get(), client(), { targetTh: 375, budgetSats: 1_000_000, endpoint: ep });
   assert.ok(far.shortfallTh > 0);
+});
+
+// A rig priced at `x` times the base 0.0005 BTC/PH·day, with its hourly price to match.
+function pricedRig(id, ph, x) {
+  const perDay = 0.0005 * x;
+  const r = rawRig(id, ph, (perDay * ph) / 24);
+  r.price.BTC.price = perDay.toFixed(8);
+  return r;
+}
+// A big cheap rig dilutes the blend, so the pre-filled ceiling's 2x per-rig backstop sits below a
+// dearer rig that's still inside the market price limit: LIVE would refuse it.
+const dilutedMarket = () => [pricedRig(1, 0.9, 0.5), pricedRig(2, 0.01, 1), pricedRig(3, 0.01, 1), pricedRig(4, 0.08, 1.9)];
+
+test('#15: an untouched preview is held to the ceiling it pre-fills, as a start would be', async () => {
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  const auto = await session.estimateAutopilot(db.get(), client(dilutedMarket()), { targetTh: 1000, budgetSats: 1_000_000, endpoint: ep });
+  assert.ok(auto.suggestedCeilingSatsUnitDay > 0);
+  assert.equal(auto.ceilingSatsUnitDay, auto.suggestedCeilingSatsUnitDay, 'held to its own suggestion');
+  assert.equal(auto.coveredTh, 920, 'the rig over the suggestion backstop is left out');
+  assert.equal(auto.ceilingBlocked, true);
+  // Cleared by the user (null): no ceiling, so the dear rig is in.
+  const open = await session.estimateAutopilot(db.get(), client(dilutedMarket()), { targetTh: 1000, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: null });
+  assert.equal(open.coveredTh, 1000);
+  assert.equal(open.ceilingSatsUnitDay, null);
+  assert.equal(open.suggestedCeilingSatsUnitDay, auto.suggestedCeilingSatsUnitDay, 'the suggestion does not drift with the cap');
+});
+
+test('#15: the preview leaves out rigs over the per-rig backstop the gate enforces', async () => {
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  // 0.0005 BTC/PH·day is ~2.08 sats/TH/hr; 1.9x is ~3.96. A 3 sats/TH/hr gate ceiling blocks only the dear rig.
+  config.set(db.get(), 'guardrails', { rate_ceiling_sats_th_hour: 3 });
+  const est = await session.estimateAutopilot(db.get(), client(dilutedMarket()), { targetTh: 1000, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: null });
+  assert.equal(est.coveredTh, 920);
+  assert.equal(est.passedOver.over_rate_ceiling, 1);
 });
