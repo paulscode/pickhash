@@ -124,10 +124,12 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
     if (!(newAdv > 0)) return true;
     const curBlend = curAdv > 0 ? (heldCostRateBtcDay + selRateCost) / curAdv : 0;
     const newBlend = (heldCostRateBtcDay + selRateCost + rigRate * (r.advertisedTh || 0)) / newAdv;
-    // Under the cap normally; but if held rentals already push the blend over (sunk cost, or the cap
-    // was lowered mid-session), still admit rigs that DON'T worsen it — i.e. cheaper ones that pull the
-    // average back down toward the cap — rather than freezing all top-ups.
-    return newBlend <= Math.max(blendCapBtcThDay, curBlend) * EPS;
+    // Over the cap already (sunk rentals, or the cap was lowered mid-session, which a ceiling feed
+    // does whenever the price drops): admit only rigs priced at or under the cap itself. Admitting
+    // anything cheaper than the held average, as this used to, let a cap far below what's held keep
+    // renting near the old price, indefinitely, since each replacement keeps that average up.
+    if (curBlend > blendCapBtcThDay * EPS) return rigRate <= blendCapBtcThDay * EPS;
+    return newBlend <= blendCapBtcThDay * EPS;
   };
 
   const band = bandTh > 0 ? bandTh : 0;
@@ -300,7 +302,12 @@ function decide(ctx = {}) {
 
   // Blended rate ceiling ("you" rate). Held rentals are sunk, so a high held blend naturally restricts
   // what new rigs can be added (only ones cheap enough to keep the running average under the cap).
-  const pricedActive = active.filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
+  // A rental inside the replace-lookahead window is about to end and already counts as gone toward
+  // the target (contributionTh), so it doesn't count toward the blend either: its replacement is
+  // what will be held.
+  const leadSec = ctx.replaceLeadSec || 0;
+  const ending = (r) => leadSec > 0 && r.end_ts != null && r.end_ts - nowSec <= leadSec;
+  const pricedActive = active.filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0 && !ending(r));
   const heldCostRateBtcDay = pricedActive.reduce((s, r) => s + r.rate_btc_th_day * r.advertised_th, 0);
   const heldAdvTh = pricedActive.reduce((s, r) => s + r.advertised_th, 0);
   const blendCapBtcThDay = ctx.blendedCeilingSatsUnitDay != null

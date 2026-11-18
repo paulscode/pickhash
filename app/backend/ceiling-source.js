@@ -8,7 +8,8 @@
  *
  *   { "blended_ceiling_sats_unit_day": 6630.4,   // required, sats per <priceUnit> per day
  *     "rate_ceiling_sats_th_hour": 276.27,        // optional, sats per TH per hour
- *     "as_of": 1791103808 }                       // required, unix seconds
+ *     "as_of": 1791103808,                        // required, unix seconds
+ *     "algo": "blake2b", "price_unit": "th" }     // optional; checked against the algorithm when sent
  *
  * It is a money control, so it fails CLOSED. A feed that is unreachable, unreadable, an error
  * status, missing a required field, or older than guardrails.ceiling_source_max_age_s counts as a
@@ -26,6 +27,7 @@
  */
 const config = require('./config');
 const market = require('./market');
+const algos = require('./algos');
 
 const FETCH_TIMEOUT_MS = 4000;          // a slow feed must not hold up the engine tick
 const MAX_BODY_BYTES = 64 * 1024;
@@ -130,9 +132,17 @@ async function refresh(conn, { nowSec = Math.floor(Date.now() / 1000), fetchImpl
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await readBounded(res);
     let body;
-    try { body = JSON.parse(text); } catch { throw new Error('not JSON'); }
+    // A leading byte-order mark is valid UTF-8 that JSON.parse refuses; some tools write one.
+    try { body = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { throw new Error('not JSON'); }
     const p = parseBody(body, nowSec);
     if (!p.ok) throw new Error(p.error);
+    // Optional, and checked when present: the ceilings are read in this algorithm's own unit, so the
+    // same feed pasted into both algorithms' settings would be a thousandfold off on one of them.
+    const unit = algos.priceUnit(algo);
+    if (body.algo != null && String(body.algo).toLowerCase() !== algo) throw new Error(`feed is for ${String(body.algo).slice(0, 20)}, not ${algo}`);
+    if (body.price_unit != null && String(body.price_unit).toLowerCase() !== String(unit).toLowerCase()) {
+      throw new Error(`feed is priced per ${String(body.price_unit).slice(0, 10)}, not per ${unit}`);
+    }
     st.good = { blended: p.blended, rate: p.rate, asOf: p.asOf, fetchedAt: nowSec };
     st.error = null;
   } catch (e) {
@@ -170,7 +180,7 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   const ageS = good ? Math.max(0, nowSec - good.asOf) : null;
   const fresh = !!good && ageS <= maxAgeS;
   const source = {
-    url, ok: fresh, asOf: good ? good.asOf : null, ageS, maxAgeS,
+    url: displayUrl(url), ok: fresh, asOf: good ? good.asOf : null, ageS, maxAgeS,
     error: st.error || (good ? (fresh ? null : 'stale') : 'not read yet'),
     blended: good ? good.blended : null, rate: good ? good.rate : null,
     zero: false, cappedBlended: false, cappedRate: false,
@@ -185,6 +195,12 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   source.cappedRate = good.rate != null && storedRate != null && good.rate > storedRate;
   source.zero = blended === 0 || rate === 0;
   return { blendedSatsUnitDay: blended, rateSatsThHour: rate, halted: source.zero, source };
+}
+
+// The URL as shown in the status and alerts: without a query string or fragment, where a token
+// would usually sit, since both are shown on screen and kept in the alerts table.
+function displayUrl(url) {
+  try { const u = new URL(url); return `${u.origin}${u.pathname}${u.search || u.hash ? '?…' : ''}`; } catch { return '(invalid URL)'; }
 }
 
 /** Test-only. */

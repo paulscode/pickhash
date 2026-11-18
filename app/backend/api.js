@@ -607,7 +607,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
       ).all(s.id);
       // Only while rehearsing: a session switched to LIVE mid-run would otherwise keep showing
       // the last dry-run plan, which is no longer what the engine is doing.
-      if (mode !== 'live') rehearsal = rehearsalFor(conn, s.id);
+      if (mode === 'dry-run') rehearsal = rehearsalFor(conn, s.id);   // not LIVE, and not PAUSED (nothing is planned)
     }
     // Latest engine-observed balance (already polled each tick) so the dashboard balance
     // card updates live off /api/status without an extra per-poll MRR call.
@@ -1021,6 +1021,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     let ceilingSatsUnitDay = currentCeiling != null ? currentCeiling : undefined;
     if (url.searchParams.has('blended_ceiling_sats_unit_day') && !ceilings.source) {
       ceilingSatsUnitDay = session.parseCeiling(url.searchParams.get('blended_ceiling_sats_unit_day'));
+      if (Number.isNaN(ceilingSatsUnitDay)) return sendJson(res, 400, { error: 'bad_ceiling' });
     }
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay });

@@ -196,7 +196,7 @@ const SETTINGS = {
     auto_extend: { type: 'bool', label: 'Auto-extend', help: 'Extend a healthy near-end rental in place when the rate holds.' },
     auto_extend_price_tolerance_pct: { type: 'int', min: 0, max: 200, unit: '%', label: 'Auto-extend price tolerance', help: 'Only extend if the new rate is within this of the original.' },
     fit_tolerance_pct: { type: 'int', min: 0, max: 500, unit: '%', label: 'Fit tolerance', help: 'A top-up rig may overshoot the gap by up to this and stay cheapest-first.' },
-    max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot, hold a shortfall and retry rather than over-provision.' },
+    max_overshoot_pct: { type: 'int', min: 0, max: 2000, unit: '%', label: 'Max overshoot', help: 'Beyond this overshoot of the gap, hold a shortfall and retry rather than over-provision. A closing rig may also overshoot by up to your Hashrate tolerance of the target, unless this is 0.' },
     max_over_market_pct: { type: 'int', min: 0, max: 10000, unit: '%', label: 'Max price over market', help: 'Autopilot skips any rig priced more than this above the market rate — the lower of the last-10 rental average and the typical listed price. 100% allows up to 2×. Cheaper rigs are always fine; it leaves a shortfall rather than overpay.' },
     replace_lead_minutes: { type: 'int', min: 0, max: 60, unit: 'min', label: 'Replace lead', help: 'Rent a replacement this long before a rig ends (0 disables the lookahead).' },
     fallback_pool_enabled: {
@@ -266,7 +266,7 @@ const SETTINGS = {
         help: `Optional (blank = off). A URL Pickhash reads each tick for both ceilings, as JSON: {"blended_ceiling_sats_unit_day": N (sats/${a.priceUnit.toUpperCase()}·day), "rate_ceiling_sats_th_hour": N (optional), "as_of": unix seconds}. Autopilot and auto-extend use its values, never above the ceilings set here, and rent and extend nothing while it is missing, unreadable or older than the max age. Quick rents are not affected.`,
       }),
     },
-    ceiling_source_max_age_s: { type: 'int', min: 60, max: 86400, unit: 's', label: 'Ceiling feed max age', help: 'How old the feed\u2019s as_of may be before autopilot stops renting and extending.' },
+    ceiling_source_max_age_s: { type: 'int', min: 180, max: 86400, unit: 's', label: 'Ceiling feed max age', help: 'How old the feed\u2019s as_of may be before autopilot stops renting and extending.' },
     deposit_leadtime_hours: { type: 'number', min: 0, max: 168, unit: 'h', label: 'Low-balance lead time', help: 'Warn when runway drops under this.' },
     refund_watch_days: { type: 'int', min: 0, max: 90, unit: 'days', label: 'Refund watch', help: 'How long an ended rental is watched for refunds.' },
   },
@@ -298,6 +298,20 @@ function settings(conn) {
   return out;
 }
 
+/** A host on the user's own network: private/loopback/link-local IPs, or a local-only name. */
+function isLocalHost(host) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || !h.includes('.') && !h.includes(':')) return true;   // single-label names resolve locally only
+  if (/\.(local|lan|home|internal|localdomain|startos|embassy|home\.arpa)$/.test(h)) return true;
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.includes(':')) return h === '::1' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h);
+  return false;
+}
+
 /** Coerce + bounds-check one raw value against its spec. Returns {ok, value} or {ok:false, reason}. */
 function coerce(spec, raw) {
   if (spec.type === 'bool') {
@@ -315,6 +329,10 @@ function coerce(spec, raw) {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ok: false, reason: 'must be an http:// or https:// URL' };
     // fetch refuses a URL with credentials in it, so it could never be read; say so now.
     if (parsed.username || parsed.password) return { ok: false, reason: 'must not contain a username or password' };
+    // A feed is a money control: over the internet it must be https, so nobody between can rewrite
+    // the ceiling. Plain http is fine on your own network (a LAN address, localhost, a .local or
+    // container name), where most feeds will live.
+    if (parsed.protocol === 'http:' && !isLocalHost(parsed.hostname)) return { ok: false, reason: 'use https:// for a feed outside your own network' };
     return { ok: true, value: u };
   }
   if (spec.type === 'enum') return spec.values.includes(raw) ? { ok: true, value: raw } : { ok: false, reason: `must be one of ${spec.values.join(', ')}` };
@@ -355,7 +373,7 @@ function validatePatch(ns, patch) {
   return { ok: true, patch: out };
 }
 
-module.exports = {
+module.exports = { isLocalHost,
   DEFAULTS, get, getKey, set, all, SETTINGS, settings, validatePatch,
   activeAlgo, SCOPED_NS, GLOBAL,
 };

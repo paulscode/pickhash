@@ -291,3 +291,33 @@ test('ceiling_source_stale arms, fires after 3 minutes, says why, and resolves',
   await ceilingSourceTick(db.get(), (NOW + 380) * 1000, () => {}, { fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW + 380 } }) });
   assert.equal(db.get().prepare("SELECT state FROM alerts WHERE kind = 'ceiling_source_stale' AND key = 'blake2b'").get().state, 'resolved');
 });
+
+test('settings: plain http is only for a feed on your own network', () => {
+  for (const ok of ['http://10.0.0.5/c.json', 'http://192.168.1.20:8080/c', 'http://localhost/c', 'http://127.0.0.1/c',
+    'http://feedbox/c', 'http://feedbox.local/c', 'http://myfeed.startos/c', 'http://[::1]/c', 'https://example.com/c']) {
+    assert.equal(config.validatePatch('guardrails', { ceiling_source_url: ok }).ok, true, ok);
+  }
+  for (const bad of ['http://example.com/c', 'http://8.8.8.8/c', 'http://172.32.0.1/c']) {
+    assert.equal(config.validatePatch('guardrails', { ceiling_source_url: bad }).ok, false, bad);
+  }
+  assert.equal(config.validatePatch('guardrails', { ceiling_source_max_age_s: 120 }).ok, false, 'max age at least 3 ticks');
+});
+
+test('a feed that names another algorithm or unit fails closed; a BOM is fine', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
+  let st = await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW, algo: 'blake2b' } }) });
+  assert.match(st.error, /not sha256ab/);
+  assert.equal(cs.effective(db.get(), NOW).halted, true);
+  st = await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW, price_unit: 'th' } }) });
+  assert.match(st.error, /not per ph/);
+  st = await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW, algo: 'sha256ab', price_unit: 'PH' } }) });
+  assert.equal(st.error, null);
+  st = await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: '\uFEFF' + JSON.stringify({ blended_ceiling_sats_unit_day: 6000, as_of: NOW }) }) });
+  assert.equal(st.error, null);
+});
+
+test('the feed URL shown in status and alerts has no query string', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: 'http://10.0.0.5/c.json?token=s3cret' });
+  const e = cs.effective(db.get(), NOW);
+  assert.equal(e.source.url, 'http://10.0.0.5/c.json?…');
+});

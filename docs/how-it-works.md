@@ -74,6 +74,9 @@ JSON like this:
 - `blended_ceiling_sats_unit_day` is required, in the same unit as the Blended rate ceiling setting.
 - `rate_ceiling_sats_th_hour` is optional, the per-rig backstop in sats per TH per hour.
 - `as_of` is required, in unix seconds, and is when your program worked the numbers out.
+- `algo` and `price_unit` are optional (for example `"blake2b"` and `"th"`). When sent, they must
+  match the algorithm the feed is set for, or the feed counts as failed. Sending them guards against
+  pasting one feed into both algorithms' settings, where the numbers would be a thousand times off.
 
 Autopilot and auto-extend use the feed's values, never above the ceilings you set in Settings. The feed
 is a money control, so it fails closed: if it can't be reached, returns an error status, can't be read,
@@ -83,8 +86,9 @@ sends 0 stops new spending the same way. Rentals already running are never cance
 are not affected. Settings shows the feed's state under its URL, and an alert appears if it holds a
 running autopilot session for a few minutes.
 
-The URL must be `http://` or `https://`, without a username or password in it, and redirects are not
-followed. Pickhash runs in a container, so use an address it can reach: a LAN IP address works where
+The URL must be `https://`, or `http://` for a feed on your own network (a LAN address, `localhost`,
+or a `.local` or container name), without a username or password in it, and redirects are not
+followed. Keep any token in the query string: it is hidden wherever the URL is shown. Pickhash runs in a container, so use an address it can reach: a LAN IP address works where
 a `.local` name may not resolve.
 
 Pickhash also only ever pays for what it can afford from your confirmed balance, and it never rents the

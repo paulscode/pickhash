@@ -875,13 +875,22 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       else { this.apHasEstimate = false; this.apStarted = false; this.scheduleQuote(0); }
     },
     apPreset(sats) { this.apBudget = String(sats); this.apHasEstimate = false; },
-    // The typed ceiling: a whole number >= 0, or null when blank or unreadable. 0 is a real
-    // ceiling (rent nothing), not "no cap".
+    // The typed ceiling: a number >= 0, null when blank, or NaN when it can't be read. A number
+    // input reports "6,630" or "-5" as an empty value with validity.badInput set, so that is checked
+    // too: a typo must never quietly become "no cap".
     apCeilValue() {
+      const el = this.$refs && this.$refs.apCeilInput;
+      if (el && el.validity && el.validity.badInput) return NaN;
       const v = String(this.apRateCeil == null ? '' : this.apRateCeil).trim();
       if (v === '') return null;
-      const n = Number(v);
-      return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+      if (!/^(\d+(\.\d*)?|\.\d+)$/.test(v)) return NaN;
+      return Number(v);
+    },
+    apCeilBad() {
+      const v = this.apCeilValue();
+      if (!Number.isNaN(v)) return false;
+      this.apError = 'Enter the rate ceiling as a plain number (no commas or signs), 0 to rent nothing, or leave it blank for no cap.';
+      return true;
     },
     apCeilTouched() {
       if (this.apCeilLocked) return;   // the feed holds it; the input is read-only
@@ -925,6 +934,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.apBusy = true; this.apBusyText = 'Checking the market…'; this.apError = ''; this.apStarted = false;
       // A ceiling the user has typed is sent (blank = no cap); otherwise the server applies a
       // deliberate standing one, the same value the form pre-fills.
+      if (this.apRateCeilTouched && this.apCeilBad()) { this.apBusy = false; return; }
       const ceilQ = this.apRateCeilTouched ? `&blended_ceiling_sats_unit_day=${this.apCeilValue() ?? ''}` : '';
       const r = await this.getJson(`/api/autopilot/estimate?target_th=${p.targetTh}&budget_sats=${p.budgetSats}${ceilQ}`);
       this.apBusy = false;
@@ -987,6 +997,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
     async startAutopilot() {
       const p = this.apParams();
       if (!this.apValid(p)) { this.apError = 'Enter a target, time cap, and budget.'; return; }
+      if (!this.apCeilLocked && this.apCeilBad()) return;
       this.apBusy = true; this.apBusyText = 'Starting autopilot…'; this.apError = '';
       const ceil = this.apCeilValue();
       // blended_ceiling_auto: true when the ceiling is an accepted auto-suggestion (not user-typed), so
@@ -994,7 +1005,13 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       const startBody = { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats };
       // Send the ceiling only when this preview chose it: not when a feed holds it, and not when it is
       // the untouched standing one (the stored value stays in charge, as it may have moved since).
-      if (!this.apCeilLocked && !(this.apRateCeilStanding && !this.apRateCeilTouched)) {
+      // With a feed holding the ceiling, send the value on screen anyway: the server ignores it while
+      // the feed is set, and if the feed was cleared since this preview, what the user saw is what
+      // applies, rather than nothing (no cap).
+      if (this.apCeilLocked) {
+        startBody.blended_ceiling_sats_unit_day = ceil;
+        startBody.blended_ceiling_auto = false;
+      } else if (!(this.apRateCeilStanding && !this.apRateCeilTouched)) {
         startBody.blended_ceiling_sats_unit_day = ceil;
         startBody.blended_ceiling_auto = this.apRateCeilAuto;
       }
@@ -1007,6 +1024,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
           : e === 'exceeds_guardrail' ? 'That budget is above the safety ceiling — lower it or raise the limit in Settings.'
           : e === 'no_endpoint' ? 'Finish pool setup before starting autopilot.'
           : (e === 'bad_target' || e === 'bad_time_cap' || e === 'bad_budget') ? 'Check the target, time cap, and budget.'
+          : e === 'bad_ceiling' ? 'Enter the rate ceiling as a plain number, 0 to rent nothing, or leave it blank for no cap.'
           : 'Could not start autopilot — try again in a moment.';
         return;
       }
@@ -1878,7 +1896,12 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       if (r.ok) {
         group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500);
         // A saved feed URL is read at once server-side; show its reading now, not at the next poll.
-        if (group.ns === 'guardrails') this.refreshStatus();
+        // A shown Autopilot estimate was built on the old guardrails (a feed's lock, a ceiling), so
+        // it is dropped: Start needs a fresh Preview.
+        if (group.ns === 'guardrails') {
+          this.refreshStatus();
+          this.apHasEstimate = false; this.apCeilLocked = false; this.apCeilLockText = ''; this.apRateCeilStanding = false;
+        }
       }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
     },
@@ -2142,7 +2165,11 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       const rh = s && s.rehearsal;
       this.apRehearsal = !!(rh && rh.rows && rh.rows.length);
       if (this.apRehearsal) {
-        const at = new Date(rh.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // With the date when the plan isn't from today, so a days-old plan doesn't read as current.
+        const d = new Date(rh.ts * 1000);
+        const at = d.toDateString() === new Date().toDateString()
+          ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         this.apRehearsalBanner = `Rehearsal — on its latest plan (${at}) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
         this.apRehearsalRows = rh.rows.map((r) => ({
           id: r.rig_id, name: r.rig_name, region: r.region, hash: r.advertised_th != null ? this.fmtHashRig(r.advertised_th) : '', hours: `${r.length_hours}h`, cost: `${this.fmtSats(r.cost_sats)} sats`,

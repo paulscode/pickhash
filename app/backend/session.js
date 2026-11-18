@@ -470,16 +470,21 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
 }
 
 /**
- * A blended ceiling as given by a caller: a number >= 0, or null for none. Blank, null and
- * anything unparseable mean none; 0 is a real ceiling that rents nothing, never "no cap". Number('')
- * and Number(null) are 0, so blanks are caught before converting.
+ * A blended ceiling as given by a caller: a number >= 0, null for none, or NaN when it is neither.
+ * Blank and null mean none; 0 is a real ceiling that rents nothing, never "no cap". Only a JSON
+ * number or a plain decimal string counts: "6,630", "-5", "abc", "0x1F", "Infinity", [] and true
+ * are NaN, so a caller can refuse them rather than quietly treat a typo as "no cap".
  */
+const CEILING_DECIMAL = /^\s*(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?\s*$/;
 function parseCeiling(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v === 'string' && v.trim() === '') return null;
+  if (typeof v === 'string') {
+    if (v.trim() === '') return null;
+    if (!CEILING_DECIMAL.test(v)) return NaN;
+  } else if (typeof v !== 'number') return NaN;
   const n = Number(v);
   // Not rounded: a feed's 6630.4 must hold the preview where it holds the live loop.
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : NaN;
 }
 
 // The market listing the estimate packs from, kept briefly per client and algorithm. Editing the
@@ -672,6 +677,7 @@ async function startAutopilotSession(conn, client, params = {}) {
     // The estimate is only consulted for eligibleRigs here, but give it the ceiling being started
     // with, so it isn't packed twice against a suggestion nobody chose.
     const startCeil = parseCeiling(params.blendedCeilingSatsUnitDay);
+    if (Number.isNaN(startCeil)) throw new SessionError('bad_ceiling');
     const estimate = await estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay: startCeil });
     // Start when ANY autopilot-eligible rig exists — not when the bounded pack happens to fit the
     // target this instant. If only oversized rigs are up, decide holds what fits and fills the rest

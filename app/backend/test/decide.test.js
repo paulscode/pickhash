@@ -679,3 +679,27 @@ test('decide(): a blended ceiling of 0 rents nothing, even a rig cheaper than wh
   assert.equal(plan.actions.length, 0);
   assert.ok(plan.notes.includes('ceiling_zero'));
 });
+
+test('held over a lowered cap: a rig cheaper than what is held but over the cap is not rented', () => {
+  // Held 100 TH at 100k; the cap (a feed after a price drop) is now 60k. An 80k rig would lower the
+  // average, but it is still over the cap: before, it was admitted, and the cap never took hold.
+  const rentals = [{ rig_id: 'h', advertised_th: 100, delivered_th: 100, health: 'healthy', rate_btc_th_day: CAP(100000), ended: 0 }];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 200 }), rentals, marketRigs: [crig('dear', 100, 80000), crig('ok', 50, 55000)], blendedCeilingSatsUnitDay: 60000,
+  }));
+  const ids = plan.actions.map((a) => a.rigId);
+  assert.ok(!ids.includes('dear'), ids.join(','));
+  assert.ok(ids.includes('ok'), 'a rig under the cap is still rented');
+  assert.ok(plan.notes.includes('blend_ceiling'), 'the cap is named, so the hold alert can fire');
+});
+
+test('a rental about to end does not hold the blend up for its replacement', () => {
+  // The held rig ends inside the replace window; the cap is 60k. Its 100k must not let an 99k
+  // replacement in on the strength of "cheaper than what is held".
+  const rentals = [{ rig_id: 'h', advertised_th: 100, delivered_th: 100, health: 'healthy', rate_btc_th_day: CAP(100000), ended: 0, end_ts: 1000 + 60 }];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals, replaceLeadSec: 600,
+    marketRigs: [crig('repl', 100, 99000)], blendedCeilingSatsUnitDay: 60000,
+  }));
+  assert.equal(plan.actions.length, 0, plan.actions.map((a) => a.rigId).join(','));
+});

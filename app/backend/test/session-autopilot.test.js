@@ -303,7 +303,12 @@ test('#15: the preview leaves out rigs over the per-rig backstop the gate enforc
 });
 
 test('parseCeiling: blank or null is no ceiling; 0 is a ceiling that rents nothing', () => {
-  for (const v of [undefined, null, '', '  ', 'abc', -5]) assert.equal(session.parseCeiling(v), null, String(v));
+  for (const v of [undefined, null, '', '  ']) assert.equal(session.parseCeiling(v), null, String(v));
+  // Anything else that isn't a plain number >= 0 is NaN, so callers refuse it rather than treat a
+  // typo as "no cap".
+  for (const v of ['abc', -5, '-5', '6,630', '0x1F', 'Infinity', '1e400', [], true, {}]) {
+    assert.ok(Number.isNaN(session.parseCeiling(v)), JSON.stringify(v));
+  }
   assert.equal(session.parseCeiling(0), 0);
   assert.equal(session.parseCeiling('0'), 0);
   assert.equal(session.parseCeiling('6630.4'), 6630.4, 'not rounded: a feed\'s fraction holds the preview as it holds LIVE');
@@ -355,4 +360,12 @@ test('a per-rig backstop below every rig does not refuse a start (the session wa
   config.set(db.get(), 'guardrails', { rate_ceiling_sats_th_hour: 0.001 });
   const r = await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
   assert.ok(r.session_id > 0);
+});
+
+test('starting with an unreadable ceiling is refused, not run uncapped', async () => {
+  await assert.rejects(
+    () => session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: '6,630' }),
+    (e) => e.code === 'bad_ceiling',
+  );
+  assert.equal(db.get().prepare("SELECT COUNT(*) AS n FROM sessions WHERE state = 'active'").get().n, 0);
 });
