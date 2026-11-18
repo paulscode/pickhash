@@ -306,7 +306,7 @@ test('parseCeiling: blank or null is no ceiling; 0 is a ceiling that rents nothi
   for (const v of [undefined, null, '', '  ', 'abc', -5]) assert.equal(session.parseCeiling(v), null, String(v));
   assert.equal(session.parseCeiling(0), 0);
   assert.equal(session.parseCeiling('0'), 0);
-  assert.equal(session.parseCeiling('6630.4'), 6630);
+  assert.equal(session.parseCeiling('6630.4'), 6630.4, 'not rounded: a feed\'s fraction holds the preview as it holds LIVE');
 });
 
 test('a ceiling of 0 holds the estimate to nothing, and says the ceiling is why', async () => {
@@ -349,4 +349,10 @@ test('#16: the preview is held to the feed, and to nothing while the feed is sta
   const est = await session.estimateAutopilot(db.get(), client(), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: eff.blendedSatsUnitDay });
   assert.equal(est.coveredTh, 0);
   cs._reset();
+});
+
+test('a per-rig backstop below every rig does not refuse a start (the session waits, and the hold alert names it)', async () => {
+  config.set(db.get(), 'guardrails', { rate_ceiling_sats_th_hour: 0.001 });
+  const r = await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000 });
+  assert.ok(r.session_id > 0);
 });

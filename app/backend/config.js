@@ -245,7 +245,7 @@ const SETTINGS = {
     max_daily_spend_sats: { type: 'int', min: 0, max: 1e12, unit: 'sats', label: 'Max daily spend', help: 'Rolling 24h spend ceiling across all sessions.' },
     blended_ceiling_sats_unit_day: {
       type: 'floatOrNull', min: 0, unit: 'sats/PH·day', label: 'Blended rate ceiling',
-      help: 'Cap on your overall blended pay-rate — the "you" line on the market chart (blank = off). Autopilot fills the target with the cheapest rigs while keeping the average under this; it leaves a shortfall rather than overpaying. Set it in the Autopilot preview per session, or here as a standing default.',
+      help: 'Cap on your overall blended pay-rate — the "you" line on the market chart (blank = off). Autopilot fills the target with the cheapest rigs while keeping the average under this; it leaves a shortfall rather than overpaying. 0 = rent nothing. Set it in the Autopilot preview per session, or here as a standing default.',
       // The unit is the algorithm's, not a fixed PH. Showing "sats/PH·day" beside a
       // blake2b field would invite a number a thousand times too small.
       forAlgo: (a) => ({ unit: `sats/${a.priceUnit.toUpperCase()}·day` }),

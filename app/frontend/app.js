@@ -628,7 +628,8 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         if (this.hasSelection()) return;
         if (this.showApp) { this.refreshStatus(); this.refreshMetrics(); }
         else if (this.showHistory) { this.loadHistory(); }   // keep History (incl. dispute countdowns) current while viewing
-        else if (this.showSettings) { this.loadDiag(); }     // keep diagnostics (tick freshness) live
+        // Keep diagnostics (tick freshness) live, and the ceiling feed's status under its URL.
+        else if (this.showSettings) { this.loadDiag(); this.refreshStatus(); }
         else if (this.showMarket) { this.loadMarket(); }     // keep market depth/price current
       }, 15000);
     },
@@ -770,7 +771,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         endpoint_repaired: `Your stratum endpoint moved${c.to ? ` to ${c.to.host}:${c.to.port}` : ''} — active rentals were re-pointed to it`,
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
-        rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
+        rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — ${c.per_rig && !c.blended
+          ? 'the rigs that could fill the rest are priced over your per-rig backstop (Settings, or your ceiling feed). Raise it, or wait for cheaper rigs.'
+          : `your blended rate ceiling is reached${c.per_rig ? ', and the rigs left are over your per-rig backstop too' : ''}. Raise it in the Autopilot preview (or Settings, or your ceiling feed), or wait for cheaper rigs.`}`,
         ceiling_source_stale: c.zero
           ? 'Your ceiling feed says 0, so autopilot and auto-extend are renting and extending nothing until it says otherwise. Running rentals are not affected.'
           : `Your ceiling feed has no fresh reading${c.error ? ` (${c.error})` : ''}${c.age_s != null ? `; its last as_of was ${this.fmtAge(c.age_s)}` : ''}. Autopilot and auto-extend are renting and extending nothing until it does. Running rentals are not affected.`,
@@ -1421,10 +1424,6 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       if (th > 0 && th < 100) return `${th.toFixed(th < 10 ? 2 : 1)} TH/s`;
       return `${Math.round(th).toLocaleString('en-US')} TH/s`;
     },
-    // Per-rig hashrate, auto-scaled to the rig's own magnitude and INDEPENDENT of the quote
-    // card's aggregate PH/TH toggle. A single MRR rig is tens of TH/s, so the aggregate PH/s
-    // unit would render it as "0.00 PH/s"; here a 4 TH/s rig reads "4.0 TH/s" and a 1.5 PH/s
-    // rig reads "1.50 PH/s".
     // "45 s ago", "3 min ago", "2 h ago"; 'unknown' without a number.
     fmtAge(sec) {
       const n = Number(sec);
@@ -1433,6 +1432,10 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       if (n < 5400) return `${Math.round(n / 60)} min ago`;
       return `${Math.round(n / 3600)} h ago`;
     },
+    // Per-rig hashrate, auto-scaled to the rig's own magnitude and INDEPENDENT of the quote
+    // card's aggregate PH/TH toggle. A single MRR rig is tens of TH/s, so the aggregate PH/s
+    // unit would render it as "0.00 PH/s"; here a 4 TH/s rig reads "4.0 TH/s" and a 1.5 PH/s
+    // rig reads "1.50 PH/s".
     fmtHashRig(th) {
       if (th == null || !(th >= 0)) return '—';
       const n = Number(th);
@@ -1733,6 +1736,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       await this.loadSettings();
       await this.loadDiag();
       await this.loadConnection();
+      this.refreshStatus();   // the ceiling feed's status under its URL
       this.$nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
     },
 
@@ -1871,7 +1875,11 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       // setting that would only ever be ignored. The server refuses these too.
       for (const f of group.fields) if (!f.unavailable) patch[f.key] = f.value;
       const r = await this.send('POST', '/api/config', { ns: group.ns, patch });
-      if (r.ok) { group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500); }
+      if (r.ok) {
+        group.saved = true; group.error = ''; setTimeout(() => { group.saved = false; }, 1500);
+        // A saved feed URL is read at once server-side; show its reading now, not at the next poll.
+        if (group.ns === 'guardrails') this.refreshStatus();
+      }
       else { group.error = r.json && r.json.field ? `${r.json.field}: ${r.json.reason || 'invalid'}` : 'Could not save.'; }
     },
     // The wizard shows these toggles but cannot save them: /api/config is behind the
@@ -2111,7 +2119,6 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.fmtHashValue(s.hash_value);   // "am I paying over/under market?" readout
       this.rentals = this.mapRentals(s && s.rentals);
       this.hasRentals = this.rentals.length > 0;
-      // A rehearsal's only output is its plan; show the latest one so the session reads as working.
       // The ceiling feed's status, for Settings (beside its URL) and the dashboard.
       const cs = s && s.ceiling_source;
       const perRig = (v) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} sats/TH/hr`;
@@ -2131,6 +2138,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         this.ceilingSourceClass = 'text-neon-green';
         this.ceilingSourceText = `Ceiling feed OK, as of ${this.fmtAge(cs.ageS)}: blended ${this.fmtSats(cs.blended_in_force)} ${this.rateUnit}${cs.rate_in_force != null ? `, per rig ${perRig(cs.rate_in_force)}` : ''} in force${notes.length ? ` (${notes.join('; ')})` : ''}.`;
       }
+      // A rehearsal's only output is its plan; show the latest one so the session reads as working.
       const rh = s && s.rehearsal;
       this.apRehearsal = !!(rh && rh.rows && rh.rows.length);
       if (this.apRehearsal) {

@@ -625,6 +625,16 @@ test('decide(): a per-rig ceiling refusing every rig is not read as a spent budg
   assert.equal(plan.actions.length, 0);
   assert.ok(!plan.notes.includes('no_affordable_candidate'), plan.notes.join(','));
   assert.ok(plan.notes.includes('no_fit'));
+  assert.ok(plan.notes.includes('rate_ceiling'), 'the per-rig ceiling is named as what holds it');
+});
+
+test('decide(): the per-rig ceiling is not blamed when lifting it would not help', () => {
+  // The only rig over the ceiling is far too big for the gap, so the ceiling is a bystander.
+  const marketRigs = [crig('a', 60, 40000), crig('huge', 900, 60000)];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals: [], marketRigs, rateCeilingSatsThHour: 45000 / 1000 / 24,
+  }));
+  assert.ok(!plan.notes.includes('rate_ceiling'), plan.notes.join(','));
 });
 
 test('decide(): a fill that lands inside the band is no shortfall, so no ceiling hold is raised', () => {

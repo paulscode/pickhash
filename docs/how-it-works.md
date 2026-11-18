@@ -55,7 +55,37 @@ Every rental is checked against limits before any money moves:
 - Your **budget** for the session.
 - A **max session budget** and a **rolling 24-hour spend cap** (in Settings) that no session can
   exceed — a safety net in case you set something too high by accident.
-- An optional **price ceiling** so it never pays more than you'd consider fair for hashrate.
+- An optional **price ceiling** so it never pays more than you'd consider fair for hashrate. A ceiling
+  of 0 means rent nothing; leaving it blank means no ceiling.
+
+### Letting another program set the ceiling
+
+What hashrate is worth moves with the coin's price and every difficulty change, so a fixed ceiling is
+wrong most of the day. If you run something that works out your breakeven, point **Ceiling feed URL**
+(Settings, Guardrails) at it. Pickhash reads it every engine tick, about once a minute, and expects
+JSON like this:
+
+```json
+{ "blended_ceiling_sats_unit_day": 6630.4,
+  "rate_ceiling_sats_th_hour": 276.27,
+  "as_of": 1791103808 }
+```
+
+- `blended_ceiling_sats_unit_day` is required, in the same unit as the Blended rate ceiling setting.
+- `rate_ceiling_sats_th_hour` is optional, the per-rig backstop in sats per TH per hour.
+- `as_of` is required, in unix seconds, and is when your program worked the numbers out.
+
+Autopilot and auto-extend use the feed's values, never above the ceilings you set in Settings. The feed
+is a money control, so it fails closed: if it can't be reached, returns an error status, can't be read,
+is missing the blended ceiling, or is older than **Ceiling feed max age** (15 minutes by default),
+both ceilings count as 0 and nothing new is rented or extended until it is good again. A feed that
+sends 0 stops new spending the same way. Rentals already running are never cancelled, and quick rents
+are not affected. Settings shows the feed's state under its URL, and an alert appears if it holds a
+running autopilot session for a few minutes.
+
+The URL must be `http://` or `https://`, without a username or password in it, and redirects are not
+followed. Pickhash runs in a container, so use an address it can reach: a LAN IP address works where
+a `.local` name may not resolve.
 
 Pickhash also only ever pays for what it can afford from your confirmed balance, and it never rents the
 same rig twice in one cycle.

@@ -470,13 +470,7 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
 }
 
 /**
- * Feasibility estimate for an autopilot session at the current market: which cheapest rigs
- * would cover the target, the fee-inclusive sats/hour to HOLD it, and the projected runway
- * (budget / burn). Pure-ish (fetches the market). The runway vs the time cap tells the user
- * whether the budget or the clock ends the session.
- */
-/**
- * A blended ceiling as given by a caller: a number >= 0 (rounded), or null for none. Blank, null and
+ * A blended ceiling as given by a caller: a number >= 0, or null for none. Blank, null and
  * anything unparseable mean none; 0 is a real ceiling that rents nothing, never "no cap". Number('')
  * and Number(null) are 0, so blanks are caught before converting.
  */
@@ -484,19 +478,10 @@ function parseCeiling(v) {
   if (v === undefined || v === null) return null;
   if (typeof v === 'string' && v.trim() === '') return null;
   const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  // Not rounded: a feed's 6630.4 must hold the preview where it holds the live loop.
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-/*
- * ceilingSatsUnitDay: the blended rate ceiling to hold the preview to, in sats per <priceUnit>/day,
- * with the same per-rig backstop the live loop applies (decide.js). Without it the preview packed
- * uncapped, so a typed ceiling changed nothing and the preview disagreed with what LIVE would rent
- * (issue #15).
- *   - a number: that ceiling;
- *   - null: no ceiling (the user cleared it);
- *   - undefined: the suggested ceiling, which is what the form pre-fills and a start then applies,
- *     so an untouched preview shows what LIVE would rent too.
- */
 // The market listing the estimate packs from, kept briefly per client and algorithm. Editing the
 // ceiling re-runs the preview after each pause in typing, and each run would otherwise page through
 // the whole MRR listing again: a burst of requests per edit, and a market that moves between runs,
@@ -512,6 +497,21 @@ async function estimateRigs(client, algo) {
   return rigs;
 }
 
+/**
+ * Feasibility estimate for an autopilot session at the current market: which cheapest rigs
+ * would cover the target, the fee-inclusive sats/hour to HOLD it, and the projected runway
+ * (budget / burn). Pure-ish (fetches the market). The runway vs the time cap tells the user
+ * whether the budget or the clock ends the session.
+ *
+ * ceilingSatsUnitDay: the blended rate ceiling to hold the preview to, in sats per <priceUnit>/day,
+ * with the same per-rig backstop the live loop applies (decide.js). Without it the preview packed
+ * uncapped, so a typed ceiling changed nothing and the preview disagreed with what LIVE would rent
+ * (issue #15).
+ *   - a number: that ceiling;
+ *   - null: no ceiling (the user cleared it);
+ *   - undefined: the suggested ceiling, which is what the form pre-fills and a start then applies,
+ *     so an untouched preview shows what LIVE would rent too.
+ */
 async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay }) {
   const strat = config.get(conn, 'strategy');
   const rigs = await estimateRigs(client, market.activeAlgo(conn));
@@ -531,7 +531,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   const { kept: priced, overpriced } = quote.applyPriceLimit(eligible, priceLimit);
   // The gate's optional per-rig ceiling refuses these at rent time, so the preview leaves them out too.
   const gateCeil = ceilingSource.effective(conn, nowSec()).rateSatsThHour;
-  const underGate = (r) => gateCeil == null || (r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil);
+  const underGate = (r) => gateCeil == null || decide.rigSatsPerThHour(r, r.minHours || r.minRentalLength || 0) <= gateCeil;
   const cands = priced.filter(underGate);
   const overGate = priced.length - cands.length;
   // Pack to the target with the SAME overshoot-bounded packer the live decide loop uses, so the
@@ -602,11 +602,11 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
-    // With a ceiling feed, counted before the per-rig ceiling: a rig over it is still on the market,
-    // just not rentable at the feed's ceiling for now (a stale feed is 0 until it recovers), so it
-    // must not block a start. Without one the ceiling is the user's own, and a start that could
-    // never rent is refused as before.
-    eligibleRigs: ceilingSource.effective(conn, nowSec()).source ? priced.length : cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    // Counted before the per-rig ceiling, as in 0.1.7.0: a rig over it is still on the market, just
+    // not rentable at today's ceiling (a feed's may move, and a stale feed is 0 until it recovers).
+    // A session held by it waits, and the rate_ceiling_hold alert names the ceiling, rather than
+    // the start being refused as if the market were empty.
+    eligibleRigs: priced.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     // The per-rig price limit and what it was judged against, so the preview can show the
     // line it holds (null when off or when there was no market to judge against).
     priceLimit: priceLimit ? {
@@ -742,7 +742,7 @@ async function stopSession(conn, client = null) {
   // into session.js).
   conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind IN ('rate_ceiling_hold', 'price_limit_hold') AND key = ? AND state IN ('armed','fired')").run(nowSec(), String(s.id));
   // The feed alert only matters while an autopilot session is waiting on it.
-  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'ceiling_source_stale' AND state IN ('armed','fired')").run(nowSec());
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'ceiling_source_stale' AND state IN ('armed','fired')").run(Date.now());
   return { stopped: true, state: 'ended' };
 }
 

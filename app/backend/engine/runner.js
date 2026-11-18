@@ -119,15 +119,6 @@ function rehydrateState(conn) {
   return { rentals, marketAt: 0, refundAt: 0, market: null };
 }
 
-/**
- * One control-tick's reactions to a snapshot, in order: alerts, session close (ledger-
- * reconciled), orphan ADOPTION / stray review, endpoint auto-repair (debounced on a fired
- * endpoint_down), then the autopilot top-up + auto-extend spend cycle — SKIPPED on a tick that
- * adopted (the new rows aren't in this snapshot yet, so decide() would double-rent). Extracted
- * from the loop's onTick so this orchestration is unit-testable. `opts.client` overrides the
- * resolved MRR client (for tests); `opts.prev`/`opts.now`/`opts.log` carry per-tick context.
- * Returns { ran, adoptedCount }.
- */
 /*
  * The ceiling feed's step of a tick: read it, then raise or clear ceiling_source_stale. The feed
  * fails closed on its own, so a failure here only means no fresh reading this tick. The alert fires
@@ -154,12 +145,21 @@ async function ceilingSourceTick(conn, now, log = () => {}, opts = {}) {
   }
   // One left on an algorithm that is no longer active would never be re-evaluated.
   conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'ceiling_source_stale' AND key IS NOT ? AND state IN ('armed','fired')")
-    .run(nowS, algo);
+    .run(now, algo);   // ms, as runTransition writes it
   return { eff, held };
 }
 
 const r3 = (x) => Math.round(x * 1000) / 1000;
 
+/**
+ * One control-tick's reactions to a snapshot, in order: alerts, session close (ledger-
+ * reconciled), orphan ADOPTION / stray review, endpoint auto-repair (debounced on a fired
+ * endpoint_down), then the autopilot top-up + auto-extend spend cycle — SKIPPED on a tick that
+ * adopted (the new rows aren't in this snapshot yet, so decide() would double-rent). Extracted
+ * from the loop's onTick so this orchestration is unit-testable. `opts.client` overrides the
+ * resolved MRR client (for tests); `opts.prev`/`opts.now`/`opts.log` carry per-tick context.
+ * Returns { ran, adoptedCount }.
+ */
 async function tickOnce(conn, dataDir, snapshot, opts = {}) {
   if (!snapshot) return { ran: false };
   const now = opts.now || Date.now();
@@ -303,12 +303,14 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
         // still cleaned up: runLifecycle and stopSession resolve both holds directly.
         const unknown = !r || (!r.ran && UNKNOWN_CYCLE_REASONS.has(r.reason));
         if (!unknown) {
-          const heldByCeiling = !!(stillActive && plan && (plan.notes || []).includes('blend_ceiling') && (plan.shortfallTh || 0) > 0);
+          const notes = (plan && plan.notes) || [];
+          // Held by either ceiling: the blended one, or the per-rig one (stored, or a feed's).
+          const heldByCeiling = !!(stillActive && plan && (notes.includes('blend_ceiling') || notes.includes('rate_ceiling')) && (plan.shortfallTh || 0) > 0);
           alerts.runTransition(conn, {
             kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
             thresholdMs: 10 * 60 * 1000,
             // To the GH/s, not the whole TH: single-digit TH targets (blake2b) otherwise read 3/3, shortfall 0.
-            context: heldByCeiling ? { active_th: r3(plan.activeTh), target_th: r3(plan.targetTh), shortfall_th: r3(plan.shortfallTh) } : {},
+            context: heldByCeiling ? { active_th: r3(plan.activeTh), target_th: r3(plan.targetTh), shortfall_th: r3(plan.shortfallTh), blended: notes.includes('blend_ceiling'), per_rig: notes.includes('rate_ceiling') } : {},
           });
           // The same for the market price limit, with decide() having already decided whether the
           // limit is the actual cause (a counterfactual re-pack) and whether the hold is material.

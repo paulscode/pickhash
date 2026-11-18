@@ -47,6 +47,16 @@ function blendBackstop(blendCapBtcThDay, priceLimit) {
   return Math.max(blendCapBtcThDay * BLEND_BACKSTOP_MULT, market);
 }
 
+/**
+ * A rig's price as the gate's optional per-rig ceiling judges it: base sats (MRR's rounding, no
+ * fee) per hour per TH, for a rental of `hours`. Shared by decide() and the preview, so a rig at
+ * the ceiling is in or out of both alike.
+ */
+function rigSatsPerThHour(r, hours) {
+  if (!(hours > 0) || !(r.advertisedTh > 0)) return Infinity;
+  return rentCostSats(r.hourBtc, hours).base / hours / r.advertisedTh;
+}
+
 /** Fee-inclusive cost to rent a rig for `hours` (reproduces MRR's per-rental rounding). */
 function rentCostSats(hourBtc, hours) {
   const base = Math.round((hourBtc || 0) * hours * 1e8);
@@ -274,12 +284,7 @@ function decide(ctx = {}) {
   // blocked at the gate every tick and re-proposed the next, holding autopilot below target with no
   // shortfall reported and no alert, while a rig under the ceiling sat unused.
   const gateCeil = ctx.rateCeilingSatsThHour != null ? ctx.rateCeilingSatsThHour : Infinity;
-  const underGate = (r) => {
-    if (!Number.isFinite(gateCeil)) return true;
-    const h = hoursOf(r);
-    if (!(h > 0) || !(r.advertisedTh > 0)) return false;
-    return rentCostSats(r.hourBtc, h).base / h / r.advertisedTh <= gateCeil;
-  };
+  const underGate = (r) => !Number.isFinite(gateCeil) || rigSatsPerThHour(r, hoursOf(r)) <= gateCeil;
   const feasible = priced.filter((r) => fits(r) && underGate(r));
   /*
    * "Out of budget" means reasonably priced rigs are there to rent and none is affordable.
@@ -346,19 +351,40 @@ function decide(ctx = {}) {
     }
   }
 
+  /*
+   * The same question for the optional per-rig ceiling (stored, or from a ceiling feed). Rigs over
+   * it are left out of the plan rather than blocked at the gate, so nothing else would name it: a
+   * tight per-rig ceiling could hold a session at 0 with no reason on screen. Re-pack with them
+   * back in, and blame the ceiling only if that covers materially more, as above.
+   */
+  let rateCeilingHeld = false;
+  if (Number.isFinite(gateCeil) && shortTh > 1e-9 && activeTh + coveredTh < tolFloorTh - 1e-9) {
+    const ungated = packToTarget(priced.filter(fits), neededTh, {
+      fitTol, maxOvershoot, budgetRemaining, costOf,
+      blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh, bandTh,
+    });
+    const heldBackTh = ungated.coveredTh - coveredTh;
+    rateCeilingHeld = heldBackTh > 1e-9 && heldBackTh >= targetTh * tol - 1e-9;
+  }
+
   if (!selection.length) {
     // Empty because nothing was affordable (no_affordable_candidate) vs affordable rigs all
     // overshot the small gap beyond the ceiling, or sit over the price limit (no_fit) — distinct
     // so a soak can tell them apart, and because the runner closes a session on the first.
     notes.push(budgetBound ? 'no_affordable_candidate' : 'no_fit');
     if (blendBlocked) notes.push('blend_ceiling');   // the cap specifically rejected an affordable rig
+    if (rateCeilingHeld) notes.push('rate_ceiling');   // the per-rig ceiling is what leaves it empty
     return { actions: [], activeTh, targetTh, neededTh, shortfallTh: neededTh, windowRemainingH, budgetRemainingSats: budgetRemaining, notes, priceLimitHold };
   }
 
   // A fill that lands inside the tolerance band holds the target, as the next tick will see it: no
   // shortfall, so neither the note nor the ceiling-hold alert reads it as one.
   const shortfallTh = activeTh + coveredTh >= tolFloorTh - 1e-9 ? 0 : shortTh;
-  if (shortfallTh > 1e-9) { notes.push('shortfall'); if (blendBlocked) notes.push('blend_ceiling'); }
+  if (shortfallTh > 1e-9) {
+    notes.push('shortfall');
+    if (blendBlocked) notes.push('blend_ceiling');
+    if (rateCeilingHeld) notes.push('rate_ceiling');
+  }
 
   const actions = selection.map((x) => {
     const { base: paidSats, fee: feeSats } = rentCostSats(x.rig.hourBtc, x.hours);
@@ -383,4 +409,4 @@ function decide(ctx = {}) {
   };
 }
 
-module.exports = { decide, packToTarget, contributionTh, rentCostSats, rateCapUnitDay, blendBackstop, FEE_RATE, BLEND_BACKSTOP_MULT };
+module.exports = { decide, packToTarget, contributionTh, rentCostSats, rigSatsPerThHour, rateCapUnitDay, blendBackstop, FEE_RATE, BLEND_BACKSTOP_MULT };

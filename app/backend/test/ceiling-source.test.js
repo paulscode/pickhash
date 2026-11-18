@@ -157,16 +157,17 @@ test('autopilot and auto-extend open no spend while the feed is stale', async ()
   assert.deepEqual([x.ran, x.reason], [false, 'ceiling_source_stale']);
 });
 
-test('only a deliberate stored blended ceiling caps the feed; the status says when it does', async () => {
-  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_, blended_ceiling_sats_unit_day: 5500, blended_ceiling_auto: true });
+test('any stored blended ceiling caps the feed, and the status says when it does', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
   await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6630, as_of: NOW } }) });
   let e = cs.effective(db.get(), NOW);
-  assert.equal(e.blendedSatsUnitDay, 6630, 'an accepted preview suggestion is not a limit');
-  assert.equal(e.source.noUpperLimit, true);
-  config.set(db.get(), 'guardrails', { blended_ceiling_auto: false });
+  assert.equal(e.blendedSatsUnitDay, 6630);
+  assert.deepEqual([e.source.cappedBlended, e.source.noUpperLimit], [false, true]);
+  // Even one first saved as a preview suggestion: the number Settings shows is the one that holds.
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 5500, blended_ceiling_auto: true });
   e = cs.effective(db.get(), NOW);
   assert.equal(e.blendedSatsUnitDay, 5500);
-  assert.deepEqual([e.source.cappedBlended, e.source.noUpperLimit], [true, false]);
+  assert.deepEqual([e.source.cappedBlended, e.source.noUpperLimit, e.source.blended], [true, false, 6630]);
 });
 
 test('a feed of 0 is reported as zero, not as fresh and fine', async () => {

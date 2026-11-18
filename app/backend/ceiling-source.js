@@ -150,10 +150,10 @@ async function refresh(conn, { nowSec = Math.floor(Date.now() / 1000), fetchImpl
  * no fresh reading, or a ceiling in force is 0). source: null when no feed is set, else, for display,
  *   { url, ok, asOf, ageS, maxAgeS, error, blended, rate, zero, cappedBlended, cappedRate, noUpperLimit }
  *
- * Upper limits on a feed: the stored per-rig ceiling, and the stored blended ceiling only when it
- * is deliberate (blended_ceiling_auto === false). An accepted preview suggestion is not a limit the
- * user chose, and since a start no longer writes one while a feed is set, an old one would cap the
- * feed for good with nothing on screen saying why.
+ * Upper limits on a feed: the stored ceilings, both of them, whenever set. That is what the
+ * setting's help promises ("never above the ceilings set here"), and the number Settings shows is
+ * the one that holds. When one caps the feed, the status line says so and gives the feed's own
+ * value, so an old ceiling can't hold the feed down unseen; clearing it lets the feed through.
  */
 function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   const guard = config.get(conn, 'guardrails');
@@ -163,7 +163,7 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   if (!url) {
     return { blendedSatsUnitDay: storedBlended, rateSatsThHour: storedRate, halted: storedBlended === 0 || storedRate === 0, source: null };
   }
-  const limitBlended = guard.blended_ceiling_auto === false ? storedBlended : null;
+  const limitBlended = storedBlended;
   const maxAgeS = guard.ceiling_source_max_age_s || 900;
   const st = state.get(keyOf(market.activeAlgo(conn), url)) || { good: null, error: null };
   const good = st.good;
