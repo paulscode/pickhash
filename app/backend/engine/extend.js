@@ -8,6 +8,7 @@
  * (a winding-down session is spending nothing more; a quick session is a fixed one-shot).
  */
 const config = require('../config');
+const ceilingSource = require('../ceiling-source');
 const market = require('../market');
 const shutdown = require('../shutdown');
 const gate = require('./gate');
@@ -151,6 +152,11 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   const session = conn.prepare("SELECT * FROM sessions WHERE mode = 'autopilot' AND state = 'active' ORDER BY id DESC LIMIT 1").get();
   if (!session) return { ran: false, reason: 'no_autopilot_session' };
 
+  // The ceilings in force: the stored ones, or a ceiling feed's. A feed that is stale or failing,
+  // or a ceiling of 0, extends nothing (fail closed); the rentals run out as they would.
+  const ceilings = ceilingSource.effective(conn, nowSec);
+  if (ceilings.halted) return { ran: false, reason: ceilings.source && !ceilings.source.ok ? 'ceiling_source_stale' : 'ceiling_zero' };
+
   // Extend owns the window (replaceLead, EXTEND_WINDOW]; the last `replaceLead` before end belongs
   // to the top-up lookahead (decide rents a REPLACEMENT there). Excluding it means a rig is never
   // both extended AND replaced in the same handoff: extend gets first crack 30min out, and if it
@@ -174,8 +180,8 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   const guard = config.get(conn, 'guardrails');
   // Blended ceiling: don't renew a dear rig once the portfolio blend is already over the cap — skip it
   // (marked, so it's not re-simulated for the retry window) and let decide replace it cheaper.
-  const capBtcThDay = guard.blended_ceiling_sats_unit_day != null
-    ? units.btcThDayFromSatsPerUnitDay(guard.blended_ceiling_sats_unit_day, algos.priceUnit(market.activeAlgo(conn)))
+  const capBtcThDay = ceilings.blendedSatsUnitDay != null
+    ? units.btcThDayFromSatsPerUnitDay(ceilings.blendedSatsUnitDay, algos.priceUnit(market.activeAlgo(conn)))
     : Infinity;
   const blendNow = sessionBlend(conn, session.id);
 
@@ -217,7 +223,7 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
       endpointDown: alerts.newRentsHalted(conn),
       sessionBudgetSats: session.budget_sats, sessionSpentSats: session.spent_sats || 0,
       maxSessionBudgetSats: guard.max_session_budget_sats, maxDailySpendSats: guard.max_daily_spend_sats,
-      dailySpentSats: dailySpent, rateCeilingSatsThHour: guard.rate_ceiling_sats_th_hour,
+      dailySpentSats: dailySpent, rateCeilingSatsThHour: ceilings.rateSatsThHour,
       pacingSec: strat.rent_pacing_seconds, lastRentAt, now: nowSec,
     });
 

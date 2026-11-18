@@ -48,6 +48,7 @@ const SEVERITY = {
   duckdns_update_failed: 'warning',
   worker_repaired: 'warning',
   gateway_outdated: 'warning',
+  ceiling_source_stale: 'warning',
 };
 
 function currentActive(conn, kind, key) {

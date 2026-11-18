@@ -16,18 +16,20 @@ const alerts = require('../alerts');
 const scoring = require('./scoring');
 const algos = require('../algos');
 const endpoints = require('../endpoints');
+const ceilingSource = require('../ceiling-source');
 
 const DAY = 86400;
 
-function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs) {
+function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs, ceilings) {
   const strat = config.get(conn, 'strategy');
-  const guard = config.get(conn, 'guardrails');
+  // The ceilings in force: the stored ones, or a ceiling feed's (ceiling-source.js).
+  const eff = ceilings || ceilingSource.effective(conn, nowSec);
   return {
     session,
     rentals: snapshot.rentals || [],
     now: nowSec,
     fetchOk: !!(snapshot.fetch_ok && snapshot.fetch_ok.rentals),
-    blendedCeilingSatsUnitDay: guard.blended_ceiling_sats_unit_day,
+    blendedCeilingSatsUnitDay: eff.blendedSatsUnitDay,
     // The unit that ceiling is expressed in, carried beside it so the two cannot be
     // separated. A ceiling without its unit is off by a thousand half the time.
     priceUnit: algos.priceUnit(market.activeAlgo(conn)),
@@ -42,7 +44,7 @@ function decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketR
     maxOvershootPct: strat.max_overshoot_pct,
     maxOverMarketPct: strat.max_over_market_pct,
     last10BtcThDay: market.recentLast10(conn, nowSec),
-    rateCeilingSatsThHour: guard.rate_ceiling_sats_th_hour,
+    rateCeilingSatsThHour: eff.rateSatsThHour,
     replaceLeadSec: (strat.replace_lead_minutes || 0) * 60,
     rigScores: rigScores || {},
     marketRigs: marketRigs || [],
@@ -68,12 +70,16 @@ async function runCycle(conn, client, snapshot, opts = {}) {
   const endpoint = endpoints.active(conn);
   if (!endpoint || !endpoint.mrr_profile_id) return { ran: false, reason: 'no_endpoint' };
 
+  // A ceiling feed that is stale or failing fails closed: open no new spend until it is good again.
+  const ceilings = ceilingSource.effective(conn, nowSec);
+  if (ceilings.source && !ceilings.source.ok) return { ran: false, reason: 'ceiling_source_stale' };
+
   // Learned per-rig delivery scores feed the rank key (a proven-reliable rig outranks a slightly
   // cheaper flaky one). Loaded from rig_scores unless the caller injected them (tests).
   const rigScores = opts.rigScores || scoring.loadRigScores(conn);
 
   // Cheap pre-check without touching the market: at target / capped / stale -> do nothing.
-  const pre = decide.decide(decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, []));
+  const pre = decide.decide(decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, [], ceilings));
   if (!(pre.neededTh > 0)) return { ran: false, reason: pre.notes[pre.notes.length - 1] || 'no_gap' };
 
   // There IS a gap — fetch candidates and decide for real.
@@ -81,7 +87,7 @@ async function runCycle(conn, client, snapshot, opts = {}) {
   try { marketRigs = await market.fetchAllRigs(client, market.activeAlgo(conn)); }
   catch { return { ran: false, reason: 'market_fetch_failed' }; }
 
-  const plan = decide.decide(decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs));
+  const plan = decide.decide(decideCtx(conn, session, snapshot, nowSec, endpoint, rigScores, marketRigs, ceilings));
   if (!plan.actions.length) return { ran: true, plan, outcome: { executed: [], rehearsed: [] } };
 
   const strat = config.get(conn, 'strategy');
@@ -104,7 +110,7 @@ async function runCycle(conn, client, snapshot, opts = {}) {
     maxSessionBudgetSats: guard.max_session_budget_sats,
     maxDailySpendSats: guard.max_daily_spend_sats,
     dailySpentSats: dailySpent,
-    rateCeilingSatsThHour: guard.rate_ceiling_sats_th_hour,
+    rateCeilingSatsThHour: ceilings.rateSatsThHour,
     pacingSec: strat.rent_pacing_seconds,
     lastRentAt,
     now: nowSec,

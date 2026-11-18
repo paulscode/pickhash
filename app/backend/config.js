@@ -67,6 +67,12 @@ const DEFAULTS = {
     max_daily_spend_sats: 10000000,
     blended_ceiling_sats_unit_day: null, // primary price cap: max BLENDED pay-rate, sats per <priceUnit>·day; null = off
     rate_ceiling_sats_th_hour: null, // optional per-rig backstop (sats/TH/hr); null = off (auto 2× blend when a blended cap is set)
+    // Optional live source for the two ceilings above (issue #16): a URL returning
+    // {blended_ceiling_sats_unit_day, rate_ceiling_sats_th_hour?, as_of}. When set, autopilot and
+    // auto-extend use its values, capped by the stored ceilings, and fail closed (rent and extend
+    // nothing) when it is missing, unreadable or older than the max age. See ceiling-source.js.
+    ceiling_source_url: null,
+    ceiling_source_max_age_s: 900,
     deposit_leadtime_hours: 2,      // low-balance early warning vs the 3-conf delay
     refund_watch_days: 14,          // how long an ended rental is watched for refunds
   },
@@ -253,6 +259,14 @@ const SETTINGS = {
         help: `Optional hard cap on any SINGLE rig’s price (sats per TH per hour; blank = off). A backstop for the blended ceiling so no one rig is absurdly priced even when cheap rigs dilute the average. When a blended ceiling is set, an auto-backstop of 2× it already applies (never tighter than Max price over market). A recent ${a.short} rig runs ~${a.typicalSatsThHour} sats/TH/hr.`,
       }),
     },
+    ceiling_source_url: {
+      type: 'urlOrNull', label: 'Ceiling feed URL',
+      help: 'Optional (blank = off). A URL Pickhash reads each tick for both ceilings, as JSON: {"blended_ceiling_sats_unit_day": N, "rate_ceiling_sats_th_hour": N (optional), "as_of": unix seconds}. Autopilot and auto-extend use its values, never above the ceilings set here, and rent and extend nothing while it is missing, unreadable or older than the max age. Quick rents are not affected.',
+      forAlgo: (a) => ({
+        help: `Optional (blank = off). A URL Pickhash reads each tick for both ceilings, as JSON: {"blended_ceiling_sats_unit_day": N (sats/${a.priceUnit.toUpperCase()}·day), "rate_ceiling_sats_th_hour": N (optional), "as_of": unix seconds}. Autopilot and auto-extend use its values, never above the ceilings set here, and rent and extend nothing while it is missing, unreadable or older than the max age. Quick rents are not affected.`,
+      }),
+    },
+    ceiling_source_max_age_s: { type: 'int', min: 60, max: 86400, unit: 's', label: 'Ceiling feed max age', help: 'How old the feed\u2019s as_of may be before autopilot stops renting and extending.' },
     deposit_leadtime_hours: { type: 'number', min: 0, max: 168, unit: 'h', label: 'Low-balance lead time', help: 'Warn when runway drops under this.' },
     refund_watch_days: { type: 'int', min: 0, max: 90, unit: 'days', label: 'Refund watch', help: 'How long an ended rental is watched for refunds.' },
   },
@@ -291,6 +305,15 @@ function coerce(spec, raw) {
     if (raw === 'true' || raw === 1 || raw === '1') return { ok: true, value: true };
     if (raw === 'false' || raw === 0 || raw === '0') return { ok: true, value: false };
     return { ok: false, reason: 'expected a boolean' };
+  }
+  if (spec.type === 'urlOrNull') {
+    const u = typeof raw === 'string' ? raw.trim() : raw;
+    if (u === null || u === undefined || u === '') return { ok: true, value: null };
+    if (typeof u !== 'string' || u.length > 500) return { ok: false, reason: 'expected a URL' };
+    let parsed;
+    try { parsed = new URL(u); } catch { return { ok: false, reason: 'expected a URL' }; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ok: false, reason: 'must be an http:// or https:// URL' };
+    return { ok: true, value: u };
   }
   if (spec.type === 'enum') return spec.values.includes(raw) ? { ok: true, value: raw } : { ok: false, reason: `must be one of ${spec.values.join(', ')}` };
   if (spec.type === 'strlist') {

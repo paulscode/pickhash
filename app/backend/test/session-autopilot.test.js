@@ -316,3 +316,37 @@ test('a ceiling of 0 holds the estimate to nothing, and says the ceiling is why'
   assert.equal(est.ceilingSatsUnitDay, 0);
   assert.equal(est.ceilingBlocked, true);
 });
+
+// ---- issue #16: session start doesn't overwrite a ceiling it doesn't own ----
+
+test('#16: starting with the preview suggestion keeps a deliberate stored ceiling', async () => {
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 6630, blended_ceiling_auto: false });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 9999, blendedCeilingAuto: true });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 6630);
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_auto'), false);
+});
+
+test('#16: a typed ceiling at start still replaces a deliberate one', async () => {
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 6630, blended_ceiling_auto: false });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 7000, blendedCeilingAuto: false });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 7000);
+});
+
+test('#16: with a ceiling feed set, starting a session writes no ceiling', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: 'http://10.0.0.5/c.json', blended_ceiling_sats_unit_day: 8000 });
+  await session.startAutopilotSession(db.get(), client(), { targetTh: 100, timeCapHours: 24, budgetSats: 500_000, blendedCeilingSatsUnitDay: 1234, blendedCeilingAuto: false });
+  assert.equal(config.getKey(db.get(), 'guardrails', 'blended_ceiling_sats_unit_day'), 8000);
+});
+
+test('#16: the preview is held to the feed, and to nothing while the feed is stale', async () => {
+  const cs = require('../ceiling-source');
+  cs._reset();
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  config.set(db.get(), 'guardrails', { ceiling_source_url: 'http://10.0.0.5/c.json' });
+  // Not read yet: fail closed, so the preview the API builds is held to 0.
+  const eff = cs.effective(db.get());
+  assert.equal(eff.blendedSatsUnitDay, 0);
+  const est = await session.estimateAutopilot(db.get(), client(), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: eff.blendedSatsUnitDay });
+  assert.equal(est.coveredTh, 0);
+  cs._reset();
+});

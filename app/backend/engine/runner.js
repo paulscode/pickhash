@@ -23,6 +23,8 @@ const deadRigFallback = require('./dead-rig-fallback');
 const ownerNudge = require('./owner-nudge');
 const ledgerFetch = require('./ledger');
 const config = require('../config');
+const market = require('../market');
+const ceilingSource = require('../ceiling-source');
 const hashgg = require('../hashgg');
 const duckdns = require('../duckdns');
 const mrr = require('../mrr');
@@ -234,6 +236,23 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
       }
     }
   } catch (e) { log({ event: 'bootstrap_sync_error', message: String(e && e.message) }); }
+
+  // The ceiling feed, read before the spend steps that use it (ceiling-source.js). It fails closed
+  // on its own, so an error here only means no fresh reading this tick. Alert when it has held an
+  // autopilot session for a few minutes: short enough to matter, long enough that a restart (which
+  // starts with no reading) or one slow reply doesn't page anyone.
+  try {
+    const nowS = Math.floor(now / 1000);
+    const src = await ceilingSource.refresh(conn, { nowSec: nowS });
+    const eff = ceilingSource.effective(conn, nowS);
+    const apActive = !!conn.prepare("SELECT 1 FROM sessions WHERE mode = 'autopilot' AND state = 'active'").get();
+    const stale = !!(eff.source && !eff.source.ok);
+    if (src && src.error) log({ event: 'ceiling_source_error', message: src.error });
+    alerts.runTransition(conn, {
+      kind: 'ceiling_source_stale', key: market.activeAlgo(conn), bad: stale && apActive, now, thresholdMs: 3 * 60 * 1000,
+      context: stale ? { url: eff.source.url, error: eff.source.error, age_s: eff.source.ageS, max_age_s: eff.source.maxAgeS } : {},
+    });
+  } catch (e) { log({ event: 'ceiling_source_error', message: String(e && e.message) }); }
 
   try {
     if (client && !skipSpendCycle) {

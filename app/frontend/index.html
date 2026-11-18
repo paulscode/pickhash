@@ -753,8 +753,9 @@
           <div x-show="apPriceLimitText" class="flex justify-between gap-3"><span class="text-gray-500">Per-rig price limit</span><span class="text-white tabular-nums text-right" x-text="apPriceLimitText"></span></div>
           <div class="flex justify-between items-center gap-3">
             <span class="text-gray-500">Rate ceiling <span class="text-gray-600 text-[10px]">blended · <span x-text="rateUnit"></span></span></span>
-            <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" @input="apCeilTouched" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+            <input type="number" min="0" step="1000" inputmode="numeric" x-model="apRateCeil" @input="apCeilTouched" :readonly="apCeilLocked" class="w-36 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white text-right tabular-nums font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
           </div>
+          <p x-show="apCeilLocked" x-cloak class="text-neon-yellow text-[10px] leading-relaxed" x-text="apCeilLockText"></p>
           <p class="text-gray-600 text-[10px] leading-relaxed">Caps your overall blended pay-rate — the “you” line on the market chart, not each rig. Autopilot fills the target with the cheapest rigs while holding the average under this; it leaves a shortfall rather than overpaying. Pre-filled with the estimate — raise to allow a higher average, lower to cap harder; the estimate updates to match. Blank = no cap.</p>
           <div class="flex justify-between"><span class="text-gray-500">Burn rate</span><span class="text-white tabular-nums" x-text="apBurnText"></span></div>
           <div class="flex justify-between"><span class="text-gray-500">Est. spend (through cap)</span><span class="text-neon-yellow tabular-nums" x-text="apSpendText"></span></div>
@@ -1055,6 +1056,7 @@
               <div class="flex items-center gap-2">
                 <input x-show="f.isNum" type="text" inputmode="decimal" :disabled="f.unavailable" :value="f.value" @input="setField(f, $event.target.value)" class="w-32 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm text-right focus:border-neon-ember/50 focus:outline-none">
                 <input x-show="f.isText" type="text" :disabled="f.unavailable" :value="f.value" @input="setField(f, $event.target.value)" class="w-44 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
+                <input x-show="f.isUrl" type="url" :disabled="f.unavailable" :value="f.value" @input="setField(f, $event.target.value)" placeholder="https://…" class="w-72 bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm focus:border-neon-ember/50 focus:outline-none">
                 <input x-show="f.isBool" type="checkbox" :disabled="f.unavailable" :checked="f.value" @change="setField(f, $event.target.checked)" class="w-4 h-4 accent-neon-ember">
                 <select x-show="f.isEnum" :disabled="f.unavailable" @change="setField(f, $event.target.value)" class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-white font-mono text-sm">
                   <template x-for="opt in f.values" :key="opt"><option :value="opt" :selected="opt === f.value" x-text="opt"></option></template>
@@ -1063,6 +1065,7 @@
               </div>
             </div>
             <p class="font-mono text-[11px] text-gray-500 leading-relaxed" x-text="f.help"></p>
+            <div x-show="f.isFeed" x-cloak><p x-show="ceilingSourceText" x-cloak :class="ceilingSourceClass" class="font-mono text-[11px] leading-relaxed" x-text="ceilingSourceText"></p></div>
           </div>
         </template>
         <div class="flex items-center gap-3 pt-2">

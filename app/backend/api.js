@@ -22,6 +22,7 @@ const deposit = require('./deposit');
 const auth = require('./auth');
 const quoteService = require('./quote-service');
 const session = require('./session');
+const ceilingSource = require('./ceiling-source');
 // Aliased at module scope: the /api/diag handler shadows `session` with a local DB row.
 const { fallbackWorker } = session;
 const algos = require('./algos');
@@ -616,6 +617,11 @@ async function handleApi(req, res, url, body, ctx = {}) {
     const balance = bal ? { confirmed_sats: bal.c, unconfirmed_sats: bal.u } : null;
     return sendJson(res, 200, {
       ok: true, mode, session: sessionOut, rentals, balance, rehearsal,
+      // The ceiling feed's state (issue #16), null when none is set, with the ceilings it puts in force.
+      ceiling_source: (() => {
+        const c = ceilingSource.effective(conn, Math.floor(Date.now() / 1000));
+        return c.source ? { ...c.source, blended_in_force: c.blendedSatsUnitDay, rate_in_force: c.rateSatsThHour, halted: c.halted } : null;
+      })(),
       // The UI labels money in the active algorithm's unit, so it needs both on the
       // one call it already polls. Sending the label with the numbers means they
       // cannot drift apart in the browser.
@@ -997,19 +1003,23 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // before this flag existed (undefined -> treated as auto, since the UI always pre-filled a
     // suggestion), returns null so the preview re-suggests with fresh headroom instead of masking it
     // with a stale (possibly too-tight) number. A deliberate ceiling stays sticky.
+    // With a ceiling feed set, its value is the ceiling, deliberate by definition (issue #16): the
+    // preview pre-fills it, can't override it, and is held to it. Stale, that is 0 (fail closed).
+    const ceilings = ceilingSource.effective(conn, Math.floor(Date.now() / 1000));
     const deliberate = config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
-    const currentCeiling = deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null;
+    const currentCeiling = ceilings.source ? ceilings.blendedSatsUnitDay
+      : (deliberate ? config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day') : null);
     // The ceiling to hold the estimate to: the one in the form when sent (blank = no cap), else
     // the deliberate standing one the form is about to pre-fill, so the preview matches LIVE.
     // With neither, undefined: the estimate holds itself to the ceiling it suggests, which is the
     // value the form pre-fills.
     let ceilingSatsUnitDay = currentCeiling != null ? currentCeiling : undefined;
-    if (url.searchParams.has('blended_ceiling_sats_unit_day')) {
+    if (url.searchParams.has('blended_ceiling_sats_unit_day') && !ceilings.source) {
       ceilingSatsUnitDay = session.parseCeiling(url.searchParams.get('blended_ceiling_sats_unit_day'));
     }
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay });
-      return sendJson(res, 200, { estimate, current_blended_ceiling_sats_unit_day: currentCeiling });
+      return sendJson(res, 200, { estimate, current_blended_ceiling_sats_unit_day: currentCeiling, ceiling_source: ceilings.source });
     } catch {
       return sendJson(res, 502, { error: 'estimate_failed' });
     }

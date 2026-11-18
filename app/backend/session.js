@@ -35,6 +35,7 @@ const algos = require('./algos');
 const units = require('./units');
 const endpoints = require('./endpoints');
 const stratumDiff = require('./diff');
+const ceilingSource = require('./ceiling-source');
 
 const REPRICE_TOLERANCE = 0.02;   // >2% move at confirm -> re-confirm instead of executing
 const RATE_CAP_HEADROOM = 1.01;   // protective rate.price cap: quoted price +1%
@@ -529,7 +530,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   });
   const { kept: priced, overpriced } = quote.applyPriceLimit(eligible, priceLimit);
   // The gate's optional per-rig ceiling refuses these at rent time, so the preview leaves them out too.
-  const gateCeil = config.getKey(conn, 'guardrails', 'rate_ceiling_sats_th_hour');
+  const gateCeil = ceilingSource.effective(conn, nowSec()).rateSatsThHour;
   const underGate = (r) => gateCeil == null || (r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil);
   const cands = priced.filter(underGate);
   const overGate = priced.length - cands.length;
@@ -601,7 +602,9 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
-    eligibleRigs: cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    // Counted before the per-rig ceiling: a rig over it is still on the market, just not rentable at
+    // today's ceiling (a feed can lift it within the session), so it must not block a start.
+    eligibleRigs: priced.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     // The per-rig price limit and what it was judged against, so the preview can show the
     // line it holds (null when off or when there was no market to judge against).
     priceLimit: priceLimit ? {
@@ -683,7 +686,12 @@ async function startAutopilotSession(conn, client, params = {}) {
     // value is the max blended pay-rate ("you" line) in sats per <unit> per day, the unit being the
     // active algorithm's; blank clears it, 0 rents nothing, an absent key leaves the setting
     // untouched. It is stored under the active algorithm, so it cannot govern the other one.
-    if (params.blendedCeilingSatsUnitDay !== undefined) {
+    // Two cases leave the stored ceiling alone (issue #16): a ceiling feed is in charge (its values
+    // are read each tick; writing the preview's copy would only go stale), or the stored ceiling is
+    // a deliberate one and what's being started with is merely the preview's suggestion.
+    const feedActive = !!config.getKey(conn, 'guardrails', 'ceiling_source_url');
+    const keepDeliberate = !!params.blendedCeilingAuto && config.getKey(conn, 'guardrails', 'blended_ceiling_auto') === false;
+    if (params.blendedCeilingSatsUnitDay !== undefined && !feedActive && !keepDeliberate) {
       const ceil = startCeil;
       // blended_ceiling_auto records whether this ceiling was an ACCEPTED auto-suggestion (vs a value
       // the user deliberately typed). It's not a user-facing knob — it lets the next preview ignore a
