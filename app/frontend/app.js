@@ -720,7 +720,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         const dp = heroSeries.unit === 'PH/s' ? 2 : 0;
         this.heroActive = true;
         this.heroUnit = heroSeries.unit;
-        this.tabHashText = `${(last / div).toFixed(dp)} ${heroSeries.unit}`;
+        // Only while a session runs: after one ends the charts still hold its history, and the tab
+        // would otherwise keep showing its last hashrate next to "Idle".
+        if (this.hasSession) this.tabHashText = `${(last / div).toFixed(dp)} ${heroSeries.unit}`;
         this.countUp('heroDeliveredNum', last / div, (v) => { this.heroDelivered = v.toFixed(dp); }, dp);
         this.heroTarget = `of ${(target / div).toFixed(dp)} ${heroSeries.unit} target`;
         const pct = target > 0 ? Math.round((last / target) * 100) : 0;
