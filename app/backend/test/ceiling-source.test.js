@@ -32,6 +32,7 @@ before(() => { db.open(DATA); });
 after(() => { db.close(); fs.rmSync(DATA, { recursive: true, force: true }); });
 beforeEach(() => {
   db.get().prepare('DELETE FROM config').run();
+  db.get().prepare('DELETE FROM rentals').run();
   db.get().prepare('DELETE FROM sessions').run();
   cs._reset();
 });
@@ -320,4 +321,26 @@ test('the feed URL shown in status and alerts has no query string', async () => 
   config.set(db.get(), 'guardrails', { ceiling_source_url: 'http://10.0.0.5/c.json?token=s3cret' });
   const e = cs.effective(db.get(), NOW);
   assert.equal(e.source.url, 'http://10.0.0.5/c.json?…');
+});
+
+test('auto-extend\'s blend leaves out a rental about to end, as decide() does', () => {
+  const { sessionBlend } = require('../engine/extend');
+  const sid = Number(db.get().prepare(`INSERT INTO sessions (algo, mode, state, target_th, budget_sats, spent_sats, fee_sats, created_at, started_at)
+    VALUES ('sha256ab', 'autopilot', 'active', 100, 100000, 0, 0, ?, ?)`).run(NOW, NOW).lastInsertRowid);
+  const ins = db.get().prepare('INSERT INTO rentals (session_id, mrr_id, rig_id, advertised_th, rate_btc_th_day, end_ts, ended) VALUES (?, ?, ?, ?, ?, ?, 0)');
+  ins.run(sid, 9001, 'a', 10, 4000e-8, NOW + 240);    // cheap, ending inside a 5-minute window
+  ins.run(sid, 9002, 'b', 5, 8000e-8, NOW + 1500);    // dear, the one up for renewal
+  assert.ok(Math.abs(sessionBlend(db.get(), sid, NOW, 300) - 8000e-8) < 1e-15, 'only the rental that stays counts');
+  assert.ok(sessionBlend(db.get(), sid, NOW, 0) < 8000e-8, 'without a window, both count, as before');
+});
+
+test('a 0 from your own Settings is told apart from a feed that says 0', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_, blended_ceiling_sats_unit_day: 0 });
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW } }) });
+  let e = cs.effective(db.get(), NOW);
+  assert.deepEqual([e.halted, e.source.zero, e.source.zeroFromSettings], [true, true, true]);
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: null });
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 0, as_of: NOW } }) });
+  e = cs.effective(db.get(), NOW);
+  assert.deepEqual([e.source.zero, e.source.zeroFromSettings], [true, false]);
 });

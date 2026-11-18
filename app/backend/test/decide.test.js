@@ -703,3 +703,11 @@ test('a rental about to end does not hold the blend up for its replacement', () 
   }));
   assert.equal(plan.actions.length, 0, plan.actions.map((a) => a.rigId).join(','));
 });
+
+test('decide(): a ceiling of 0 is reported only when it holds the session below target', () => {
+  const rentals = [{ rig_id: 'h', advertised_th: 100, delivered_th: 100, health: 'healthy', rate_btc_th_day: CAP(50000), ended: 0 }];
+  const atTarget = decide.decide(ctx({ session: sess({ target_th: 100 }), rentals, marketRigs: [], blendedCeilingSatsUnitDay: 0 }));
+  assert.ok(atTarget.notes.includes('within_tolerance') && !atTarget.notes.includes('ceiling_zero'));
+  const below = decide.decide(ctx({ session: sess({ target_th: 300 }), rentals, marketRigs: [], blendedCeilingSatsUnitDay: 0 }));
+  assert.ok(below.notes.includes('ceiling_zero'));
+});

@@ -636,7 +636,7 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
     // blendBlocked alone only says the cap turned some rig away at some step (it may have been
     // admitted later, once cheaper rigs diluted the blend), so it counts only alongside a shortfall,
     // as decide() reports it.
-    ceilingSatsUnitDay: capped ? Math.round(ceil) : null,
+    ceilingSatsUnitDay: capped ? ceil : null,   // unrounded: a feed's 0.4 must not read as 0
     ceilingBlocked: !!(capped && blendBlocked && shortfallTh > 0),
     targetTh,   // echoed so a caller can explain a shortfall without re-deriving it
     burnSatsHr,

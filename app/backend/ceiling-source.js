@@ -183,7 +183,7 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
     url: displayUrl(url), ok: fresh, asOf: good ? good.asOf : null, ageS, maxAgeS,
     error: st.error || (good ? (fresh ? null : 'stale') : 'not read yet'),
     blended: good ? good.blended : null, rate: good ? good.rate : null,
-    zero: false, cappedBlended: false, cappedRate: false,
+    zero: false, zeroFromSettings: false, cappedBlended: false, cappedRate: false,
     noUpperLimit: limitBlended == null,
   };
   if (!fresh) return { blendedSatsUnitDay: 0, rateSatsThHour: 0, halted: true, source };
@@ -194,6 +194,8 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   source.cappedBlended = limitBlended != null && good.blended > limitBlended;
   source.cappedRate = good.rate != null && storedRate != null && good.rate > storedRate;
   source.zero = blended === 0 || rate === 0;
+  // A 0 that comes from your own Settings, not the feed: messages must not blame the feed for it.
+  source.zeroFromSettings = source.zero && good.blended !== 0 && !(good.rate === 0);
   return { blendedSatsUnitDay: blended, rateSatsThHour: rate, halted: source.zero, source };
 }
 

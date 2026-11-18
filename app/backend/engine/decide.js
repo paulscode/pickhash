@@ -237,13 +237,13 @@ function decide(ctx = {}) {
   // Time cap reached -> stop opening new rentals (paid time keeps running; we never cancel).
   if (windowRemainingH <= 0) { notes.push('time_cap_reached'); return base(); }
 
-  // A blended ceiling of 0 means rent nothing. Without this, the cap rule would still admit a rig
-  // cheaper than what's held (it lets a blend already over the cap move back toward it).
-  if (ctx.blendedCeilingSatsUnitDay === 0) { notes.push('ceiling_zero'); return base(); }
-
   // Within the tolerance band -> nothing to do.
   const tol = (ctx.hashrateTolerancePct != null ? ctx.hashrateTolerancePct : 5) / 100;
   if (activeTh >= targetTh * (1 - tol)) { notes.push('within_tolerance'); return base(); }
+
+  // A blended ceiling of 0 means rent nothing. Checked after the tolerance band, so it is reported
+  // (and alerted on) only when it is actually holding the session below target.
+  if (ctx.blendedCeilingSatsUnitDay === 0) { notes.push('ceiling_zero'); return base(); }
 
   const neededTh = targetTh - activeTh;
 

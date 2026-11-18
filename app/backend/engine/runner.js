@@ -134,7 +134,7 @@ async function ceilingSourceTick(conn, now, log = () => {}, opts = {}) {
   const held = !!(eff.source && eff.halted);
   const algo = market.activeAlgo(conn);
   if (src && src.error) log({ event: 'ceiling_source_error', message: src.error });
-  const context = held ? { url: eff.source.url, error: eff.source.ok ? null : eff.source.error, zero: !!eff.source.zero, age_s: eff.source.ageS, max_age_s: eff.source.maxAgeS } : {};
+  const context = held ? { url: eff.source.url, error: eff.source.ok ? null : eff.source.error, zero: !!eff.source.zero, zero_from_settings: !!eff.source.zeroFromSettings, age_s: eff.source.ageS, max_age_s: eff.source.maxAgeS } : {};
   alerts.runTransition(conn, {
     kind: 'ceiling_source_stale', key: algo, bad: held && apActive, now, thresholdMs: 3 * 60 * 1000, context,
   });
@@ -305,12 +305,17 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
         if (!unknown) {
           const notes = (plan && plan.notes) || [];
           // Held by either ceiling: the blended one, or the per-rig one (stored, or a feed's).
-          const heldByCeiling = !!(stillActive && plan && (notes.includes('blend_ceiling') || notes.includes('rate_ceiling')) && (plan.shortfallTh || 0) > 0);
+          // A blended ceiling of 0 (Settings, no feed) stops autopilot before it plans anything, so
+          // there is no plan to read: the cycle's reason is the evidence. decide() only reports it
+          // below tolerance, so a session at target isn't alerted for it.
+          const zeroCap = !!(stillActive && r && r.reason === 'ceiling_zero');
+          const heldByCeiling = zeroCap || !!(stillActive && plan && (notes.includes('blend_ceiling') || notes.includes('rate_ceiling')) && (plan.shortfallTh || 0) > 0);
           alerts.runTransition(conn, {
             kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
             thresholdMs: 10 * 60 * 1000,
             // To the GH/s, not the whole TH: single-digit TH targets (blake2b) otherwise read 3/3, shortfall 0.
-            context: heldByCeiling ? { active_th: r3(plan.activeTh), target_th: r3(plan.targetTh), shortfall_th: r3(plan.shortfallTh), blended: notes.includes('blend_ceiling'), per_rig: notes.includes('rate_ceiling') } : {},
+            context: zeroCap ? { zero: true, blended: true }
+              : heldByCeiling ? { active_th: r3(plan.activeTh), target_th: r3(plan.targetTh), shortfall_th: r3(plan.shortfallTh), blended: notes.includes('blend_ceiling'), per_rig: notes.includes('rate_ceiling') } : {},
           });
           // The same for the market price limit, with decide() having already decided whether the
           // limit is the actual cause (a counterfactual re-pack) and whether the hold is material.

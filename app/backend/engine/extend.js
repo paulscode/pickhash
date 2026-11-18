@@ -56,9 +56,12 @@ function planExtend({ rental, sim, tolerancePct, budgetRemainingSats, windowRema
 }
 
 /** Advertised-TH-weighted blended pay-rate (BTC/TH·day) across a session's live rentals — the "you" rate. */
-function sessionBlend(conn, sessionId) {
-  const rows = conn.prepare('SELECT rate_btc_th_day, advertised_th FROM rentals WHERE session_id = ? AND ended = 0').all(sessionId)
-    .filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0);
+// A rental inside the replace-lookahead window is left out, as decide() leaves it out: it is about to
+// end and be replaced, so a cheap one must not prop up the renewal of a dear one.
+function sessionBlend(conn, sessionId, nowSec = Math.floor(Date.now() / 1000), replaceLeadSec = 0) {
+  const rows = conn.prepare('SELECT rate_btc_th_day, advertised_th, end_ts FROM rentals WHERE session_id = ? AND ended = 0').all(sessionId)
+    .filter((r) => Number.isFinite(r.rate_btc_th_day) && r.advertised_th > 0)
+    .filter((r) => !(replaceLeadSec > 0 && r.end_ts != null && r.end_ts - nowSec <= replaceLeadSec));
   const adv = rows.reduce((s, r) => s + r.advertised_th, 0);
   return adv > 0 ? rows.reduce((s, r) => s + r.rate_btc_th_day * r.advertised_th, 0) / adv : 0;
 }
@@ -183,7 +186,7 @@ async function runAutoExtend(conn, client, snapshot, opts = {}) {
   const capBtcThDay = ceilings.blendedSatsUnitDay != null
     ? units.btcThDayFromSatsPerUnitDay(ceilings.blendedSatsUnitDay, algos.priceUnit(market.activeAlgo(conn)))
     : Infinity;
-  const blendNow = sessionBlend(conn, session.id);
+  const blendNow = sessionBlend(conn, session.id, nowSec, replaceLeadSec);
 
   for (const rental of candidates) {
     if (!blendAllowsExtend({ rigRateBtcThDay: rental.rate_btc_th_day, liveBlendBtcThDay: blendNow, capBtcThDay })) {
