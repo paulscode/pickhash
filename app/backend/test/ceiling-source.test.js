@@ -69,7 +69,7 @@ test('a fresh feed sets the ceilings; the stored ones stay upper limits', async 
   assert.equal(e.source.ok, true);
   assert.equal(e.source.ageS, 30);
   // A stored ceiling below the feed's caps it: the feed can tighten, never loosen.
-  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 6000, rate_ceiling_sats_th_hour: 500 });
+  config.set(db.get(), 'guardrails', { blended_ceiling_sats_unit_day: 6000, blended_ceiling_auto: false, rate_ceiling_sats_th_hour: 500 });
   e = cs.effective(db.get(), NOW);
   assert.equal(e.blendedSatsUnitDay, 6000);
   assert.equal(e.rateSatsThHour, 276.27);
@@ -95,18 +95,22 @@ test('fails closed: not read yet, stale, or every kind of bad reply', async () =
   assert.equal(e.blendedSatsUnitDay, 0);
   assert.equal(e.source.error, 'stale');
 
-  // A failing refresh keeps the last good reading (still fresh here) and records the error.
+  // Any failed read clears the reading at once: a feed that says its data is bad (an error status,
+  // no ceiling in the body) stops spending now, not at the max age.
   for (const [opts, re] of [
     [{ status: 503, body: 'down' }, /HTTP 503/],
     [{ body: 'not json' }, /not JSON/],
     [{ body: { as_of: NOW } }, /blended/],
     [{ error: Object.assign(new Error('x'), { name: 'TimeoutError' }) }, /timed out/],
     [{ body: 'x', headers: { 'content-length': String(1024 * 1024) } }, /too large/],
+    [{ error: Object.assign(new Error('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }) }, /ECONNREFUSED/],
   ]) {
+    await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW } }) });
+    assert.equal(cs.effective(db.get(), NOW).halted, false, 'good again before each case');
     const st = await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch(opts) });
     assert.match(st.error, re);
     const now = cs.effective(db.get(), NOW);
-    assert.equal(now.halted, false, 'the last good reading still holds while fresh');
+    assert.deepEqual([now.halted, now.blendedSatsUnitDay, now.rateSatsThHour], [true, 0, 0], `fails closed at once: ${re}`);
     assert.match(now.source.error, re);
   }
 });
@@ -151,4 +155,138 @@ test('autopilot and auto-extend open no spend while the feed is stale', async ()
   assert.deepEqual([r.ran, r.reason], [false, 'ceiling_source_stale']);
   const x = await extend.runAutoExtend(db.get(), client, { endpoint: { ok: true } }, { now: NOW * 1000 });
   assert.deepEqual([x.ran, x.reason], [false, 'ceiling_source_stale']);
+});
+
+test('only a deliberate stored blended ceiling caps the feed; the status says when it does', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_, blended_ceiling_sats_unit_day: 5500, blended_ceiling_auto: true });
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6630, as_of: NOW } }) });
+  let e = cs.effective(db.get(), NOW);
+  assert.equal(e.blendedSatsUnitDay, 6630, 'an accepted preview suggestion is not a limit');
+  assert.equal(e.source.noUpperLimit, true);
+  config.set(db.get(), 'guardrails', { blended_ceiling_auto: false });
+  e = cs.effective(db.get(), NOW);
+  assert.equal(e.blendedSatsUnitDay, 5500);
+  assert.deepEqual([e.source.cappedBlended, e.source.noUpperLimit], [true, false]);
+});
+
+test('a feed of 0 is reported as zero, not as fresh and fine', async () => {
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 0, as_of: NOW } }) });
+  const e = cs.effective(db.get(), NOW);
+  assert.deepEqual([e.halted, e.source.ok, e.source.zero], [true, true, true]);
+});
+
+test('parseBody: hex strings are refused; a slightly-future as_of counts as now', () => {
+  assert.equal(cs.parseBody({ blended_ceiling_sats_unit_day: '0x1F', as_of: NOW }, NOW).ok, false);
+  assert.equal(cs.parseBody({ blended_ceiling_sats_unit_day: 5, as_of: NOW + 120 }, NOW).asOf, NOW);
+});
+
+test('settings: a feed URL with a username or password is refused', () => {
+  assert.equal(config.validatePatch('guardrails', { ceiling_source_url: 'http://u:p@10.0.0.5/c.json' }).ok, false);
+});
+
+// The body limit against a real server, since the stand-in fetch above has no stream.
+function serve(handler) {
+  const http = require('http');
+  return new Promise((resolve) => { const srv = http.createServer(handler); srv.listen(0, '127.0.0.1', () => resolve(srv)); });
+}
+test('the body limit holds for a chunked reply with no length, and for a gzip bomb', async () => {
+  const zlib = require('zlib');
+  const chunked = await serve((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });   // no content-length: chunked
+    const piece = Buffer.alloc(16 * 1024, 0x20);
+    let n = 0;
+    const pump = () => { while (n < 4096) { n++; if (!res.write(piece)) { res.once('drain', pump); return; } } res.end(); };
+    pump();
+  });
+  const bomb = zlib.gzipSync(Buffer.alloc(8 * 1024 * 1024, 0x20));
+  const gz = await serve((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip', 'content-length': bomb.length });
+    res.end(bomb);
+  });
+  try {
+    for (const srv of [chunked, gz]) {
+      config.set(db.get(), 'guardrails', { ceiling_source_url: `http://127.0.0.1:${srv.address().port}/c.json` });
+      const st = await cs.refresh(db.get(), { nowSec: NOW });
+      assert.match(st.error, /too large/);
+      assert.equal(cs.effective(db.get(), NOW).halted, true);
+    }
+  } finally {
+    chunked.closeAllConnections(); gz.closeAllConnections();
+    await new Promise((r) => chunked.close(r)); await new Promise((r) => gz.close(r));
+  }
+});
+
+test('a fresh feed below the stored ceilings is what decide and the gate use', async () => {
+  const autopilot = require('../engine/autopilot');
+  // Three 100 TH rigs at 0.0002 BTC/hr: 480,000 sats/PH·day, 200 sats/TH/hr. The feed allows less.
+  const rawRig = (id) => {
+    const mh = String(0.1 * 1e9);
+    return { id: String(id), name: `r${id}`, owner: `o${id}`, type: 'sha256ab', status: { status: 'available', rented: false, online: true }, online: true,
+      poolstatus: 'online', region: 'us', rpi: '95.00', optimal_diff: { min: '1000', max: '2000000' }, extensions: true,
+      price: { type: 'ph', BTC: { currency: 'BTC', price: '0.00480000', hour: '0.0002', min_rental_length: 3, enabled: true } },
+      minhours: '3', maxhours: '96', available_status: 'available',
+      hashrate: { advertised: { hash: '0.1', type: 'ph' }, last_5min: { hash: mh, type: 'mh' }, last_15min: { hash: mh, type: 'mh' }, last_30min: { hash: mh, type: 'mh' } } };
+  };
+  const rigs = [rawRig(1), rawRig(2), rawRig(3)];
+  const client = { async get(p, params) {
+    if (p === '/rig') return (params && params.offset > 0) ? { records: [], total: 3 } : { records: rigs, total: 3, offset: 0, count: 3 };
+    throw new Error('unexpected ' + p);
+  } };
+  db.get().prepare(`INSERT INTO sessions (algo, mode, state, target_th, budget_sats, spent_sats, fee_sats, created_at, started_at, time_cap_hours)
+    VALUES ('sha256ab', 'autopilot', 'active', 300, 10000000, 0, 0, ?, ?, 168)`).run(NOW, NOW);
+  db.get().prepare('DELETE FROM pool_endpoints').run();
+  db.get().prepare("INSERT INTO pool_endpoints (host, port, worker_base, mrr_profile_id, active) VALUES ('h', 1, 'w', 5, 1)").run();
+  const snap = { fetch_ok: { rentals: true }, rentals: [] };
+  const run = () => autopilot.runCycle(db.get(), client, snap, { now: NOW * 1000 });
+
+  // No feed: the market fills (dry-run, so nothing is really rented).
+  let r = await run();
+  assert.ok(r.plan && r.plan.actions.length > 0, 'fills without a feed');
+  // A blended feed below every rig's price: nothing planned, and the ceiling is named.
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 100_000, as_of: NOW } }) });
+  r = await run();
+  assert.equal(r.plan.actions.length, 0);
+  assert.ok(r.plan.notes.includes('blend_ceiling'), r.plan.notes.join(','));
+  // A per-rig feed below every rig (100 < 200 sats/TH/hr): nothing planned either.
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 9_000_000, rate_ceiling_sats_th_hour: 100, as_of: NOW } }) });
+  r = await run();
+  assert.equal(r.plan.actions.length, 0, 'the feed\'s per-rig ceiling reaches decide');
+});
+
+test('auto-extend stops on a fresh feed of 0', async () => {
+  const extend = require('../engine/extend');
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
+  config.set(db.get(), 'strategy', { auto_extend: true });
+  db.get().prepare(`INSERT INTO sessions (algo, mode, state, target_th, budget_sats, spent_sats, fee_sats, created_at, started_at)
+    VALUES ('sha256ab', 'autopilot', 'active', 100, 100000, 0, 0, ?, ?)`).run(NOW, NOW);
+  await cs.refresh(db.get(), { nowSec: NOW, fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 0, as_of: NOW } }) });
+  const x = await extend.runAutoExtend(db.get(), {}, { endpoint: { ok: true } }, { now: NOW * 1000 });
+  assert.deepEqual([x.ran, x.reason], [false, 'ceiling_zero']);
+});
+
+test('ceiling_source_stale arms, fires after 3 minutes, says why, and resolves', async () => {
+  const { ceilingSourceTick } = require('../engine/runner');
+  db.get().prepare('DELETE FROM alerts').run();
+  config.set(db.get(), 'guardrails', { ceiling_source_url: URL_ });
+  db.get().prepare(`INSERT INTO sessions (algo, mode, state, target_th, budget_sats, spent_sats, fee_sats, created_at, started_at)
+    VALUES ('sha256ab', 'autopilot', 'active', 100, 100000, 0, 0, ?, ?)`).run(NOW, NOW);
+  const down = fakeFetch({ status: 503, body: 'x' });
+  const alert = () => db.get().prepare("SELECT state, context_json FROM alerts WHERE kind = 'ceiling_source_stale' ORDER BY id DESC LIMIT 1").get();
+  await ceilingSourceTick(db.get(), NOW * 1000, () => {}, { fetchImpl: down });
+  assert.equal(alert().state, 'armed');
+  await ceilingSourceTick(db.get(), (NOW + 200) * 1000, () => {}, { fetchImpl: down });
+  assert.equal(alert().state, 'fired');
+  assert.match(JSON.parse(alert().context_json).error, /HTTP 503/);
+  // A feed of 0 keeps it fired, and the context says so.
+  await ceilingSourceTick(db.get(), (NOW + 260) * 1000, () => {}, { fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 0, as_of: NOW + 260 } }) });
+  assert.equal(JSON.parse(alert().context_json).zero, true);
+  // Good again: resolved.
+  await ceilingSourceTick(db.get(), (NOW + 320) * 1000, () => {}, { fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW + 320 } }) });
+  assert.equal(alert().state, 'resolved');
+  // An alert left on another algorithm is cleared.
+  db.get().prepare("INSERT INTO alerts (kind, key, state, severity, armed_at, fired_at, context_json) VALUES ('ceiling_source_stale', 'blake2b', 'fired', 'warning', ?, ?, '{}')").run(NOW, NOW);
+  await ceilingSourceTick(db.get(), (NOW + 380) * 1000, () => {}, { fetchImpl: fakeFetch({ body: { blended_ceiling_sats_unit_day: 6000, as_of: NOW + 380 } }) });
+  assert.equal(db.get().prepare("SELECT state FROM alerts WHERE kind = 'ceiling_source_stale' AND key = 'blake2b'").get().state, 'resolved');
 });

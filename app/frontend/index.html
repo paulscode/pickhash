@@ -526,6 +526,8 @@
         </table>
       </div>
       <div x-show="!hasRentals" x-cloak class="font-mono text-xs text-gray-500" x-text="emptyRentalsNote"></div>
+      <!-- The ceiling feed is holding new spend (stale, failing, or 0): say so where the session is. -->
+      <div x-show="ceilingSourceHalt" x-cloak :class="ceilingSourceClass" class="font-mono text-xs leading-relaxed" x-text="ceilingSourceText"></div>
       <!-- DRY-RUN: what autopilot would have rented on its latest tick. Without this a rehearsal
            shows nothing at all, and "0 rentals" reads as "not working" rather than "not spending". -->
       <div x-show="apRehearsal" x-cloak class="bg-navy-800/50 border border-neon-yellow/25 rounded-lg p-3 space-y-2">

@@ -893,7 +893,12 @@ async function handleApi(req, res, url, body, ctx = {}) {
       && v.patch.blended_ceiling_sats_unit_day !== config.getKey(conn, 'guardrails', 'blended_ceiling_sats_unit_day')) {
       v.patch.blended_ceiling_auto = false;
     }
+    const feedChanged = ns === 'guardrails' && Object.prototype.hasOwnProperty.call(v.patch, 'ceiling_source_url')
+      && v.patch.ceiling_source_url !== config.getKey(conn, 'guardrails', 'ceiling_source_url');
     config.set(conn, ns, v.patch);
+    // A new feed URL is read now rather than at the next tick, so Settings and the preview show
+    // its reading (or why it failed) straight away instead of "not read yet" for up to a minute.
+    if (feedChanged && v.patch.ceiling_source_url) await ceilingSource.refresh(conn);
     const values = {};
     for (const key of Object.keys(config.settings(conn)[ns])) values[key] = config.getKey(conn, ns, key);
     return sendJson(res, 200, { ns, values });

@@ -128,6 +128,36 @@ function rehydrateState(conn) {
  * resolved MRR client (for tests); `opts.prev`/`opts.now`/`opts.log` carry per-tick context.
  * Returns { ran, adoptedCount }.
  */
+/*
+ * The ceiling feed's step of a tick: read it, then raise or clear ceiling_source_stale. The feed
+ * fails closed on its own, so a failure here only means no fresh reading this tick. The alert fires
+ * when the feed has held an autopilot session for a few minutes: short enough to matter, long
+ * enough that a restart (which starts with no reading) or one slow reply doesn't page anyone.
+ */
+async function ceilingSourceTick(conn, now, log = () => {}, opts = {}) {
+  const nowS = Math.floor(now / 1000);
+  const src = await ceilingSource.refresh(conn, { nowSec: nowS, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) });
+  const eff = ceilingSource.effective(conn, nowS);
+  const apActive = !!conn.prepare("SELECT 1 FROM sessions WHERE mode = 'autopilot' AND state = 'active'").get();
+  // Held by the feed: no fresh reading, or a reading of 0 (how a feed says its own data is bad).
+  const held = !!(eff.source && eff.halted);
+  const algo = market.activeAlgo(conn);
+  if (src && src.error) log({ event: 'ceiling_source_error', message: src.error });
+  const context = held ? { url: eff.source.url, error: eff.source.ok ? null : eff.source.error, zero: !!eff.source.zero, age_s: eff.source.ageS, max_age_s: eff.source.maxAgeS } : {};
+  alerts.runTransition(conn, {
+    kind: 'ceiling_source_stale', key: algo, bad: held && apActive, now, thresholdMs: 3 * 60 * 1000, context,
+  });
+  // runTransition writes context when it arms and fires; keep a fired alert's reason and age current.
+  if (held) {
+    conn.prepare("UPDATE alerts SET context_json = ? WHERE kind = 'ceiling_source_stale' AND key = ? AND state = 'fired'")
+      .run(JSON.stringify(context), algo);
+  }
+  // One left on an algorithm that is no longer active would never be re-evaluated.
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'ceiling_source_stale' AND key IS NOT ? AND state IN ('armed','fired')")
+    .run(nowS, algo);
+  return { eff, held };
+}
+
 const r3 = (x) => Math.round(x * 1000) / 1000;
 
 async function tickOnce(conn, dataDir, snapshot, opts = {}) {
@@ -237,22 +267,9 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
     }
   } catch (e) { log({ event: 'bootstrap_sync_error', message: String(e && e.message) }); }
 
-  // The ceiling feed, read before the spend steps that use it (ceiling-source.js). It fails closed
-  // on its own, so an error here only means no fresh reading this tick. Alert when it has held an
-  // autopilot session for a few minutes: short enough to matter, long enough that a restart (which
-  // starts with no reading) or one slow reply doesn't page anyone.
-  try {
-    const nowS = Math.floor(now / 1000);
-    const src = await ceilingSource.refresh(conn, { nowSec: nowS });
-    const eff = ceilingSource.effective(conn, nowS);
-    const apActive = !!conn.prepare("SELECT 1 FROM sessions WHERE mode = 'autopilot' AND state = 'active'").get();
-    const stale = !!(eff.source && !eff.source.ok);
-    if (src && src.error) log({ event: 'ceiling_source_error', message: src.error });
-    alerts.runTransition(conn, {
-      kind: 'ceiling_source_stale', key: market.activeAlgo(conn), bad: stale && apActive, now, thresholdMs: 3 * 60 * 1000,
-      context: stale ? { url: eff.source.url, error: eff.source.error, age_s: eff.source.ageS, max_age_s: eff.source.maxAgeS } : {},
-    });
-  } catch (e) { log({ event: 'ceiling_source_error', message: String(e && e.message) }); }
+  // The ceiling feed, read before the spend steps that use it (ceiling-source.js).
+  try { await ceilingSourceTick(conn, now, log); }
+  catch (e) { log({ event: 'ceiling_source_error', message: String(e && e.message) }); }
 
   try {
     if (client && !skipSpendCycle) {
@@ -375,4 +392,4 @@ function startEngine(conn, dataDir, opts = {}) {
   return loop;
 }
 
-module.exports = { startEngine, tickOnce, runLifecycle, rehydrateState, _resetEnsureRetry: () => { ensured = { key: null, failedAt: 0 }; } };
+module.exports = { ceilingSourceTick, startEngine, tickOnce, runLifecycle, rehydrateState, _resetEnsureRetry: () => { ensured = { key: null, failedAt: 0 }; } };

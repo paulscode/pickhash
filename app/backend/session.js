@@ -602,9 +602,11 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   const blendedSatsUnitDay = advTh > 0
     ? Math.round(units.satsPerUnitDay(costRateBtcDay / advTh, priceUnit)) : null;
   return {
-    // Counted before the per-rig ceiling: a rig over it is still on the market, just not rentable at
-    // today's ceiling (a feed can lift it within the session), so it must not block a start.
-    eligibleRigs: priced.length,   // any autopilot-eligible rigs at all — the "can we start" signal
+    // With a ceiling feed, counted before the per-rig ceiling: a rig over it is still on the market,
+    // just not rentable at the feed's ceiling for now (a stale feed is 0 until it recovers), so it
+    // must not block a start. Without one the ceiling is the user's own, and a start that could
+    // never rent is refused as before.
+    eligibleRigs: ceilingSource.effective(conn, nowSec()).source ? priced.length : cands.length,   // any autopilot-eligible rigs at all — the "can we start" signal
     // The per-rig price limit and what it was judged against, so the preview can show the
     // line it holds (null when off or when there was no market to judge against).
     priceLimit: priceLimit ? {
@@ -739,6 +741,8 @@ async function stopSession(conn, client = null) {
   // rentals) would linger in the UI. Resolve them directly here (avoids importing the alerts module
   // into session.js).
   conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind IN ('rate_ceiling_hold', 'price_limit_hold') AND key = ? AND state IN ('armed','fired')").run(nowSec(), String(s.id));
+  // The feed alert only matters while an autopilot session is waiting on it.
+  conn.prepare("UPDATE alerts SET state = 'resolved', resolved_at = ? WHERE kind = 'ceiling_source_stale' AND state IN ('armed','fired')").run(nowSec());
   return { stopped: true, state: 'ended' };
 }
 

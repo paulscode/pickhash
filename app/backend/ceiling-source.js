@@ -10,14 +10,16 @@
  *     "rate_ceiling_sats_th_hour": 276.27,        // optional, sats per TH per hour
  *     "as_of": 1791103808 }                       // required, unix seconds
  *
- * It is a money control, so it fails CLOSED. A feed that is unreachable, unreadable, missing a
- * required field, or older than guardrails.ceiling_source_max_age_s counts as a ceiling of 0, and
+ * It is a money control, so it fails CLOSED. A feed that is unreachable, unreadable, an error
+ * status, missing a required field, or older than guardrails.ceiling_source_max_age_s counts as a
+ * ceiling of 0 (any failed read clears the last reading at once), and
  * autopilot and auto-extend rent and extend nothing until it is good again. Nothing is cancelled:
  * running rentals run out as they would.
  *
- * The stored ceilings, when set, stay the upper limits: the feed can tighten them, never loosen
- * them. A compromised or buggy feed can then stop spending but cannot raise it past what the user
- * set by hand.
+ * The stored ceilings the user set by hand stay the upper limits: the feed can tighten them,
+ * never loosen them. A compromised or buggy feed can then stop spending but cannot raise it past
+ * them. With none set it is bounded only by the market price limit and the budgets, and the
+ * status says so.
  *
  * State is in memory, keyed by algorithm and URL, because the engine and the API run in one
  * process. A restart starts with no reading, which fails closed until the first tick reads the feed.
@@ -33,10 +35,18 @@ const state = new Map();   // `${algo} ${url}` -> { good: {blended, rate, asOf, 
 
 function keyOf(algo, url) { return `${algo} ${url}`; }
 
+// A number as sent: a JSON number, or a plain decimal string. Not hex, binary or other forms
+// Number() would accept ("0x1F"), which no feed means to send.
+const DECIMAL = /^\s*-?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?\s*$/;
+function num(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && DECIMAL.test(v)) return Number(v);
+  return NaN;
+}
+
 /** Validate a parsed feed body. Returns {ok, blended, rate, asOf} or {ok:false, error}. */
 function parseBody(body, nowSec) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'not a JSON object' };
-  const num = (v) => (typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN));
   const blended = num(body.blended_ceiling_sats_unit_day);
   if (!Number.isFinite(blended) || blended < 0) return { ok: false, error: 'blended_ceiling_sats_unit_day missing or invalid' };
   let rate = null;
@@ -49,26 +59,76 @@ function parseBody(body, nowSec) {
   if (asOf > nowSec + FUTURE_SKEW_S) {
     return { ok: false, error: asOf > 1e12 ? 'as_of looks like milliseconds; send unix seconds' : 'as_of is in the future' };
   }
-  return { ok: true, blended, rate, asOf };
+  // Within the allowed skew, a reading from slightly ahead counts as taken now, so it can't
+  // outlive the max age by the skew.
+  return { ok: true, blended, rate, asOf: Math.min(asOf, nowSec) };
+}
+
+/**
+ * Read the body as UTF-8, stopping at MAX_BODY_BYTES. res.text() would buffer whatever arrives
+ * before any check could run: a chunked reply with no content-length, or a small gzip body that
+ * inflates (fetch decompresses), could take the process's memory, which the engine and the
+ * dashboard share. Counting the bytes as they arrive bounds it.
+ */
+async function readBounded(res) {
+  const len = Number(res.headers && res.headers.get && res.headers.get('content-length'));
+  if (Number.isFinite(len) && len > MAX_BODY_BYTES) throw new Error('response too large');
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const t = await res.text();   // test stand-ins without a stream
+    if (Buffer.byteLength(t) > MAX_BODY_BYTES) throw new Error('response too large');
+    return t;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      throw new Error('response too large');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+}
+
+// A fetch failure as something a user can act on. Node's fetch reports DNS, refused connections,
+// TLS and redirects all as "fetch failed", with the reason in e.cause.
+function describeError(e) {
+  if (!e) return 'unknown error';
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return 'timed out';
+  const c = e.cause;
+  if (c && /redirect/i.test(String(c.message || ''))) return 'redirects are not followed; use the final URL';
+  if (c && (c.code || c.message)) return `${e.message}: ${c.code || ''}${c.code && c.message ? ' ' : ''}${c.message || ''}`.trim();
+  return String(e.message || e);
 }
 
 /**
  * Read the feed for the active algorithm, if one is set, and remember the result. Never throws.
- * A failure keeps the last good reading, which then ages out on its own.
+ *
+ * Any failed read clears the reading, as the issue specifies: a reply that is missing, unreadable,
+ * an error status, or fails validation counts as a ceiling of 0 from that moment, not after the
+ * max age. A feed that knows its data is bad can say so (HTTP 503, or no ceiling in the body) and
+ * spending stops at once. The cost of a one-off network blip is one tick without new spend.
  */
 async function refresh(conn, { nowSec = Math.floor(Date.now() / 1000), fetchImpl = globalThis.fetch, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
   const url = config.getKey(conn, 'guardrails', 'ceiling_source_url');
   if (!url) return null;
-  const k = keyOf(market.activeAlgo(conn), url);
+  const algo = market.activeAlgo(conn);
+  const k = keyOf(algo, url);
+  // Forget readings for other URLs on this algorithm: a URL switched back to starts unread.
+  for (const key of state.keys()) if (key.startsWith(`${algo} `) && key !== k) state.delete(key);
   const st = state.get(k) || { good: null, error: null, attemptedAt: null };
   st.attemptedAt = nowSec;
   try {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error', headers: { accept: 'application/json' } });
+    const res = await fetchImpl(url, {
+      signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
+      headers: { accept: 'application/json', 'accept-encoding': 'identity' },
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const len = Number(res.headers && res.headers.get && res.headers.get('content-length'));
-    if (Number.isFinite(len) && len > MAX_BODY_BYTES) throw new Error('response too large');
-    const text = await res.text();
-    if (text.length > MAX_BODY_BYTES) throw new Error('response too large');
+    const text = await readBounded(res);
     let body;
     try { body = JSON.parse(text); } catch { throw new Error('not JSON'); }
     const p = parseBody(body, nowSec);
@@ -76,7 +136,8 @@ async function refresh(conn, { nowSec = Math.floor(Date.now() / 1000), fetchImpl
     st.good = { blended: p.blended, rate: p.rate, asOf: p.asOf, fetchedAt: nowSec };
     st.error = null;
   } catch (e) {
-    st.error = String((e && e.name === 'TimeoutError') ? 'timed out' : (e && e.message) || e).slice(0, 200);
+    st.good = null;   // fail closed now, not at the max age
+    st.error = describeError(e).slice(0, 200);
   }
   state.set(k, st);
   return st;
@@ -85,9 +146,14 @@ async function refresh(conn, { nowSec = Math.floor(Date.now() / 1000), fetchImpl
 /**
  * The ceilings in force now for the active algorithm.
  *   { blendedSatsUnitDay, rateSatsThHour, halted, source }
- * blendedSatsUnitDay / rateSatsThHour: null = no ceiling. halted: spend must not open (the feed is
- * stale or failing, or a ceiling in force is 0). source: null when no feed is set, else
- *   { url, ok, asOf, ageS, maxAgeS, error, blended, rate } for display.
+ * blendedSatsUnitDay / rateSatsThHour: null = no ceiling. halted: spend must not open (the feed has
+ * no fresh reading, or a ceiling in force is 0). source: null when no feed is set, else, for display,
+ *   { url, ok, asOf, ageS, maxAgeS, error, blended, rate, zero, cappedBlended, cappedRate, noUpperLimit }
+ *
+ * Upper limits on a feed: the stored per-rig ceiling, and the stored blended ceiling only when it
+ * is deliberate (blended_ceiling_auto === false). An accepted preview suggestion is not a limit the
+ * user chose, and since a start no longer writes one while a feed is set, an old one would cap the
+ * feed for good with nothing on screen saying why.
  */
 function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   const guard = config.get(conn, 'guardrails');
@@ -97,6 +163,7 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
   if (!url) {
     return { blendedSatsUnitDay: storedBlended, rateSatsThHour: storedRate, halted: storedBlended === 0 || storedRate === 0, source: null };
   }
+  const limitBlended = guard.blended_ceiling_auto === false ? storedBlended : null;
   const maxAgeS = guard.ceiling_source_max_age_s || 900;
   const st = state.get(keyOf(market.activeAlgo(conn), url)) || { good: null, error: null };
   const good = st.good;
@@ -106,13 +173,18 @@ function effective(conn, nowSec = Math.floor(Date.now() / 1000)) {
     url, ok: fresh, asOf: good ? good.asOf : null, ageS, maxAgeS,
     error: st.error || (good ? (fresh ? null : 'stale') : 'not read yet'),
     blended: good ? good.blended : null, rate: good ? good.rate : null,
+    zero: false, cappedBlended: false, cappedRate: false,
+    noUpperLimit: limitBlended == null,
   };
   if (!fresh) return { blendedSatsUnitDay: 0, rateSatsThHour: 0, halted: true, source };
   // The stored ceilings stay the upper limits: the feed can tighten them, never loosen them.
   const capBy = (feed, local) => (local == null ? feed : Math.min(feed, local));
-  const blended = capBy(good.blended, storedBlended);
+  const blended = capBy(good.blended, limitBlended);
   const rate = good.rate == null ? storedRate : capBy(good.rate, storedRate);
-  return { blendedSatsUnitDay: blended, rateSatsThHour: rate, halted: blended === 0 || rate === 0, source };
+  source.cappedBlended = limitBlended != null && good.blended > limitBlended;
+  source.cappedRate = good.rate != null && storedRate != null && good.rate > storedRate;
+  source.zero = blended === 0 || rate === 0;
+  return { blendedSatsUnitDay: blended, rateSatsThHour: rate, halted: source.zero, source };
 }
 
 /** Test-only. */

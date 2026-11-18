@@ -172,7 +172,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
     _quoteTimer: null,
     _apCeilTimer: null,
     // Ceiling feed (issue #16): its status line, and whether it holds the preview's ceiling.
-    ceilingSourceText: '', ceilingSourceClass: 'text-gray-500', apCeilLocked: false, apCeilLockText: '', apRateCeilStanding: false,
+    ceilingSourceText: '', ceilingSourceClass: 'text-gray-500', ceilingSourceHalt: false, apCeilLocked: false, apCeilLockText: '', apRateCeilStanding: false,
     _refreshTimer: null,
 
     // Derived display (plain props so CSP templates bind bare refs, not expressions).
@@ -771,7 +771,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
         rental_extended: `Auto-extended ${c.name || 'a rig'}${c.hours ? ` by ${c.hours}h` : ''}${c.sats ? ` (${c.sats} sats)` : ''}`,
         rental_adopted: `Recovered an untracked rental${c.mrr_id ? ` (#${c.mrr_id})` : ''} into this session — now monitored and counted`,
         rate_ceiling_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — your blended rate ceiling is reached. Raise it in the Autopilot preview (or Settings), or wait for cheaper rigs.`,
-        ceiling_source_stale: `Your ceiling feed has no fresh reading${c.error ? ` (${c.error})` : ''}${c.age_s != null ? `; its last as_of was ${this.fmtAge(c.age_s)}` : ''}. Autopilot and auto-extend are renting and extending nothing until it does. Running rentals are not affected.`,
+        ceiling_source_stale: c.zero
+          ? 'Your ceiling feed says 0, so autopilot and auto-extend are renting and extending nothing until it says otherwise. Running rentals are not affected.'
+          : `Your ceiling feed has no fresh reading${c.error ? ` (${c.error})` : ''}${c.age_s != null ? `; its last as_of was ${this.fmtAge(c.age_s)}` : ''}. Autopilot and auto-extend are renting and extending nothing until it does. Running rentals are not affected.`,
         price_limit_hold: `Holding${c.active_th != null && c.target_th != null ? ` at ${this.fmtHashTh(c.active_th)}/${this.fmtHashTh(c.target_th)}` : ' below target'} — the rigs that could fill the rest are priced over your market price limit${c.limit_sats_unit_day != null && c.price_unit ? ` (${this.fmtSats(c.limit_sats_unit_day)} sats/${String(c.price_unit).toUpperCase()}·day, market +${c.over_market_pct}%)` : ''}. Raise “Max price over market” in Settings if paying more is acceptable, or wait for cheaper rigs.`,
         rig_rerouted: `${c.name || 'A rig'} wasn’t mining on your pool — switched it to the fallback pool${c.messaged ? ' and messaged the owner' : ''}`,
         duckdns_update_failed: `Your endpoint's IP changed but the DuckDNS name couldn't be updated${c.name ? ` (${c.name}.duckdns.org)` : ''} — it may point at the old IP. Check your DuckDNS token.`,
@@ -933,6 +935,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.apCeilLockText = !feed ? ''
         : feed.ok ? `Set by your ceiling feed (as of ${this.fmtAge(feed.ageS)}). Change it at the source, or clear the feed URL in Settings.`
           : `Your ceiling feed has no fresh reading (${feed.error || 'stale'}), so autopilot rents nothing until it does.`;
+      if (feed && feed.ok && feed.zero) this.apCeilLockText = `Your ceiling feed says 0 (as of ${this.fmtAge(feed.ageS)}), so autopilot rents nothing until it says otherwise.`;
       if (feed) { this.apRateCeil = currentCeiling != null ? String(currentCeiling) : '0'; this.apRateCeilAuto = false; this.apRateCeilTouched = false; }
       this.apRigsText = `${est.rigCount} · ${this.fmtHashTh(est.coveredTh)}`;
       this.apRateText = est.blendedSatsUnitDay != null ? `${this.fmtSats(est.blendedSatsUnitDay)} ${this.rateUnit}` : '—';
@@ -1595,6 +1598,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
          * 0" here is actively wrong, and the fix is one the user can act on.
          */
         // The rate ceiling, not the market, is what stops the fill: say so, since it's the user's to raise.
+        if (this.apCeilLocked && est.ceilingSatsUnitDay === 0) {
+          return this.apCeilLockText || 'Your ceiling feed holds autopilot at 0 for now, so it rents nothing until the feed gives a fresh, non-zero reading.';
+        }
         if (est.ceilingBlocked && est.ceilingSatsUnitDay != null && this.apCeilLocked) {
           return `Your ceiling feed's ${this.fmtSats(est.ceilingSatsUnitDay)} ${this.rateUnit} holds autopilot to ${covered} of your target: the rigs that would cover the rest are priced over what it allows. It follows the feed, so it moves when the feed does.`;
         }
@@ -2108,13 +2114,22 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       // A rehearsal's only output is its plan; show the latest one so the session reads as working.
       // The ceiling feed's status, for Settings (beside its URL) and the dashboard.
       const cs = s && s.ceiling_source;
+      const perRig = (v) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} sats/TH/hr`;
+      this.ceilingSourceHalt = !!(cs && cs.halted);
       if (!cs) { this.ceilingSourceText = ''; }
-      else if (cs.ok) {
-        this.ceilingSourceClass = 'text-neon-green';
-        this.ceilingSourceText = `Feed OK, as of ${this.fmtAge(cs.ageS)}: blended ${this.fmtSats(cs.blended_in_force)} ${this.rateUnit}${cs.rate_in_force != null ? `, per rig ${Number(cs.rate_in_force).toLocaleString(undefined, { maximumFractionDigits: 2 })} sats/TH/hr` : ''} in force.`;
-      } else {
+      else if (!cs.ok) {
         this.ceilingSourceClass = 'text-neon-pink';
-        this.ceilingSourceText = `Feed has no fresh reading (${cs.error || 'stale'}${cs.ageS != null ? `, last as_of ${this.fmtAge(cs.ageS)}` : ''}). Autopilot and auto-extend rent and extend nothing until it does; running rentals are unaffected.`;
+        this.ceilingSourceText = `Ceiling feed has no fresh reading (${cs.error || 'stale'}${cs.ageS != null ? `, last as_of ${this.fmtAge(cs.ageS)}` : ''}). Autopilot and auto-extend rent and extend nothing until it does; running rentals are unaffected.`;
+      } else if (cs.zero) {
+        this.ceilingSourceClass = 'text-neon-yellow';
+        this.ceilingSourceText = `Ceiling feed says 0 (as of ${this.fmtAge(cs.ageS)}). Autopilot and auto-extend rent and extend nothing until it says otherwise; running rentals are unaffected.`;
+      } else {
+        const notes = [];
+        if (cs.cappedBlended) notes.push(`capped by your Blended rate ceiling; the feed says ${this.fmtSats(cs.blended)}`);
+        if (cs.cappedRate) notes.push(`per rig capped by your Per-rig backstop; the feed says ${perRig(cs.rate)}`);
+        if (cs.noUpperLimit) notes.push('no Blended rate ceiling of your own caps it, so only the market price limit and your budgets bound what it allows');
+        this.ceilingSourceClass = 'text-neon-green';
+        this.ceilingSourceText = `Ceiling feed OK, as of ${this.fmtAge(cs.ageS)}: blended ${this.fmtSats(cs.blended_in_force)} ${this.rateUnit}${cs.rate_in_force != null ? `, per rig ${perRig(cs.rate_in_force)}` : ''} in force${notes.length ? ` (${notes.join('; ')})` : ''}.`;
       }
       const rh = s && s.rehearsal;
       this.apRehearsal = !!(rh && rh.rows && rh.rows.length);

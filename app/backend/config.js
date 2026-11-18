@@ -313,6 +313,8 @@ function coerce(spec, raw) {
     let parsed;
     try { parsed = new URL(u); } catch { return { ok: false, reason: 'expected a URL' }; }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ok: false, reason: 'must be an http:// or https:// URL' };
+    // fetch refuses a URL with credentials in it, so it could never be read; say so now.
+    if (parsed.username || parsed.password) return { ok: false, reason: 'must not contain a username or password' };
     return { ok: true, value: u };
   }
   if (spec.type === 'enum') return spec.values.includes(raw) ? { ok: true, value: raw } : { ok: false, reason: `must be one of ${spec.values.join(', ')}` };
