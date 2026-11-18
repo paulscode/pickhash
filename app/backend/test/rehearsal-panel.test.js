@@ -60,7 +60,6 @@ test('/api/status carries the latest rehearsal tick of an autopilot DRY-RUN sess
   const rh = r.json.rehearsal;
   assert.ok(rh, 'rehearsal block present');
   assert.equal(rh.ts, 2060);
-  assert.equal(rh.ticks, 2);
   assert.deepEqual(rh.rows.map((x) => x.rig_id), [21, 22]);
   assert.equal(rh.rows[0].rig_name, '<img src=x onerror=alert(1)>', 'third-party name passed verbatim (the client binds it with x-text)');
   assert.equal(rh.rows[1].length_hours, 3);
@@ -93,4 +92,21 @@ test('the rehearsal lookup uses the decisions session index', () => {
     "EXPLAIN QUERY PLAN SELECT MAX(ts) AS ts FROM decisions WHERE session_id = ? AND dry_run = 1 AND executed_json LIKE '%\"would_rent\":true%'",
   ).all(1).map((r) => r.detail).join(' | ');
   assert.match(plan, /idx_decisions_session/, plan);
+});
+
+test('a rehearsed plan is stamped with one ts, even when it straddles a second', async () => {
+  const { execute } = require('../engine/execute');
+  const sid = insertSession('autopilot');
+  const realNow = Date.now;
+  let t = 1_800_000_000_900;   // 0.1 s before a second boundary, advancing 0.6 s per read
+  Date.now = () => { t += 600; return t; };
+  try {
+    const wouldDo = [1, 2, 3].map((i) => ({ type: 'TOPUP_RENT', rigId: 40 + i, rigName: `r${i}`, region: 'us', advertisedTh: 2, lengthHours: 3, paidSats: 100 * i, feeSats: 3 * i }));
+    await execute(db.get(), null, { sessionId: sid, endpoint: {}, gateResult: { wouldDo, authorized: [], blocked: [] } });
+  } finally { Date.now = realNow; }
+  const ts = db.get().prepare('SELECT DISTINCT ts FROM decisions WHERE session_id = ? AND dry_run = 1').all(sid);
+  assert.equal(ts.length, 1, 'one plan, one ts');
+  const r = await get('/api/status');
+  assert.equal(r.json.rehearsal.rows.length, 3, 'the whole plan is shown');
+  db.get().prepare("UPDATE sessions SET state = 'ended' WHERE id = ?").run(sid);
 });

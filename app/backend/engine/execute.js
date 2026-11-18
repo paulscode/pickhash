@@ -30,9 +30,12 @@ async function execute(conn, client, ctx) {
   let halted = false;
   let haltReason = null;
 
-  // DRY-RUN rehearsal: record each would-do as a decision; mutate nothing.
+  // DRY-RUN rehearsal: record each would-do as a decision; mutate nothing. One timestamp for the
+  // whole plan: the dashboard groups the latest plan by it.
+  const planTs = Math.floor(Date.now() / 1000);
   for (const a of gateResult.wouldDo || []) {
     insertDecision(conn, sessionId, true, {
+      ts: planTs,
       proposed: { rig: a.rigId, length: a.lengthHours, rate_cap_unit_day: a.rateCapUnitDay, price_unit: a.priceUnit },
       executed: { would_rent: true, rig: a.rigId, name: a.rigName, region: a.region, advertised_th: a.advertisedTh, length: a.lengthHours, cost_sats: cost(a) },
       note: `AUTOPILOT DRY-RUN would rent rig #${a.rigId} (${a.rigName}) for ${a.lengthHours}h at ${cost(a)} sats`,

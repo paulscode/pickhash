@@ -126,6 +126,8 @@ function rehydrateState(conn) {
  * resolved MRR client (for tests); `opts.prev`/`opts.now`/`opts.log` carry per-tick context.
  * Returns { ran, adoptedCount }.
  */
+const r3 = (x) => Math.round(x * 1000) / 1000;
+
 async function tickOnce(conn, dataDir, snapshot, opts = {}) {
   if (!snapshot) return { ran: false };
   const now = opts.now || Date.now();
@@ -269,7 +271,8 @@ async function tickOnce(conn, dataDir, snapshot, opts = {}) {
           alerts.runTransition(conn, {
             kind: 'rate_ceiling_hold', key: String(snapshot.session.id), bad: heldByCeiling, now,
             thresholdMs: 10 * 60 * 1000,
-            context: heldByCeiling ? { active_th: Math.round(plan.activeTh), target_th: Math.round(plan.targetTh), shortfall_th: Math.round(plan.shortfallTh) } : {},
+            // To the GH/s, not the whole TH: single-digit TH targets (blake2b) otherwise read 3/3, shortfall 0.
+            context: heldByCeiling ? { active_th: r3(plan.activeTh), target_th: r3(plan.targetTh), shortfall_th: r3(plan.shortfallTh) } : {},
           });
           // The same for the market price limit, with decide() having already decided whether the
           // limit is the actual cause (a counterfactual re-pack) and whether the hold is material.

@@ -128,8 +128,8 @@ function isSetupComplete(conn) {
  * A rehearsal buys nothing, so the session shows "0 rentals" for its whole life and the
  * only trace of the engine working is the decisions table execute.js writes to. Reading
  * that back here is what lets a rehearsal be judged from the dashboard rather than from
- * the database. Rows are grouped by the tick that wrote them (one ts per cycle); the
- * tick count says how long autopilot has been deciding. Null when the session has no
+ * the database. Rows are grouped by the tick that wrote them (execute.js stamps one ts
+ * per plan). Null when the session has no
  * rehearsed rows, which is every LIVE session.
  */
 function rehearsalFor(conn, sessionId) {
@@ -145,10 +145,9 @@ function rehearsalFor(conn, sessionId) {
     // Rig name/region are third-party strings — passed raw for the client to render via x-text.
     return { rig_id: e.rig, rig_name: e.name || `rig #${e.rig}`, region: e.region || '', advertised_th: e.advertised_th || null, length_hours: e.length, cost_sats: e.cost_sats || 0 };
   });
-  const ticks = conn.prepare(
-    "SELECT COUNT(DISTINCT ts) AS n FROM decisions WHERE session_id = ? AND dry_run = 1 AND executed_json LIKE '%\"would_rent\":true%'",
-  ).get(sessionId).n;
-  return { ts: latest.ts, ticks, rows, total_sats: rows.reduce((a, r) => a + (r.cost_sats || 0), 0) };
+  // No count of past plans: it needs a scan of every dry-run row in the session on each poll of
+  // /api/status, which is polled continuously, for a number that says little.
+  return { ts: latest.ts, rows, total_sats: rows.reduce((a, r) => a + (r.cost_sats || 0), 0) };
 }
 
 async function handleApi(req, res, url, body, ctx = {}) {
@@ -1006,8 +1005,7 @@ async function handleApi(req, res, url, body, ctx = {}) {
     // value the form pre-fills.
     let ceilingSatsUnitDay = currentCeiling != null ? currentCeiling : undefined;
     if (url.searchParams.has('blended_ceiling_sats_unit_day')) {
-      const c = Number(url.searchParams.get('blended_ceiling_sats_unit_day'));
-      ceilingSatsUnitDay = Number.isFinite(c) && c > 0 ? c : null;
+      ceilingSatsUnitDay = session.parseCeiling(url.searchParams.get('blended_ceiling_sats_unit_day'));
     }
     try {
       const estimate = await session.estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay });

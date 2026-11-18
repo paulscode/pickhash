@@ -301,3 +301,18 @@ test('#15: the preview leaves out rigs over the per-rig backstop the gate enforc
   assert.equal(est.coveredTh, 920);
   assert.equal(est.passedOver.over_rate_ceiling, 1);
 });
+
+test('parseCeiling: blank or null is no ceiling; 0 is a ceiling that rents nothing', () => {
+  for (const v of [undefined, null, '', '  ', 'abc', -5]) assert.equal(session.parseCeiling(v), null, String(v));
+  assert.equal(session.parseCeiling(0), 0);
+  assert.equal(session.parseCeiling('0'), 0);
+  assert.equal(session.parseCeiling('6630.4'), 6630);
+});
+
+test('a ceiling of 0 holds the estimate to nothing, and says the ceiling is why', async () => {
+  const ep = db.get().prepare('SELECT * FROM pool_endpoints WHERE active = 1').get();
+  const est = await session.estimateAutopilot(db.get(), client(), { targetTh: 300, budgetSats: 1_000_000, endpoint: ep, ceilingSatsUnitDay: 0 });
+  assert.equal(est.coveredTh, 0);
+  assert.equal(est.ceilingSatsUnitDay, 0);
+  assert.equal(est.ceilingBlocked, true);
+});

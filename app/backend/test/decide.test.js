@@ -557,7 +557,7 @@ test('#15: overshoot judged against the target lets a modest rig close the gap i
   assert.ok(r.coveredTh >= 3 - 1e-9);
 });
 
-test('#15: inside the band, a rig that would raise the blend is not taken', () => {
+test('#15: the packer stops once the remaining gap is inside the band', () => {
   // No closer at all: the micros are taken only until the remaining gap is inside the band, then
   // the packer stops rather than buying the rest of the target at 450x the market.
   const r = pack(issue15Market(), 3, { maxOvershoot: 0.5, bandTh: BAND_3TH });
@@ -571,14 +571,12 @@ test('#15: inside the band, a rig that would raise the blend is not taken', () =
   assert.ok(blend < oldBlend, 'the blended rate comes out lower than before');
 });
 
-test('inside the band, a rig that does not raise the blend is still taken', () => {
-  // 96 of 100 TH held by 50k rigs (inside a 5 TH band); a 4 TH rig at 40k lowers the blend, so it closes.
-  const feasible = [crig('a', 48, 50000), crig('b', 48, 50000), crig('cheap', 4, 40000)];
-  const r = pack(feasible, 100, { bandTh: 5 });
-  assert.ok(r.selection.some((x) => x.id === 'cheap'));
-  const dear = pack([crig('a', 48, 50000), crig('b', 48, 50000), crig('dear', 4, 60000)], 100, { bandTh: 5 });
-  assert.ok(!dear.selection.some((x) => x.id === 'dear'), 'a dearer one is left out');
-  assert.equal(dear.coveredTh, 96);
+test('inside the band nothing more is planned, as LIVE does nothing within tolerance', () => {
+  // 96 of 100 TH covered (inside a 5 TH band): even a cheaper rig is not added, because LIVE would
+  // see the session within tolerance and never rent it.
+  const r = pack([crig('a', 48, 50000), crig('b', 48, 50000), crig('cheap', 4, 40000)], 100, { bandTh: 5 });
+  assert.equal(r.coveredTh, 96);
+  assert.ok(!r.selection.some((x) => x.id === 'cheap'));
 });
 
 test('a band of 0 keeps the gap-relative rules exactly', () => {
@@ -597,10 +595,36 @@ test('#15: decide() applies the band from the hashrate tolerance', () => {
   assert.ok(!ids.some((id) => id.startsWith('micro')), `no micro-rig proposed (${ids.join(',')})`);
 });
 
-test('a max overshoot or fit tolerance of 0 is not widened by the band', () => {
-  // A 0.3 TH rig for a 0.211 TH gap overshoots; with both settings at 0 the user asked for none.
-  const r = pack(issue15Market([trig('modest', 0.3, 8000)]), 3, { fitTol: 0, maxOvershoot: 0, bandTh: BAND_3TH });
-  assert.ok(!r.selection.some((x) => x.id === 'modest'), 'no overshooting closer when overshoot is set to 0');
+test('a max overshoot of 0 is not widened by the band, whatever the fit tolerance', () => {
+  // A 0.3 TH rig for a 0.211 TH gap overshoots by 0.089 TH, past 20% of the gap; max overshoot 0 means none.
+  for (const fitTol of [0, 0.2]) {
+    const r = pack(issue15Market([trig('modest', 0.3, 8000)]), 3, { fitTol, maxOvershoot: 0, bandTh: BAND_3TH });
+    assert.ok(!r.selection.some((x) => x.id === 'modest'), `no band-widened closer (fitTol ${fitTol})`);
+  }
+});
+
+test('decide(): a rig over the per-rig ceiling is not planned, so LIVE does not stall on it', () => {
+  // The reviewer's case: a 40 TH rig at 50k closes 40 of a 100 TH target more cheaply in absolute
+  // rate than a 48 TH rig at 44k, but a 45k per-rig ceiling refuses it at the gate. Planned, it is
+  // blocked every tick and the session holds at 60/100 with no shortfall and no alert.
+  const marketRigs = [crig('a', 60, 40000), crig('e', 48, 44000), crig('c', 40, 50000)];
+  const perThHr = (satsPhDay) => satsPhDay / 1000 / 24;   // sats/PH·day -> sats/TH/hr
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals: [], marketRigs, rateCeilingSatsThHour: perThHr(45000),
+  }));
+  const ids = plan.actions.map((x) => x.rigId);
+  assert.ok(!ids.includes('c'), `the gate-blocked rig is not planned (${ids.join(',')})`);
+  assert.ok(ids.includes('e'), 'the rig under the ceiling is used instead');
+});
+
+test('decide(): a per-rig ceiling refusing every rig is not read as a spent budget', () => {
+  const marketRigs = [crig('a', 60, 40000), crig('e', 48, 44000)];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals: [], marketRigs, rateCeilingSatsThHour: 0.5,
+  }));
+  assert.equal(plan.actions.length, 0);
+  assert.ok(!plan.notes.includes('no_affordable_candidate'), plan.notes.join(','));
+  assert.ok(plan.notes.includes('no_fit'));
 });
 
 test('decide(): a fill that lands inside the band is no shortfall, so no ceiling hold is raised', () => {
@@ -634,4 +658,14 @@ test('decide(): a diluted blend cap does not refuse a rig the market price limit
   }));
   assert.ok(plan.actions.some((a) => a.rigId === 'dear'), plan.actions.map((a) => a.rigId).join(','));
   assert.equal(plan.shortfallTh, 0);
+});
+
+test('decide(): a blended ceiling of 0 rents nothing, even a rig cheaper than what is held', () => {
+  // Held: 50 TH at 60k. The cap rule alone would admit a 50k rig (it pulls an over-cap blend down).
+  const rentals = [{ rig_id: 'h', advertised_th: 50, delivered_th: 50, health: 'healthy', rate_btc_th_day: CAP(60000), ended: 0 }];
+  const plan = decide.decide(ctx({
+    session: sess({ target_th: 100 }), rentals, marketRigs: [crig('cheap', 50, 50000)], blendedCeilingSatsUnitDay: 0,
+  }));
+  assert.equal(plan.actions.length, 0);
+  assert.ok(plan.notes.includes('ceiling_zero'));
 });

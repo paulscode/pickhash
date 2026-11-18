@@ -457,6 +457,9 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
     async loadMrrPools() {
       let r = null;
       try { r = await this.getJson('/api/setup/mrr-pools'); } catch { r = null; }
+      // Not awaited by Settings, and re-run on an algorithm switch: a slower reply for the algorithm
+      // switched away from must not land last and offer the other market's pools.
+      if (r && r.algo && this.algoSlug && r.algo !== this.algoSlug) return;
       const pools = r && Array.isArray(r.pools) ? r.pools : [];
       // Keep the option text short: a native <select> list sizes itself to its longest option and
       // spills past the card otherwise. The address is abbreviated (the full worker lands in the
@@ -864,6 +867,14 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       else { this.apHasEstimate = false; this.apStarted = false; this.scheduleQuote(0); }
     },
     apPreset(sats) { this.apBudget = String(sats); this.apHasEstimate = false; },
+    // The typed ceiling: a whole number >= 0, or null when blank or unreadable. 0 is a real
+    // ceiling (rent nothing), not "no cap".
+    apCeilValue() {
+      const v = String(this.apRateCeil == null ? '' : this.apRateCeil).trim();
+      if (v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+    },
     apCeilTouched() {
       this.apRateCeilTouched = true; this.apRateCeilAuto = false;   // an edited ceiling is deliberate -> sticky
       // Re-run the shown estimate under the new ceiling once typing pauses, so the rigs, rate and
@@ -905,8 +916,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.apBusy = true; this.apBusyText = 'Checking the market…'; this.apError = ''; this.apStarted = false;
       // A ceiling the user has typed is sent (blank = no cap); otherwise the server applies a
       // deliberate standing one, the same value the form pre-fills.
-      const ceilQ = this.apRateCeilTouched
-        ? `&blended_ceiling_sats_unit_day=${Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : ''}` : '';
+      const ceilQ = this.apRateCeilTouched ? `&blended_ceiling_sats_unit_day=${this.apCeilValue() ?? ''}` : '';
       const r = await this.getJson(`/api/autopilot/estimate?target_th=${p.targetTh}&budget_sats=${p.budgetSats}${ceilQ}`);
       this.apBusy = false;
       if (!r || !r.estimate) { this.apHasEstimate = false; this.apError = 'Could not estimate — check your MRR connection and try again.'; return; }
@@ -959,7 +969,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       const p = this.apParams();
       if (!this.apValid(p)) { this.apError = 'Enter a target, time cap, and budget.'; return; }
       this.apBusy = true; this.apBusyText = 'Starting autopilot…'; this.apError = '';
-      const ceil = this.apRateCeil !== '' && Number(this.apRateCeil) > 0 ? Math.round(Number(this.apRateCeil)) : null;
+      const ceil = this.apCeilValue();
       // blended_ceiling_auto: true when the ceiling is an accepted auto-suggestion (not user-typed), so
       // the backend won't persist it as a sticky value that masks the next preview's fresh suggestion.
       const r = await this.send('POST', '/api/autopilot/start', { target_th: p.targetTh, time_cap_hours: p.timeCapHours, budget_sats: p.budgetSats, blended_ceiling_sats_unit_day: ceil, blended_ceiling_auto: this.apRateCeilAuto });
@@ -1558,7 +1568,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
          */
         // The rate ceiling, not the market, is what stops the fill: say so, since it's the user's to raise.
         if (est.ceilingBlocked && est.ceilingSatsUnitDay != null) {
-          return `Your rate ceiling of ${this.fmtSats(est.ceilingSatsUnitDay)} ${this.rateUnit} holds autopilot to ${covered} of your target: the rigs that would cover the rest would lift the blended rate above it. Raise the ceiling to cover more.`;
+          return `Your rate ceiling of ${this.fmtSats(est.ceilingSatsUnitDay)} ${this.rateUnit} holds autopilot to ${covered} of your target: the rigs that would cover the rest are priced over what it allows. Raise the ceiling to cover more.`;
         }
         if (est.coveredTh === 0 && est.eligibleRigs > 0 && est.smallestEligibleTh) {
           const cap = (est.maxOvershootPct != null ? est.maxOvershootPct : 50) / 100;
@@ -2066,8 +2076,7 @@ if (typeof document !== 'undefined') document.addEventListener('alpine:init', ()
       this.apRehearsal = !!(rh && rh.rows && rh.rows.length);
       if (this.apRehearsal) {
         const at = new Date(rh.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        // ticks counts the ticks that planned a rental, not every tick, so it's named as plans.
-        this.apRehearsalBanner = `Rehearsal — on its latest plan (${at}; ${rh.ticks} plan${rh.ticks === 1 ? '' : 's'} so far) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
+        this.apRehearsalBanner = `Rehearsal — on its latest plan (${at}) autopilot would have rented ${rh.rows.length} rig${rh.rows.length === 1 ? '' : 's'} for ${this.fmtSats(rh.total_sats)} sats.`;
         this.apRehearsalRows = rh.rows.map((r) => ({
           id: r.rig_id, name: r.rig_name, region: r.region, hash: r.advertised_th != null ? this.fmtHashRig(r.advertised_th) : '', hours: `${r.length_hours}h`, cost: `${this.fmtSats(r.cost_sats)} sats`,
         }));

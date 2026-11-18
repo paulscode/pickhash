@@ -99,12 +99,14 @@ function planIntents(stored) {
   }));
 }
 
+// fields.ts: one timestamp for rows that belong together (a tick's rehearsed plan), so a reader
+// grouping by ts can't split them across a second boundary. Defaults to now.
 function insertDecision(conn, sessionId, dryRun, fields) {
   conn.prepare(
     `INSERT INTO decisions (algo, ts, session_id, dry_run, observed_json, proposed_json, gated_json, executed_json, note)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    market.activeAlgo(conn), nowSec(), sessionId, dryRun ? 1 : 0,
+    market.activeAlgo(conn), fields.ts != null ? fields.ts : nowSec(), sessionId, dryRun ? 1 : 0,
     fields.observed ? JSON.stringify(fields.observed) : null,
     fields.proposed ? JSON.stringify(fields.proposed) : null,
     fields.gated ? JSON.stringify(fields.gated) : null,
@@ -472,6 +474,18 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
  * (budget / burn). Pure-ish (fetches the market). The runway vs the time cap tells the user
  * whether the budget or the clock ends the session.
  */
+/**
+ * A blended ceiling as given by a caller: a number >= 0 (rounded), or null for none. Blank, null and
+ * anything unparseable mean none; 0 is a real ceiling that rents nothing, never "no cap". Number('')
+ * and Number(null) are 0, so blanks are caught before converting.
+ */
+function parseCeiling(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
 /*
  * ceilingSatsUnitDay: the blended rate ceiling to hold the preview to, in sats per <priceUnit>/day,
  * with the same per-rig backstop the live loop applies (decide.js). Without it the preview packed
@@ -482,9 +496,24 @@ async function executeSession(conn, client, stored, { dryRun, sessionId, confirm
  *   - undefined: the suggested ceiling, which is what the form pre-fills and a start then applies,
  *     so an untouched preview shows what LIVE would rent too.
  */
+// The market listing the estimate packs from, kept briefly per client and algorithm. Editing the
+// ceiling re-runs the preview after each pause in typing, and each run would otherwise page through
+// the whole MRR listing again: a burst of requests per edit, and a market that moves between runs,
+// so the change shown wouldn't be the ceiling's alone.
+const ESTIMATE_RIGS_TTL_MS = 45 * 1000;
+const estimateRigsCache = new WeakMap();   // client -> { algo, at, rigs }
+async function estimateRigs(client, algo) {
+  const hit = estimateRigsCache.get(client);
+  const now = Date.now();
+  if (hit && hit.algo === algo && now - hit.at < ESTIMATE_RIGS_TTL_MS) return hit.rigs;
+  const rigs = await market.fetchAllRigs(client, algo);
+  estimateRigsCache.set(client, { algo, at: now, rigs });
+  return rigs;
+}
+
 async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay }) {
   const strat = config.get(conn, 'strategy');
-  const rigs = await market.fetchAllRigs(client, market.activeAlgo(conn));
+  const rigs = await estimateRigs(client, market.activeAlgo(conn));
   // One options object, so the tally below cannot drift from the filter above it.
   const candOpts = {
     mode: 'autopilot', minRpi: strat.min_rpi, blacklist: strat.blacklist_rig_ids,
@@ -552,9 +581,10 @@ async function estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint,
   // instead of strangling it at the estimate. Shown to the user (editable), not enforced silently.
   const uncapped = packWith(null);
   const suggested = blendOf(uncapped.selection) != null ? Math.round(blendOf(uncapped.selection) * CEILING_HEADROOM) : null;
+  // 0 is a real ceiling (rent nothing), as decide() treats it; only null means none.
   let ceil = null;
   if (ceilingSatsUnitDay === undefined) ceil = suggested;
-  else if (ceilingSatsUnitDay != null && Number.isFinite(Number(ceilingSatsUnitDay)) && Number(ceilingSatsUnitDay) > 0) ceil = Number(ceilingSatsUnitDay);
+  else ceil = parseCeiling(ceilingSatsUnitDay);
   const capped = ceil != null;
   const { selection, coveredTh, blendBlocked } = capped ? packWith(ceil) : uncapped;
   const burnBtcHr = selection.reduce((s, r) => s + r.hourBtc, 0);
@@ -634,7 +664,10 @@ async function startAutopilotSession(conn, client, params = {}) {
     const endpoint = endpoints.active(conn);
     if (!endpoint || !endpoint.mrr_profile_id) throw new SessionError('no_endpoint');
 
-    const estimate = await estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint });
+    // The estimate is only consulted for eligibleRigs here, but give it the ceiling being started
+    // with, so it isn't packed twice against a suggestion nobody chose.
+    const startCeil = parseCeiling(params.blendedCeilingSatsUnitDay);
+    const estimate = await estimateAutopilot(conn, client, { targetTh, budgetSats, endpoint, ceilingSatsUnitDay: startCeil });
     // Start when ANY autopilot-eligible rig exists — not when the bounded pack happens to fit the
     // target this instant. If only oversized rigs are up, decide holds what fits and fills the rest
     // as the market shifts, rather than over-provisioning at start or refusing a workable session.
@@ -648,11 +681,10 @@ async function startAutopilotSession(conn, client, params = {}) {
     // Persist the blended ceiling from the preview only now that the session is committed — a start
     // that bailed earlier (no endpoint / no rigs) must not have changed the standing guardrail. The
     // value is the max blended pay-rate ("you" line) in sats per <unit> per day, the unit being the
-    // active algorithm's; blank/0 clears it, an absent key leaves the setting untouched. It is stored
-    // under the active algorithm, so it cannot govern the other one.
+    // active algorithm's; blank clears it, 0 rents nothing, an absent key leaves the setting
+    // untouched. It is stored under the active algorithm, so it cannot govern the other one.
     if (params.blendedCeilingSatsUnitDay !== undefined) {
-      const unitDay = Number(params.blendedCeilingSatsUnitDay);
-      const ceil = Number.isFinite(unitDay) && unitDay > 0 ? Math.round(unitDay) : null;
+      const ceil = startCeil;
       // blended_ceiling_auto records whether this ceiling was an ACCEPTED auto-suggestion (vs a value
       // the user deliberately typed). It's not a user-facing knob — it lets the next preview ignore a
       // stale auto value and re-suggest with fresh headroom, while a deliberate ceiling stays sticky.
@@ -702,4 +734,4 @@ async function stopSession(conn, client = null) {
   return { stopped: true, state: 'ended' };
 }
 
-module.exports = { startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapUnitDay, SessionError, fallbackWorker, resolveFallbackPool };
+module.exports = { parseCeiling, startSession, startAutopilotSession, estimateAutopilot, stopSession, executeSession, planIntents, rentOne, persistRental, insertDecision, repackShortfall, rateCapUnitDay, SessionError, fallbackWorker, resolveFallbackPool };

@@ -71,8 +71,10 @@ function rentCostSats(hourBtc, hours) {
  * TARGET rather than the shrinking gap (issue #15):
  *   - a closer may overshoot by up to the band, not just by a fraction of the gap, so a modest rig
  *     can close a small leftover gap instead of the packer reaching for dust;
- *   - once the remaining gap is inside the band, a rig is taken only if it doesn't raise the blended
- *     rate. The last few percent are never filled with the dearest listings on the market.
+ *   - once the remaining gap is inside the band, it stops. That is where the live loop stops too: it
+ *     rents one rig per tick and does nothing once within tolerance, so a rig planned inside the band
+ *     would only ever appear in the preview. The last few percent are never filled with the dearest
+ *     listings on the market.
  * 0 (the default) keeps the gap-relative rules alone, and a fit tolerance or max overshoot of 0 is
  * never widened by the band: 0 means no overshoot.
  *
@@ -119,26 +121,17 @@ function packToTarget(feasible, neededTh, { fitTol, maxOvershoot, budgetRemainin
   };
 
   const band = bandTh > 0 ? bandTh : 0;
-  // The advertised-TH-weighted blend of held + selected, for the in-band rule (Infinity before any).
-  const blendNow = () => {
-    const adv = heldAdvTh + selAdv;
-    return adv > 0 ? (heldCostRateBtcDay + selRateCost) / adv : Infinity;
-  };
   let blendBlocked = false;   // did the cap/backstop reject an otherwise-affordable rig? (for an accurate note)
   while (selTh < neededTh - 1e-9) {
     const gap = neededTh - selTh;
+    if (band > 0 && gap <= band + 1e-9) break;                    // within tolerance: the target is held
     const affordable = feasible.filter((r) => !used.has(String(r.id)) && selCost + costOf(r) <= budgetRemaining);
-    let avail = affordable.filter(blendOk);
+    const avail = affordable.filter(blendOk);
     if (affordable.length > avail.length) blendBlocked = true;
-    // Inside the band the target is held: only a rig that doesn't raise the blend is worth adding.
-    if (band > 0 && gap <= band + 1e-9) {
-      const b = blendNow();
-      avail = avail.filter((r) => (r.priceBtcThDay || 0) <= b * EPS);
-    }
     if (!avail.length) break;                                     // out of affordable rigs -> partial fill + shortfall
     // The cheapest CLEAN-FIT closer (covers the gap with <= fitTol overshoot, or up to the band), by absolute rate.
     // A setting of 0 means no overshoot at all, so the band never widens it.
-    const cleanSlack = Math.max(gap * fitTol, fitTol > 0 ? band : 0);
+    const cleanSlack = Math.max(gap * fitTol, fitTol > 0 && maxOvershoot > 0 ? band : 0);
     const clean = avail.filter((r) => effTh(r) >= gap && effTh(r) <= gap + cleanSlack);
     const bestClean = clean.length ? cheapestRate(clean) : null;
     // The cheapest sub-gap rig by cost-per-delivered-TH (feasible is rank-sorted, so the first wins).
@@ -232,6 +225,10 @@ function decide(ctx = {}) {
   // Time cap reached -> stop opening new rentals (paid time keeps running; we never cancel).
   if (windowRemainingH <= 0) { notes.push('time_cap_reached'); return base(); }
 
+  // A blended ceiling of 0 means rent nothing. Without this, the cap rule would still admit a rig
+  // cheaper than what's held (it lets a blend already over the cap move back toward it).
+  if (ctx.blendedCeilingSatsUnitDay === 0) { notes.push('ceiling_zero'); return base(); }
+
   // Within the tolerance band -> nothing to do.
   const tol = (ctx.hashrateTolerancePct != null ? ctx.hashrateTolerancePct : 5) / 100;
   if (activeTh >= targetTh * (1 - tol)) { notes.push('within_tolerance'); return base(); }
@@ -263,7 +260,6 @@ function decide(ctx = {}) {
     return true;
   };
   const fits = (r) => usable(r) && !(r.minCommitSats > budgetRemaining);   // min commit must fit the budget
-  const feasible = priced.filter(fits);
 
   // Fill the gap with the shared packer (also used by the pre-session estimate): accumulate the
   // cheapest delivered-TH rigs and close with the cheapest rig that covers the gap without exceeding
@@ -273,14 +269,28 @@ function decide(ctx = {}) {
   const maxOvershoot = (ctx.maxOvershootPct != null ? ctx.maxOvershootPct : 50) / 100;
   const hoursOf = (r) => Math.min(r.minHours || r.minRentalLength || 0, windowRemainingH);
   const costOf = (r) => rentCostSats(r.hourBtc, hoursOf(r)).total;
+  // The gate's optional per-rig ceiling, priced exactly as the gate prices the action (base sats per
+  // hour per TH, with MRR's rounding). A rig over it is left out of the plan: proposed, it would be
+  // blocked at the gate every tick and re-proposed the next, holding autopilot below target with no
+  // shortfall reported and no alert, while a rig under the ceiling sat unused.
+  const gateCeil = ctx.rateCeilingSatsThHour != null ? ctx.rateCeilingSatsThHour : Infinity;
+  const underGate = (r) => {
+    if (!Number.isFinite(gateCeil)) return true;
+    const h = hoursOf(r);
+    if (!(h > 0) || !(r.advertisedTh > 0)) return false;
+    return rentCostSats(r.hourBtc, h).base / h / r.advertisedTh <= gateCeil;
+  };
+  const feasible = priced.filter((r) => fits(r) && underGate(r));
   /*
    * "Out of budget" means reasonably priced rigs are there to rent and none is affordable.
    * The runner closes a session on it, so it must not be inferred from the price limit:
    * when every usable rig under the limit is rented by someone else and only overpriced
    * ones remain, that is a market condition to wait out (with budget to spare), not a
    * spent budget. Only when nothing is usable at any price does the old reading stand.
+   * Nor from the per-rig ceiling: a rig over it is affordable, just refused, so it is judged
+   * before that filter.
    */
-  const budgetBound = !feasible.some((r) => costOf(r) <= budgetRemaining)
+  const budgetBound = !priced.filter(fits).some((r) => costOf(r) <= budgetRemaining)
     && (priced.some(usable) || !overpriced.some(usable));
 
   // Blended rate ceiling ("you" rate). Held rentals are sunk, so a high held blend naturally restricts
@@ -320,8 +330,6 @@ function decide(ctx = {}) {
   const shortTh = Math.max(0, neededTh - coveredTh);
   const tolFloorTh = targetTh * (1 - tol);
   if (shortTh > 1e-9 && overpriced.length && activeTh + coveredTh < tolFloorTh - 1e-9) {
-    const gateCeil = ctx.rateCeilingSatsThHour != null ? ctx.rateCeilingSatsThHour : Infinity;
-    const underGate = (r) => r.advertisedTh > 0 && ((r.hourBtc || 0) * 1e8) / r.advertisedTh <= gateCeil;
     const unlimited = packToTarget(ranked.filter((r) => fits(r) && underGate(r)), neededTh, {
       fitTol, maxOvershoot, budgetRemaining, costOf,
       blendCapBtcThDay, rigBackstopBtcThDay, heldCostRateBtcDay, heldAdvTh, bandTh,

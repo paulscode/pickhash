@@ -1,7 +1,8 @@
 /**
  * Tailwind theme for the Pickhash dashboard.
  * Dark-only: a deep navy structure with a fire/ember accent.
- * Compiled to a static stylesheet at image build time — never at runtime, never via CDN.
+ * Compiled to a static stylesheet with `make css` and committed (app/frontend/dashboard.min.css), which
+ * is what the image ships: never at runtime, never via CDN.
  */
 module.exports = {
   // Scan HTML and app.js. app.js MUST be listed: classes used only from JS would
